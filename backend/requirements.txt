@@ -1,0 +1,45 @@
+# Core Framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Pydantic & Data Validation
+pydantic==2.5.0
+pydantic-core==2.14.1
+email-validator==2.1.0
+
+# Database
+mysql-connector-python==8.2.0
+sqlalchemy==2.0.23
+alembic==1.12.1
+pymysql==1.1.0
+
+# Security & Authentication
+bcrypt==4.1.1
+python-jose[cryptography]==3.3.0
+pyjwt==2.8.0
+passlib[bcrypt]==1.7.4
+
+# HTTP & API
+httpx==0.25.2
+requests==2.31.0
+python-multipart==0.0.6
+
+# Utilities
+python-dotenv==1.0.0
+aiofiles==23.2.1
+python-dateutil==2.8.2
+typing-extensions==4.8.0
+
+# Production (optional - can be installed separately)
+gunicorn==21.2.0
+supervisor==4.2.5
+
+# Development (optional - can be installed separately)
+pytest==7.4.3
+pytest-asyncio==0.21.1
+black==23.9.1
+flake8==6.1.0
+mypy==1.6.1
+
+# Notifications (optional)
+twilio==8.13.0

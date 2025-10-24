@@ -5,7 +5,7 @@ __pycache__/
 *.so
 .Python
 env/
-venv/
+.venv/
 ENV/
 env.bak/
 venv.bak/
@@ -35,3 +35,4 @@ logs/
 # Docker
 Dockerfile.dev
 docker-compose.override.yml
+

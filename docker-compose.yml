@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: pavitra-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_DATABASE: pavitra_trading
+      MYSQL_USER: pavitra_user
+      MYSQL_PASSWORD: user123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./docker/mysql/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - pavitra-network
+
+  # Redis for caching
+  redis:
+    image: redis:7-alpine
+    container_name: pavitra-redis
+    restart: unless-stopped
+    networks:
+      - pavitra-network
+
+  # Backend Services
+  backend:
+    build: 
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: pavitra-backend
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+      - "8002:8002"
+      - "8003:8003" 
+      - "8004:8004"
+      - "8005:8005"
+      - "8006:8006"
+    environment:
+      - APP_ENV=production
+      - DB_HOST=mysql
+      - DB_NAME=pavitra_trading
+      - DB_USER=pavitra_user
+      - DB_PASSWORD=user123
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - pavitra-network
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: pavitra-frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - pavitra-network
+
+volumes:
+  mysql_data:
+
+networks:
+  pavitra-network:
+    driver: bridge
