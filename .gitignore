@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Docker
+node_modules/
+npm-debug.log*
+
+# Database
+*.db
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Environment variables
+.env
+.env.local
+
+# Docker
+Dockerfile.dev
+docker-compose.override.yml
