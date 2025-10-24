@@ -1,41 +1,93 @@
 version: '3.8'
-
 services:
   mysql:
     extends:
       file: docker-compose.yml
       service: mysql
-    ports:
-      - "3306:3306"
+    env_file:
+      - ./backend/.env.development
 
-  redis:
+  auth-service:
     extends:
       file: docker-compose.yml
-      service: redis
-
-  backend:
-    build: ./backend
-    ports:
-      - "8001:8001"
-      - "8002:8002" 
-      - "8003:8003"
-      - "8004:8004"
-      - "8005:8005"
-      - "8006:8006"
+      service: auth-service
+    env_file:
+      - ./backend/.env.development
     environment:
-      - APP_ENV=development
       - DB_HOST=mysql
-      - DB_USER=pavitra_user
-      - DB_PASSWORD=user123
     volumes:
-      - ./backend:/app
-      - ./backend/logs:/app/logs
-    command: >
-      sh -c "pip install -r requirements.txt &&
-             python production_manager.py"
-    depends_on:
-      - mysql
-      - redis
+      - ./backend/auth_service:/app
+      - ./backend/shared:/app/../shared
+
+  product-service:
+    extends:
+      file: docker-compose.yml
+      service: product-service
+    env_file:
+      - ./backend/.env.development
+    environment:
+      - DB_HOST=mysql
+    volumes:
+      - ./backend/product_service:/app
+      - ./backend/shared:/app/../shared
+
+  order-service:
+    extends:
+      file: docker-compose.yml
+      service: order-service
+    env_file:
+      - ./backend/.env.development
+    environment:
+      - DB_HOST=mysql
+    volumes:
+      - ./backend/order_service:/app
+      - ./backend/shared:/app/../shared
+
+  user-service:
+    extends:
+      file: docker-compose.yml
+      service: user-service
+    env_file:
+      - ./backend/.env.development
+    environment:
+      - DB_HOST=mysql
+    volumes:
+      - ./backend/user_service:/app
+      - ./backend/shared:/app/../shared
+
+  payment-service:
+    extends:
+      file: docker-compose.yml
+      service: payment-service
+    env_file:
+      - ./backend/.env.development
+    environment:
+      - DB_HOST=mysql
+    volumes:
+      - ./backend/payment_service:/app
+      - ./backend/shared:/app/../shared
+
+  notification-service:
+    extends:
+      file: docker-compose.yml
+      service: notification-service
+    env_file:
+      - ./backend/.env.development
+    environment:
+      - DB_HOST=mysql
+    volumes:
+      - ./backend/notification_service:/app
+      - ./backend/shared:/app/../shared
+
+  frontend:
+    extends:
+      file: docker-compose.yml
+      service: frontend
+    ports:
+      - "3000:80"
+    volumes:
+      - ./frontend:/app
+    command: sh -c "npm install && npm run dev"
 
 volumes:
   mysql_data:

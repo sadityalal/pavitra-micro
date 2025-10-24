@@ -1,4 +1,5 @@
-FROM node:18-alpine as build
+# Multi-stage build for production
+FROM node:18-alpine as builder
 
 WORKDIR /app
 
@@ -7,7 +8,7 @@ COPY package*.json ./
 COPY vite.config.js ./
 COPY index.html ./
 
-# Install ALL dependencies including axios
+# Install dependencies
 RUN npm install
 
 # Copy source files
@@ -19,12 +20,19 @@ RUN npm run build
 # Production stage
 FROM nginx:alpine
 
+# Install curl for health checks
+RUN apk add --no-cache curl
+
 # Copy built app to nginx
-COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=builder /app/dist /usr/share/nginx/html
 
 # Copy nginx configuration
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:80 || exit 1
 
 CMD ["nginx", "-g", "daemon off;"]
