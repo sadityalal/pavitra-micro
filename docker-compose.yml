@@ -1,238 +1,135 @@
-version: '3.8'
-
-x-common-environment: &common-environment
-  DB_HOST: mysql
-  DB_PORT: 3306
-  DB_NAME: pavitra_trading
-  LOG_LEVEL: INFO
-  PYTHONPATH: /app
-
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: pavitra-mysql
-    restart: unless-stopped
-    command:
-      - --default-authentication-plugin=mysql_native_password
-      - --innodb-buffer-pool-size=256M
-      - --innodb-log-file-size=128M
-    environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root123}
-      MYSQL_DATABASE: ${DB_NAME:-pavitra_trading}
-      MYSQL_USER: ${DB_USER:-pavitra_app}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-app123}
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-      - ./scripts/database/01_complete_schema.sql:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
-      timeout: 20s
-      retries: 10
-    networks:
-      - pavitra-network
-
-  redis:
-    image: redis:7-alpine
-    container_name: pavitra-redis
-    restart: unless-stopped
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      timeout: 10s
-      retries: 5
-    networks:
-      - pavitra-network
-
+  # Auth Service
   auth-service:
     build:
       context: .
-      dockerfile: backend/auth_service/Dockerfile
+      dockerfile: backend/auth/Dockerfile
     container_name: pavitra-auth
     restart: unless-stopped
     ports:
-      - "8001:8000"
-    environment:
-      <<: *common-environment
-      SERVICE_NAME: auth
-      DB_USER: ${DB_USER:-pavitra_app}
-      DB_PASSWORD: ${DB_PASSWORD:-app123}
+      - "${AUTH_SERVICE_PORT}:8000"
     env_file:
-      - ./backend/.env.production
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - .env
+    environment:
+      SERVICE_NAME: auth
+    volumes:
+      - ./backend:/app
+      - ./backend/logs/auth:/app/logs
+      - ./backend/uploads:/app/uploads
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    networks:
-      - pavitra-network
 
+  # Product Service
   product-service:
     build:
       context: .
-      dockerfile: backend/product_service/Dockerfile
+      dockerfile: backend/product/Dockerfile
     container_name: pavitra-product
     restart: unless-stopped
     ports:
-      - "8002:8000"
-    environment:
-      <<: *common-environment
-      SERVICE_NAME: product
-      DB_USER: ${DB_USER:-pavitra_app}
-      DB_PASSWORD: ${DB_PASSWORD:-app123}
+      - "${PRODUCT_SERVICE_PORT}:8000"
     env_file:
-      - ./backend/.env.production
-    depends_on:
-      mysql:
-        condition: service_healthy
+      - .env
+    environment:
+      SERVICE_NAME: product
+    volumes:
+      - ./backend:/app
+      - ./backend/logs/product:/app/logs
+      - ./backend/uploads:/app/uploads
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    networks:
-      - pavitra-network
 
+  # Order Service
   order-service:
     build:
       context: .
-      dockerfile: backend/order_service/Dockerfile
+      dockerfile: backend/order/Dockerfile
     container_name: pavitra-order
     restart: unless-stopped
     ports:
-      - "8003:8000"
-    environment:
-      <<: *common-environment
-      SERVICE_NAME: order
-      DB_USER: ${DB_USER:-pavitra_app}
-      DB_PASSWORD: ${DB_PASSWORD:-app123}
+      - "${ORDER_SERVICE_PORT}:8000"
     env_file:
-      - ./backend/.env.production
-    depends_on:
-      mysql:
-        condition: service_healthy
-      auth-service:
-        condition: service_healthy
+      - .env
+    environment:
+      SERVICE_NAME: order
+    volumes:
+      - ./backend:/app
+      - ./backend/logs/order:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    networks:
-      - pavitra-network
 
+  # User Service
   user-service:
     build:
       context: .
-      dockerfile: backend/user_service/Dockerfile
+      dockerfile: backend/user/Dockerfile
     container_name: pavitra-user
     restart: unless-stopped
     ports:
-      - "8004:8000"
-    environment:
-      <<: *common-environment
-      SERVICE_NAME: user
-      DB_USER: ${DB_USER:-pavitra_app}
-      DB_PASSWORD: ${DB_PASSWORD:-app123}
+      - "${USER_SERVICE_PORT}:8000"
     env_file:
-      - ./backend/.env.production
-    depends_on:
-      mysql:
-        condition: service_healthy
+      - .env
+    environment:
+      SERVICE_NAME: user
+    volumes:
+      - ./backend:/app
+      - ./backend/logs/user:/app/logs
+      - ./backend/uploads:/app/uploads
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    networks:
-      - pavitra-network
 
+  # Payment Service
   payment-service:
     build:
       context: .
-      dockerfile: backend/payment_service/Dockerfile
+      dockerfile: backend/payment/Dockerfile
     container_name: pavitra-payment
     restart: unless-stopped
     ports:
-      - "8005:8000"
-    environment:
-      <<: *common-environment
-      SERVICE_NAME: payment
-      DB_USER: ${DB_USER:-pavitra_app}
-      DB_PASSWORD: ${DB_PASSWORD:-app123}
+      - "${PAYMENT_SERVICE_PORT}:8000"
     env_file:
-      - ./backend/.env.production
-    depends_on:
-      mysql:
-        condition: service_healthy
+      - .env
+    environment:
+      SERVICE_NAME: payment
+    volumes:
+      - ./backend:/app
+      - ./backend/logs/payment:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    networks:
-      - pavitra-network
 
+  # Notification Service
   notification-service:
     build:
       context: .
-      dockerfile: backend/notification_service/Dockerfile
+      dockerfile: backend/notification/Dockerfile
     container_name: pavitra-notification
     restart: unless-stopped
     ports:
-      - "8006:8000"
-    environment:
-      <<: *common-environment
-      SERVICE_NAME: notification
-      DB_USER: ${DB_USER:-pavitra_app}
-      DB_PASSWORD: ${DB_PASSWORD:-app123}
+      - "${NOTIFICATION_SERVICE_PORT}:8000"
     env_file:
-      - ./backend/.env.production
-    depends_on:
-      mysql:
-        condition: service_healthy
+      - .env
+    environment:
+      SERVICE_NAME: notification
+    volumes:
+      - ./backend:/app
+      - ./backend/logs/notification:/app/logs
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 40s
-    networks:
-      - pavitra-network
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: pavitra-frontend
-    restart: unless-stopped
-    ports:
-      - "80:80"
-    depends_on:
-      - auth-service
-      - product-service
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:80"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    networks:
-      - pavitra-network
-
-volumes:
-  mysql_data:
-
-networks:
-  pavitra-network:
-    driver: bridge
