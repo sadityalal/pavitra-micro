@@ -2,14 +2,21 @@ import os
 import logging
 import json
 from typing import Any, Optional, Dict, List
+import secrets
 
 logger = logging.getLogger(__name__)
 
 
-class DatabaseConfig:
+class DatabaseConfig:  # KEEP ORIGINAL NAME
     def __init__(self):
         self._cache = {}
         self._db = None
+        self._validate_required_settings()
+
+    def _validate_required_settings(self):
+        """Validate critical security settings"""
+        if not self.debug_mode and not os.getenv('JWT_SECRET'):
+            raise ValueError("JWT_SECRET environment variable is required in production")
 
     def _get_db(self):
         if self._db is None:
@@ -22,37 +29,16 @@ class DatabaseConfig:
         return self._db
 
     def _get_setting(self, key: str, default: Any = None) -> Any:
-        """Get setting from database with fallback to environment variables"""
-        # First check cache
         if key in self._cache:
             return self._cache[key]
 
-        # Then check environment variables
         env_key = key.upper()
         if env_key in os.environ:
             value = os.environ[env_key]
-            # Convert based on expected type
-            if isinstance(default, bool):
-                value = value.lower() in ('true', '1', 'yes')
-            elif isinstance(default, int):
-                try:
-                    value = int(value)
-                except ValueError:
-                    value = default
-            elif isinstance(default, float):
-                try:
-                    value = float(value)
-                except ValueError:
-                    value = default
-            elif isinstance(default, list):
-                try:
-                    value = json.loads(value)
-                except:
-                    value = default
+            value = self._convert_value(value, type(default))
             self._cache[key] = value
             return value
 
-        # Finally try database
         db = self._get_db()
         if not db:
             return default
@@ -75,26 +61,30 @@ class DatabaseConfig:
             if connection and connection.is_connected():
                 connection.close()
 
-    def _convert_value(self, value: str, value_type: str) -> Any:
-        if value_type == 'boolean':
-            return value.lower() in ('true', '1', 'yes', 'on')
-        elif value_type == 'number':
+    def _convert_value(self, value: str, target_type: Any) -> Any:
+        if target_type == bool:
+            return str(value).lower() in ('true', '1', 'yes', 'on')
+        elif target_type == int:
             try:
-                return float(value) if '.' in value else int(value)
-            except ValueError:
-                return value
-        elif value_type == 'json':
+                return int(value)
+            except (ValueError, TypeError):
+                return 0
+        elif target_type == float:
+            try:
+                return float(value)
+            except (ValueError, TypeError):
+                return 0.0
+        elif target_type == list:
             try:
                 return json.loads(value)
             except json.JSONDecodeError:
-                return value
+                return []
         else:
-            return value
+            return str(value)
 
     def refresh_cache(self):
         self._cache.clear()
 
-    # Database configuration
     @property
     def db_host(self) -> str:
         return os.getenv('DB_HOST', 'mysql')
@@ -117,7 +107,13 @@ class DatabaseConfig:
 
     @property
     def jwt_secret(self) -> str:
-        return os.getenv('JWT_SECRET', 'dev-secret-change-in-production')
+        secret = os.getenv('JWT_SECRET')
+        if not secret:
+            if not self.debug_mode:
+                raise ValueError("JWT_SECRET environment variable is required in production")
+            logger.warning("Using default JWT secret - INSECURE FOR PRODUCTION")
+            return 'dev-secret-change-in-production-' + secrets.token_urlsafe(32)
+        return secret
 
     @property
     def jwt_algorithm(self) -> str:
@@ -127,14 +123,6 @@ class DatabaseConfig:
         port_key = f"{service_name.upper()}_SERVICE_PORT"
         return int(os.getenv(port_key, '8000'))
 
-    # Upload Path - File system path
-    @property
-    def upload_path(self) -> str:
-        return os.getenv('UPLOAD_PATH', '/app/uploads')
-
-    # === ALL OTHER SETTINGS (From Database) ===
-
-    # Redis Configuration
     @property
     def redis_host(self) -> str:
         return self._get_setting('redis_host', 'redis')
@@ -151,68 +139,65 @@ class DatabaseConfig:
     def redis_db(self) -> int:
         return self._get_setting('redis_db', 0)
 
-    # RabbitMQ Configuration
     @property
     def rabbitmq_host(self) -> str:
-        return self._get_setting('rabbitmq_host', '')
+        return self._get_setting('rabbitmq_host', 'rabbitmq')
 
     @property
     def rabbitmq_port(self) -> int:
-        return self._get_setting('rabbitmq_port', )
+        return self._get_setting('rabbitmq_port', 5672)
 
     @property
     def rabbitmq_user(self) -> str:
-        return self._get_setting('rabbitmq_user', )
+        return self._get_setting('rabbitmq_user', 'guest')
 
     @property
     def rabbitmq_password(self) -> str:
-        return self._get_setting('rabbitmq_password', )
+        return self._get_setting('rabbitmq_password', 'guest')
 
-    # SMTP Configuration
     @property
     def smtp_host(self) -> str:
-        return self._get_setting('smtp_host', )
+        return self._get_setting('smtp_host', 'smtp.gmail.com')
 
     @property
     def smtp_port(self) -> int:
-        return self._get_setting('smtp_port', )
+        return self._get_setting('smtp_port', 587)
 
     @property
     def smtp_username(self) -> str:
-        return self._get_setting('smtp_username', )
+        return self._get_setting('smtp_username', '')
 
     @property
     def smtp_password(self) -> str:
-        return self._get_setting('smtp_password',)
+        return self._get_setting('smtp_password', '')
 
     @property
     def email_from(self) -> str:
-        return self._get_setting('email_from', )
+        return self._get_setting('email_from', 'noreply@pavitra-trading.com')
 
     @property
     def email_from_name(self) -> str:
-        return self._get_setting('email_from_name',)
+        return self._get_setting('email_from_name', 'Pavitra Trading')
 
-    # Application Settings
     @property
     def site_name(self) -> str:
-        return self._get_setting('site_name', )
+        return self._get_setting('site_name', 'Pavitra Trading')
 
     @property
     def site_description(self) -> str:
-        return self._get_setting('site_description',)
+        return self._get_setting('site_description', 'Your trusted online shopping destination')
 
     @property
     def app_name(self) -> str:
-        return self._get_setting('app_name',)
+        return self._get_setting('app_name', 'Pavitra Trading')
 
     @property
     def app_description(self) -> str:
-        return self._get_setting('app_description',)
+        return self._get_setting('app_description', 'E-commerce Platform')
 
     @property
     def currency(self) -> str:
-        return self._get_setting('currency', )
+        return self._get_setting('currency', 'INR')
 
     @property
     def currency_symbol(self) -> str:
@@ -267,14 +252,6 @@ class DatabaseConfig:
         return self._get_setting('free_shipping_min_amount', 500.0)
 
     @property
-    def max_upload_size(self) -> int:
-        return self._get_setting('max_upload_size', 5242880)
-
-    @property
-    def allowed_file_types(self) -> List[str]:
-        return self._get_setting('allowed_file_types', ['jpg', 'jpeg', 'png', 'gif', 'webp'])
-
-    @property
     def log_level(self) -> str:
         return self._get_setting('log_level', 'INFO')
 
@@ -297,6 +274,22 @@ class DatabaseConfig:
     @property
     def stripe_test_mode(self) -> bool:
         return self._get_setting('stripe_test_mode', True)
+
+    @property
+    def razorpay_key_id(self) -> str:
+        return self._get_setting('razorpay_key_id', '')
+
+    @property
+    def razorpay_secret(self) -> str:
+        return self._get_setting('razorpay_secret', '')
+
+    @property
+    def stripe_publishable_key(self) -> str:
+        return self._get_setting('stripe_publishable_key', '')
+
+    @property
+    def stripe_secret_key(self) -> str:
+        return self._get_setting('stripe_secret_key', '')
 
     @property
     def email_notifications(self) -> bool:
@@ -322,31 +315,41 @@ class DatabaseConfig:
     def refund_processing_fee(self) -> float:
         return self._get_setting('refund_processing_fee', 0.0)
 
-    # Payment Gateway Settings
     @property
-    def razorpay_key_id(self) -> str:
-        return self._get_setting('razorpay_key_id', '')
+    def max_upload_size(self) -> int:
+        return self._get_setting('max_upload_size', 5242880)
 
     @property
-    def razorpay_secret(self) -> str:
-        return self._get_setting('razorpay_secret', '')
+    def allowed_file_types(self) -> List[str]:
+        return self._get_setting('allowed_file_types', ['jpg', 'jpeg', 'png', 'gif', 'webp'])
 
     @property
-    def stripe_publishable_key(self) -> str:
-        return self._get_setting('stripe_publishable_key', '')
+    def upload_path(self) -> str:
+        return os.getenv('UPLOAD_PATH', '/app/uploads')
 
     @property
-    def stripe_secret_key(self) -> str:
-        return self._get_setting('stripe_secret_key', '')
+    def free_shipping_threshold(self) -> float:
+        return self._get_setting('free_shipping_threshold', 999.0)
 
     @property
-    def mysql_host_name(self) -> str:
-        return self._get_setting('mysql_host_name', '')
+    def return_period_days(self) -> int:
+        return self._get_setting('return_period_days', 10)
+
     @property
-    def mysql_user(self) -> str:
-        return self._get_setting('mysql_user', '')
+    def site_phone(self) -> str:
+        return self._get_setting('site_phone', '+91-9711317009')
+
     @property
-    def mysql_password(self) -> str:
-        return self._get_setting('mysql_password', '')
+    def site_email(self) -> str:
+        return self._get_setting('site_email', 'support@pavitraenterprises.com')
+
+    @property
+    def business_hours(self) -> Dict[str, str]:
+        return self._get_setting('business_hours', {
+            'monday_friday': '9am-6pm',
+            'saturday': '10am-4pm',
+            'sunday': 'Closed'
+        })
+
 
 config = DatabaseConfig()

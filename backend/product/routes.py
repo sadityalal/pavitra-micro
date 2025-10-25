@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Query, status, UploadFile, File
+from fastapi import Request, APIRouter, HTTPException, Depends, Query, status, UploadFile, File
 from typing import Optional, List
 from shared import config, db, sanitize_input, get_logger, require_roles, redis_client
 from .models import (
@@ -1098,9 +1098,13 @@ async def get_new_arrivals(
 @router.post("/admin/products", response_model=ProductResponse)
 async def create_product(
         product_data: ProductCreate,
-        user_id: int = Depends(require_roles(['admin', 'vendor']))
+        request: Request  # Add Request parameter
 ):
     try:
+        # Extract user_id from the current_user JWT payload
+        current_user = await require_roles(['admin', 'vendor'], request)
+        user_id = int(current_user.get('sub'))
+
         with db.get_cursor() as cursor:
             # Check for duplicate SKU
             cursor.execute("SELECT id FROM products WHERE sku = %s", (product_data.sku,))
@@ -1159,18 +1163,15 @@ async def create_product(
                 product_data.stock_quantity,
                 product_data.product_type.value,
                 product_data.is_featured,
-                'active',  # default status
-                'in_stock' if product_data.stock_quantity > 0 else 'out_of_stock',  # auto-set stock status
-                5  # default low stock threshold
+                'active',
+                'in_stock' if product_data.stock_quantity > 0 else 'out_of_stock',
+                5
             ))
 
             product_id = cursor.lastrowid
-
-            # Get the created product
             cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
 
-            # Parse specification
             specification = None
             if product['specification']:
                 try:
@@ -1203,7 +1204,7 @@ async def create_product(
                 product_type=product['product_type'],
                 weight_grams=float(product['weight_grams']) if product['weight_grams'] else None,
                 main_image_url=product['main_image_url'],
-                image_gallery=None,  # Will be set when images are uploaded
+                image_gallery=None,
                 status=product['status'],
                 is_featured=bool(product['is_featured']),
                 is_trending=bool(product['is_trending']),
@@ -1295,10 +1296,11 @@ async def update_product(product_id: int, product_data: ProductCreate, user_id: 
 
 @router.post("/admin/products/{product_id}/images")
 async def upload_product_images(
-        product_id: int,
-        files: List[UploadFile] = File(...),
-        user_id: int = Depends(require_roles(['admin', 'vendor']))
+        request: Request,  # Move request FIRST (no default)
+        product_id: int,   # Then required parameters
+        files: List[UploadFile] = File(...)  # Then parameters with defaults
 ):
+    await require_roles(['admin', 'vendor'], request)
     try:
         with db.get_cursor() as cursor:
             # Check if product exists

@@ -2,7 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y gcc curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    gcc \
+    curl \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy everything needed
 COPY backend/payment/ /app/payment/
