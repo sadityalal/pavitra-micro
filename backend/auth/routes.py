@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, Form, Request, status
 from fastapi.security import HTTPBearer
 from typing import Optional
 from datetime import datetime, timedelta
-from backend import (
+from shared import (
     config, db, verify_password, get_password_hash, 
     create_access_token, verify_token, validate_email, 
     validate_phone, sanitize_input, get_logger

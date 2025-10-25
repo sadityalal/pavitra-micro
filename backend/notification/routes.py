@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, status
 from typing import List, Optional
-from backend import config, db, sanitize_input, get_logger
+from shared import config, db, sanitize_input, get_logger
 from .models import (
     EmailNotification, SMSNotification, PushNotification,
     NotificationResponse, NotificationStats, HealthResponse,
@@ -8,8 +8,8 @@ from .models import (
 )
 from datetime import datetime, timedelta
 import smtplib
-from email.mime.text import MimeText
-from email.mime.multipart import MimeMultipart
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 import json
 
 router = APIRouter()
@@ -34,18 +34,18 @@ class EmailService:
                 return False
             
             # Create message
-            msg = MimeMultipart('alternative')
+            msg = MIMEMultipart('alternative')
             msg['Subject'] = subject
             msg['From'] = f"{self.email_from_name} <{self.email_from}>"
             msg['To'] = to_email
             
             # Add text/plain part
             if text_content:
-                text_part = MimeText(text_content, 'plain')
+                text_part = MIMEText(text_content, 'plain')
                 msg.attach(text_part)
             
             # Add text/html part
-            html_part = MimeText(html_content, 'html')
+            html_part = MIMEText(html_content, 'html')
             msg.attach(html_part)
             
             # Send email

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from typing import List, Optional
-from backend import config, db, sanitize_input, get_logger
+from shared import config, db, sanitize_input, get_logger
 from .models import (
     OrderCreate, OrderResponse, OrderWithItemsResponse,
     OrderListResponse, HealthResponse, OrderStatus, PaymentStatus

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Form, status
 from typing import List, Optional
-from backend import config, db, sanitize_input, get_logger
+from shared import config, db, sanitize_input, get_logger
 from .models import (
     UserProfileResponse, UserProfileUpdate, AddressResponse,
     AddressCreate, WishlistResponse, CartResponse, HealthResponse

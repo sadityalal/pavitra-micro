@@ -1,6 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
-from ..shared import config, setup_logging, get_logger, db
+from shared import config, setup_logging, get_logger, db
 from .routes import router
 
 # Setup logging

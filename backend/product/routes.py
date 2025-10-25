@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Query, status
 from typing import Optional, List
-from backend import config, db, sanitize_input, get_logger
+from shared import config, db, sanitize_input, get_logger
 from .models import (
     ProductResponse, ProductListResponse, CategoryResponse,
     BrandResponse, ProductSearch, HealthResponse

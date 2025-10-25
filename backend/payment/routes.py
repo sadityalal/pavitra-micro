@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, status, Request
 from typing import List, Optional
-from backend import config, db, sanitize_input, get_logger
+from shared import config, db, sanitize_input, get_logger
 from .models import (
     PaymentCreate, PaymentResponse, PaymentInitiateResponse,
     PaymentVerifyRequest, RefundCreate, RefundResponse,

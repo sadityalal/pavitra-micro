@@ -271,4 +271,8 @@ class DatabaseConfig:
     def sms_notifications(self) -> bool:
         return self._get_setting('sms_notifications', True)
 
+    @property
+    def email_from_name(self) -> str:
+        return self._get_setting('email_from_name', 'Pavitra Trading')
+
 config = DatabaseConfig()
