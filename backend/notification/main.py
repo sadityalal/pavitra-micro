@@ -2,8 +2,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from shared import config, setup_logging, get_logger, db
 from .routes import router
+from .message_consumer import notification_consumer
+import threading
 
-# Setup logging
 setup_logging("notification-service")
 logger = get_logger(__name__)
 
@@ -15,7 +16,6 @@ app = FastAPI(
     redoc_url="/redoc" if not config.maintenance_mode else None
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins,
@@ -24,7 +24,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Maintenance mode check
 @app.middleware("http")
 async def maintenance_mode_middleware(request, call_next):
     if config.maintenance_mode and request.url.path not in ["/health", "/docs", "/redoc"]:
@@ -37,12 +36,22 @@ async def maintenance_mode_middleware(request, call_next):
 
 app.include_router(router, prefix="/api/v1/notifications")
 
+@app.on_event("startup")
+async def startup_event():
+    """Start RabbitMQ consumer on startup"""
+    def start_consumer():
+        notification_consumer.start_consuming()
+    
+    # Start consumer in background thread
+    consumer_thread = threading.Thread(target=start_consumer, daemon=True)
+    consumer_thread.start()
+    logger.info("Notification consumer started in background thread")
+
 @app.get("/health")
 async def health():
     try:
         db.health_check()
         app_name = config.app_name
-        
         return {
             "status": "healthy",
             "service": "notification",
@@ -69,8 +78,8 @@ if __name__ == "__main__":
     port = config.get_service_port('notification')
     logger.info(f"Starting Notification Service on port {port}")
     uvicorn.run(
-        app, 
-        host="0.0.0.0", 
+        app,
+        host="0.0.0.0",
         port=port,
         log_level=config.log_level.lower()
     )

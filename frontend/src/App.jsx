@@ -1,10 +1,15 @@
 import React, { useState, useEffect } from 'react'
-import { BrowserRouter as Router, Routes, Route, Link } from 'react-router-dom'
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import axios from 'axios'
+import BaseLayout from './components/BaseLayout'
 import Home from './pages/Home'
 import Login from './pages/Login'
 import Register from './pages/Register'
 import Products from './pages/Products'
+import ProductDetail from './pages/ProductDetail'
+import Cart from './pages/Cart'
+import Account from './pages/Account'
+import './index.css'
 
 function App() {
   const [user, setUser] = useState(null)
@@ -12,7 +17,6 @@ function App() {
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (token) {
-      // Verify token and get user info
       axios.get('http://localhost:8001/api/v1/auth/users/me', {
         headers: { Authorization: `Bearer ${token}` }
       })
@@ -21,44 +25,21 @@ function App() {
     }
   }, [])
 
-  const logout = () => {
-    localStorage.removeItem('token')
-    setUser(null)
-  }
-
   return (
     <Router>
-      <div>
-        <header className="header">
-          <div className="container">
-            <nav className="nav">
-              <div className="logo">Pavitra Trading</div>
-              <ul className="nav-links">
-                <li><Link to="/">Home</Link></li>
-                <li><Link to="/products">Products</Link></li>
-                {user ? (
-                  <>
-                    <li>Welcome, {user.first_name}</li>
-                    <li><button onClick={logout} className="btn">Logout</button></li>
-                  </>
-                ) : (
-                  <>
-                    <li><Link to="/login">Login</Link></li>
-                    <li><Link to="/register">Register</Link></li>
-                  </>
-                )}
-              </ul>
-            </nav>
-          </div>
-        </header>
-
+      <BaseLayout user={user} setUser={setUser}>
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/login" element={<Login setUser={setUser} />} />
           <Route path="/register" element={<Register setUser={setUser} />} />
           <Route path="/products" element={<Products user={user} />} />
+          <Route path="/product/:slug" element={<ProductDetail user={user} />} />
+          <Route path="/cart" element={<Cart user={user} />} />
+          <Route path="/account/*" element={<Account user={user} />} />
+          <Route path="/about" element={<div className="container py-5"><h1>About Us</h1></div>} />
+          <Route path="/contact" element={<div className="container py-5"><h1>Contact Us</h1></div>} />
         </Routes>
-      </div>
+      </BaseLayout>
     </Router>
   )
 }

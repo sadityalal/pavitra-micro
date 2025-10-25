@@ -1,14 +1,135 @@
-from fastapi import APIRouter, HTTPException, Depends, Form, status
+from fastapi import APIRouter, HTTPException, Depends, Form, status, BackgroundTasks
 from typing import List, Optional
-from shared import config, db, sanitize_input, get_logger
+from shared import config, db, sanitize_input, get_logger, redis_client, rabbitmq_client
 from .models import (
     UserProfileResponse, UserProfileUpdate, AddressResponse,
     AddressCreate, WishlistResponse, CartResponse, HealthResponse
 )
 from datetime import datetime
+import json
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+def publish_user_event(user_data: dict, event_type: str):
+    """Publish user event to RabbitMQ"""
+    try:
+        message = {
+            'event_type': event_type,
+            'user_id': user_data['id'],
+            'email': user_data.get('email'),
+            'first_name': user_data.get('first_name'),
+            'timestamp': datetime.utcnow().isoformat(),
+            'data': user_data
+        }
+        
+        rabbitmq_client.publish_message(
+            exchange='notification_events',
+            routing_key=f'user.{event_type}',
+            message=message
+        )
+        logger.info(f"User {event_type} event published for user {user_data['id']}")
+    except Exception as e:
+        logger.error(f"Failed to publish user event: {e}")
+
+def cache_user_profile(user_id: int, profile_data: dict, expire: int = 1800):
+    """Cache user profile in Redis"""
+    try:
+        key = f"user_profile:{user_id}"
+        redis_client.redis_client.setex(key, expire, json.dumps(profile_data))
+        logger.info(f"Cached user profile for user {user_id}")
+    except Exception as e:
+        logger.error(f"Failed to cache user profile: {e}")
+
+def get_cached_user_profile(user_id: int) -> Optional[dict]:
+    """Get cached user profile from Redis"""
+    try:
+        key = f"user_profile:{user_id}"
+        data = redis_client.redis_client.get(key)
+        if data:
+            return json.loads(data)
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get cached user profile: {e}")
+        return None
+
+def cache_user_addresses(user_id: int, addresses: List[dict], expire: int = 1800):
+    """Cache user addresses in Redis"""
+    try:
+        key = f"user_addresses:{user_id}"
+        redis_client.redis_client.setex(key, expire, json.dumps(addresses))
+        logger.info(f"Cached addresses for user {user_id}")
+    except Exception as e:
+        logger.error(f"Failed to cache user addresses: {e}")
+
+def get_cached_user_addresses(user_id: int) -> Optional[List[dict]]:
+    """Get cached user addresses from Redis"""
+    try:
+        key = f"user_addresses:{user_id}"
+        data = redis_client.redis_client.get(key)
+        if data:
+            return json.loads(data)
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get cached user addresses: {e}")
+        return None
+
+def cache_user_wishlist(user_id: int, wishlist_data: dict, expire: int = 900):
+    """Cache user wishlist in Redis"""
+    try:
+        key = f"user_wishlist:{user_id}"
+        redis_client.redis_client.setex(key, expire, json.dumps(wishlist_data))
+        logger.info(f"Cached wishlist for user {user_id}")
+    except Exception as e:
+        logger.error(f"Failed to cache user wishlist: {e}")
+
+def get_cached_user_wishlist(user_id: int) -> Optional[dict]:
+    """Get cached user wishlist from Redis"""
+    try:
+        key = f"user_wishlist:{user_id}"
+        data = redis_client.redis_client.get(key)
+        if data:
+            return json.loads(data)
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get cached user wishlist: {e}")
+        return None
+
+def cache_user_cart(user_id: int, cart_data: dict, expire: int = 600):
+    """Cache user cart in Redis"""
+    try:
+        key = f"user_cart:{user_id}"
+        redis_client.redis_client.setex(key, expire, json.dumps(cart_data))
+        logger.info(f"Cached cart for user {user_id}")
+    except Exception as e:
+        logger.error(f"Failed to cache user cart: {e}")
+
+def get_cached_user_cart(user_id: int) -> Optional[dict]:
+    """Get cached user cart from Redis"""
+    try:
+        key = f"user_cart:{user_id}"
+        data = redis_client.redis_client.get(key)
+        if data:
+            return json.loads(data)
+        return None
+    except Exception as e:
+        logger.error(f"Failed to get cached user cart: {e}")
+        return None
+
+def invalidate_user_cache(user_id: int):
+    """Invalidate user-related cache"""
+    try:
+        keys = [
+            f"user_profile:{user_id}",
+            f"user_addresses:{user_id}",
+            f"user_wishlist:{user_id}",
+            f"user_cart:{user_id}"
+        ]
+        for key in keys:
+            redis_client.redis_client.delete(key)
+        logger.info(f"Invalidated cache for user {user_id}")
+    except Exception as e:
+        logger.error(f"Failed to invalidate user cache: {e}")
 
 @router.get("/health", response_model=HealthResponse)
 async def health():
@@ -16,7 +137,6 @@ async def health():
         with db.get_cursor() as cursor:
             cursor.execute("SELECT COUNT(*) as count FROM users")
             users_count = cursor.fetchone()['count']
-            
             return HealthResponse(
                 status="healthy",
                 service="user",
@@ -33,11 +153,17 @@ async def health():
         )
 
 @router.get("/profile", response_model=UserProfileResponse)
-async def get_user_profile(user_id: int = 1):  # TODO: Get from auth
+async def get_user_profile(user_id: int = 1):
     try:
+        # Try to get from cache first
+        cached_profile = get_cached_user_profile(user_id)
+        if cached_profile:
+            logger.info(f"Returning cached profile for user {user_id}")
+            return UserProfileResponse(**cached_profile)
+        
         with db.get_cursor() as cursor:
             cursor.execute("""
-                SELECT 
+                SELECT
                     u.*,
                     c.country_name,
                     c.currency_code,
@@ -46,15 +172,12 @@ async def get_user_profile(user_id: int = 1):  # TODO: Get from auth
                 LEFT JOIN countries c ON u.country_id = c.id
                 WHERE u.id = %s
             """, (user_id,))
-            
             user = cursor.fetchone()
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="User not found"
                 )
-            
-            # Get user roles and permissions
             cursor.execute("""
                 SELECT ur.name as role_name, p.name as permission_name
                 FROM user_role_assignments ura
@@ -63,7 +186,6 @@ async def get_user_profile(user_id: int = 1):  # TODO: Get from auth
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_id,))
-            
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -72,7 +194,7 @@ async def get_user_profile(user_id: int = 1):  # TODO: Get from auth
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
             
-            return UserProfileResponse(
+            profile_data = UserProfileResponse(
                 id=user['id'],
                 uuid=user['uuid'],
                 email=user['email'],
@@ -97,6 +219,10 @@ async def get_user_profile(user_id: int = 1):  # TODO: Get from auth
                 updated_at=user['updated_at']
             )
             
+            # Cache the profile
+            cache_user_profile(user_id, profile_data.dict())
+            
+            return profile_data
     except Exception as e:
         logger.error(f"Failed to fetch user profile: {e}")
         raise HTTPException(
@@ -105,10 +231,13 @@ async def get_user_profile(user_id: int = 1):  # TODO: Get from auth
         )
 
 @router.put("/profile", response_model=UserProfileResponse)
-async def update_user_profile(profile_data: UserProfileUpdate, user_id: int = 1):
+async def update_user_profile(
+    profile_data: UserProfileUpdate, 
+    user_id: int = 1,
+    background_tasks: BackgroundTasks = None
+):
     try:
         with db.get_cursor() as cursor:
-            # Check if username is available
             if profile_data.username:
                 cursor.execute("""
                     SELECT id FROM users WHERE username = %s AND id != %s
@@ -118,67 +247,65 @@ async def update_user_profile(profile_data: UserProfileUpdate, user_id: int = 1)
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Username already taken"
                     )
-            
-            # Update user profile
             update_fields = []
             update_params = []
-            
             if profile_data.first_name:
                 update_fields.append("first_name = %s")
                 update_params.append(sanitize_input(profile_data.first_name))
-            
             if profile_data.last_name:
                 update_fields.append("last_name = %s")
                 update_params.append(sanitize_input(profile_data.last_name))
-            
             if profile_data.phone:
                 update_fields.append("phone = %s")
                 update_params.append(sanitize_input(profile_data.phone))
-            
             if profile_data.username:
                 update_fields.append("username = %s")
                 update_params.append(sanitize_input(profile_data.username))
-            
             if profile_data.country_id:
                 update_fields.append("country_id = %s")
                 update_params.append(profile_data.country_id)
-            
             if profile_data.preferred_currency:
                 update_fields.append("preferred_currency = %s")
                 update_params.append(profile_data.preferred_currency)
-            
             if profile_data.preferred_language:
                 update_fields.append("preferred_language = %s")
                 update_params.append(profile_data.preferred_language)
-            
             if profile_data.date_of_birth:
                 update_fields.append("date_of_birth = %s")
                 update_params.append(profile_data.date_of_birth)
-            
             if profile_data.gender:
                 update_fields.append("gender = %s")
                 update_params.append(profile_data.gender)
-            
             if not update_fields:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="No fields to update"
                 )
-            
             update_fields.append("updated_at = NOW()")
             update_params.append(user_id)
-            
             update_query = f"""
-                UPDATE users 
+                UPDATE users
                 SET {', '.join(update_fields)}
                 WHERE id = %s
             """
-            
             cursor.execute(update_query, update_params)
             
-            # Return updated profile
-            return await get_user_profile(user_id)
+            # Get updated user
+            cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+            updated_user = cursor.fetchone()
             
+            # Publish profile updated event
+            if background_tasks:
+                background_tasks.add_task(
+                    publish_user_event,
+                    updated_user,
+                    'profile_updated'
+                )
+            
+            # Invalidate cache
+            invalidate_user_cache(user_id)
+            
+            return await get_user_profile(user_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -191,16 +318,20 @@ async def update_user_profile(profile_data: UserProfileUpdate, user_id: int = 1)
 @router.get("/addresses", response_model=List[AddressResponse])
 async def get_user_addresses(user_id: int = 1):
     try:
+        # Try to get from cache first
+        cached_addresses = get_cached_user_addresses(user_id)
+        if cached_addresses:
+            logger.info(f"Returning cached addresses for user {user_id}")
+            return [AddressResponse(**addr) for addr in cached_addresses]
+        
         with db.get_cursor() as cursor:
             cursor.execute("""
-                SELECT * FROM user_addresses 
-                WHERE user_id = %s 
+                SELECT * FROM user_addresses
+                WHERE user_id = %s
                 ORDER BY is_default DESC, created_at DESC
             """, (user_id,))
-            
             addresses = cursor.fetchall()
-            
-            return [
+            address_list = [
                 AddressResponse(
                     id=addr['id'],
                     user_id=addr['user_id'],
@@ -222,6 +353,10 @@ async def get_user_addresses(user_id: int = 1):
                 for addr in addresses
             ]
             
+            # Cache the addresses
+            cache_user_addresses(user_id, [addr.dict() for addr in address_list])
+            
+            return address_list
     except Exception as e:
         logger.error(f"Failed to fetch user addresses: {e}")
         raise HTTPException(
@@ -230,18 +365,19 @@ async def get_user_addresses(user_id: int = 1):
         )
 
 @router.post("/addresses", response_model=AddressResponse)
-async def create_user_address(address_data: AddressCreate, user_id: int = 1):
+async def create_user_address(
+    address_data: AddressCreate, 
+    user_id: int = 1,
+    background_tasks: BackgroundTasks = None
+):
     try:
         with db.get_cursor() as cursor:
-            # If this is set as default, unset other defaults of same type
             if address_data.is_default:
                 cursor.execute("""
-                    UPDATE user_addresses 
-                    SET is_default = 0 
+                    UPDATE user_addresses
+                    SET is_default = 0
                     WHERE user_id = %s AND address_type = %s
                 """, (user_id, address_data.address_type.value))
-            
-            # Create new address
             cursor.execute("""
                 INSERT INTO user_addresses (
                     user_id, address_type, full_name, phone, address_line1,
@@ -263,12 +399,12 @@ async def create_user_address(address_data: AddressCreate, user_id: int = 1):
                 address_data.address_type_detail.value,
                 address_data.is_default
             ))
-            
             address_id = cursor.lastrowid
-            
-            # Return the created address
             cursor.execute("SELECT * FROM user_addresses WHERE id = %s", (address_id,))
             address = cursor.fetchone()
+            
+            # Invalidate cache
+            invalidate_user_cache(user_id)
             
             return AddressResponse(
                 id=address['id'],
@@ -288,7 +424,6 @@ async def create_user_address(address_data: AddressCreate, user_id: int = 1):
                 created_at=address['created_at'],
                 updated_at=address['updated_at']
             )
-            
     except Exception as e:
         logger.error(f"Failed to create address: {e}")
         raise HTTPException(
@@ -298,31 +433,27 @@ async def create_user_address(address_data: AddressCreate, user_id: int = 1):
 
 @router.put("/addresses/{address_id}", response_model=AddressResponse)
 async def update_user_address(
-    address_id: int, 
-    address_data: AddressCreate, 
-    user_id: int = 1
+    address_id: int,
+    address_data: AddressCreate,
+    user_id: int = 1,
+    background_tasks: BackgroundTasks = None
 ):
     try:
         with db.get_cursor() as cursor:
-            # Check if address belongs to user
             cursor.execute("SELECT id FROM user_addresses WHERE id = %s AND user_id = %s", (address_id, user_id))
             if not cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Address not found"
                 )
-            
-            # If this is set as default, unset other defaults of same type
             if address_data.is_default:
                 cursor.execute("""
-                    UPDATE user_addresses 
-                    SET is_default = 0 
+                    UPDATE user_addresses
+                    SET is_default = 0
                     WHERE user_id = %s AND address_type = %s AND id != %s
                 """, (user_id, address_data.address_type.value, address_id))
-            
-            # Update address
             cursor.execute("""
-                UPDATE user_addresses 
+                UPDATE user_addresses
                 SET address_type = %s, full_name = %s, phone = %s, address_line1 = %s,
                     address_line2 = %s, landmark = %s, city = %s, state = %s,
                     country = %s, postal_code = %s, address_type_detail = %s,
@@ -343,10 +474,11 @@ async def update_user_address(
                 address_data.is_default,
                 address_id
             ))
-            
-            # Return updated address
             cursor.execute("SELECT * FROM user_addresses WHERE id = %s", (address_id,))
             address = cursor.fetchone()
+            
+            # Invalidate cache
+            invalidate_user_cache(user_id)
             
             return AddressResponse(
                 id=address['id'],
@@ -366,7 +498,6 @@ async def update_user_address(
                 created_at=address['created_at'],
                 updated_at=address['updated_at']
             )
-            
     except HTTPException:
         raise
     except Exception as e:
@@ -380,19 +511,18 @@ async def update_user_address(
 async def delete_user_address(address_id: int, user_id: int = 1):
     try:
         with db.get_cursor() as cursor:
-            # Check if address belongs to user
             cursor.execute("SELECT id FROM user_addresses WHERE id = %s AND user_id = %s", (address_id, user_id))
             if not cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Address not found"
                 )
-            
-            # Delete address
             cursor.execute("DELETE FROM user_addresses WHERE id = %s", (address_id,))
             
-            return {"message": "Address deleted successfully"}
+            # Invalidate cache
+            invalidate_user_cache(user_id)
             
+            return {"message": "Address deleted successfully"}
     except HTTPException:
         raise
     except Exception as e:
@@ -405,9 +535,15 @@ async def delete_user_address(address_id: int, user_id: int = 1):
 @router.get("/wishlist", response_model=WishlistResponse)
 async def get_user_wishlist(user_id: int = 1):
     try:
+        # Try to get from cache first
+        cached_wishlist = get_cached_user_wishlist(user_id)
+        if cached_wishlist:
+            logger.info(f"Returning cached wishlist for user {user_id}")
+            return WishlistResponse(**cached_wishlist)
+        
         with db.get_cursor() as cursor:
             cursor.execute("""
-                SELECT 
+                SELECT
                     w.*,
                     p.name as product_name,
                     p.slug as product_slug,
@@ -419,9 +555,7 @@ async def get_user_wishlist(user_id: int = 1):
                 WHERE w.user_id = %s AND p.status = 'active'
                 ORDER BY w.created_at DESC
             """, (user_id,))
-            
             wishlist_items = cursor.fetchall()
-            
             items = [
                 {
                     'id': item['id'],
@@ -435,12 +569,15 @@ async def get_user_wishlist(user_id: int = 1):
                 }
                 for item in wishlist_items
             ]
-            
-            return WishlistResponse(
+            wishlist_data = WishlistResponse(
                 items=items,
                 total_count=len(items)
             )
             
+            # Cache the wishlist
+            cache_user_wishlist(user_id, wishlist_data.dict())
+            
+            return wishlist_data
     except Exception as e:
         logger.error(f"Failed to fetch wishlist: {e}")
         raise HTTPException(
@@ -452,32 +589,26 @@ async def get_user_wishlist(user_id: int = 1):
 async def add_to_wishlist(product_id: int, user_id: int = 1):
     try:
         with db.get_cursor() as cursor:
-            # Check if product exists and is active
             cursor.execute("SELECT id FROM products WHERE id = %s AND status = 'active'", (product_id,))
             if not cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
-            
-            # Check if already in wishlist
             cursor.execute("SELECT id FROM wishlists WHERE user_id = %s AND product_id = %s", (user_id, product_id))
             if cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Product already in wishlist"
                 )
-            
-            # Add to wishlist
             cursor.execute("INSERT INTO wishlists (user_id, product_id) VALUES (%s, %s)", (user_id, product_id))
-            
-            # Update product wishlist count
             cursor.execute("UPDATE products SET wishlist_count = wishlist_count + 1 WHERE id = %s", (product_id,))
             
+            # Invalidate wishlist cache
+            redis_client.redis_client.delete(f"user_wishlist:{user_id}")
+            
             logger.info(f"Product {product_id} added to wishlist for user {user_id}")
-            
             return {"message": "Product added to wishlist"}
-            
     except HTTPException:
         raise
     except Exception as e:
@@ -491,22 +622,19 @@ async def add_to_wishlist(product_id: int, user_id: int = 1):
 async def remove_from_wishlist(product_id: int, user_id: int = 1):
     try:
         with db.get_cursor() as cursor:
-            # Remove from wishlist
             cursor.execute("DELETE FROM wishlists WHERE user_id = %s AND product_id = %s", (user_id, product_id))
-            
             if cursor.rowcount == 0:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found in wishlist"
                 )
-            
-            # Update product wishlist count
             cursor.execute("UPDATE products SET wishlist_count = GREATEST(0, wishlist_count - 1) WHERE id = %s", (product_id,))
             
+            # Invalidate wishlist cache
+            redis_client.redis_client.delete(f"user_wishlist:{user_id}")
+            
             logger.info(f"Product {product_id} removed from wishlist for user {user_id}")
-            
             return {"message": "Product removed from wishlist"}
-            
     except HTTPException:
         raise
     except Exception as e:
@@ -519,9 +647,15 @@ async def remove_from_wishlist(product_id: int, user_id: int = 1):
 @router.get("/cart", response_model=CartResponse)
 async def get_user_cart(user_id: int = 1):
     try:
+        # Try to get from cache first
+        cached_cart = get_cached_user_cart(user_id)
+        if cached_cart:
+            logger.info(f"Returning cached cart for user {user_id}")
+            return CartResponse(**cached_cart)
+        
         with db.get_cursor() as cursor:
             cursor.execute("""
-                SELECT 
+                SELECT
                     sc.*,
                     p.name as product_name,
                     p.slug as product_slug,
@@ -535,18 +669,14 @@ async def get_user_cart(user_id: int = 1):
                 WHERE sc.user_id = %s AND p.status = 'active'
                 ORDER BY sc.created_at DESC
             """, (user_id,))
-            
             cart_items = cursor.fetchall()
-            
             items = []
             subtotal = 0
             total_items = 0
-            
             for item in cart_items:
                 item_total = float(item['product_price']) * item['quantity']
                 subtotal += item_total
                 total_items += item['quantity']
-                
                 items.append({
                     'id': item['id'],
                     'product_id': item['product_id'],
@@ -561,13 +691,16 @@ async def get_user_cart(user_id: int = 1):
                     'stock_status': item['stock_status'],
                     'max_cart_quantity': item['max_cart_quantity']
                 })
-            
-            return CartResponse(
+            cart_data = CartResponse(
                 items=items,
                 subtotal=subtotal,
                 total_items=total_items
             )
             
+            # Cache the cart
+            cache_user_cart(user_id, cart_data.dict())
+            
+            return cart_data
     except Exception as e:
         logger.error(f"Failed to fetch cart: {e}")
         raise HTTPException(
@@ -583,76 +716,62 @@ async def add_to_cart(product_id: int, quantity: int = 1, user_id: int = 1):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Quantity must be at least 1"
             )
-        
         with db.get_cursor() as cursor:
-            # Check if product exists and is active
             cursor.execute("""
-                SELECT id, stock_quantity, stock_status, max_cart_quantity 
-                FROM products 
+                SELECT id, stock_quantity, stock_status, max_cart_quantity
+                FROM products
                 WHERE id = %s AND status = 'active'
             """, (product_id,))
-            
             product = cursor.fetchone()
             if not product:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
-            
-            # Check stock availability
             if product['stock_status'] == 'out_of_stock':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Product is out of stock"
                 )
-            
             if quantity > product['stock_quantity'] and product['stock_status'] != 'on_backorder':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Only {product['stock_quantity']} items available in stock"
                 )
-            
-            # Check max cart quantity
             max_quantity = min(product['max_cart_quantity'], product['stock_quantity'])
             if quantity > max_quantity:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Maximum {max_quantity} items can be added to cart"
                 )
-            
-            # Check if product already in cart
             cursor.execute("""
-                SELECT id, quantity FROM shopping_cart 
+                SELECT id, quantity FROM shopping_cart
                 WHERE user_id = %s AND product_id = %s AND variation_id IS NULL
             """, (user_id, product_id))
-            
             existing_item = cursor.fetchone()
-            
             if existing_item:
-                # Update quantity
                 new_quantity = existing_item['quantity'] + quantity
                 if new_quantity > max_quantity:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Maximum {max_quantity} items can be added to cart"
                     )
-                
                 cursor.execute("""
-                    UPDATE shopping_cart 
-                    SET quantity = %s, updated_at = NOW() 
+                    UPDATE shopping_cart
+                    SET quantity = %s, updated_at = NOW()
                     WHERE id = %s
                 """, (new_quantity, existing_item['id']))
             else:
-                # Add new item to cart
                 cursor.execute("""
-                    INSERT INTO shopping_cart (user_id, product_id, quantity) 
+                    INSERT INTO shopping_cart (user_id, product_id, quantity)
                     VALUES (%s, %s, %s)
                 """, (user_id, product_id, quantity))
             
+            # Invalidate cart cache
+            redis_client.redis_client.delete(f"user_cart:{user_id}")
+            
             logger.info(f"Product {product_id} added to cart for user {user_id}")
-            
             return {"message": "Product added to cart"}
-            
     except HTTPException:
         raise
     except Exception as e:
@@ -670,45 +789,42 @@ async def update_cart_item(cart_item_id: int, quantity: int, user_id: int = 1):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Quantity cannot be negative"
             )
-        
         with db.get_cursor() as cursor:
-            # Get cart item and product details
             cursor.execute("""
                 SELECT sc.*, p.stock_quantity, p.stock_status, p.max_cart_quantity
                 FROM shopping_cart sc
                 JOIN products p ON sc.product_id = p.id
                 WHERE sc.id = %s AND sc.user_id = %s
             """, (cart_item_id, user_id))
-            
             cart_item = cursor.fetchone()
             if not cart_item:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Cart item not found"
                 )
-            
             if quantity == 0:
-                # Remove item from cart
                 cursor.execute("DELETE FROM shopping_cart WHERE id = %s", (cart_item_id,))
+                
+                # Invalidate cart cache
+                redis_client.redis_client.delete(f"user_cart:{user_id}")
+                
                 return {"message": "Item removed from cart"}
-            
-            # Check stock availability
             max_quantity = min(cart_item['max_cart_quantity'], cart_item['stock_quantity'])
             if quantity > max_quantity and cart_item['stock_status'] != 'on_backorder':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Maximum {max_quantity} items available"
                 )
-            
-            # Update quantity
             cursor.execute("""
-                UPDATE shopping_cart 
-                SET quantity = %s, updated_at = NOW() 
+                UPDATE shopping_cart
+                SET quantity = %s, updated_at = NOW()
                 WHERE id = %s
             """, (quantity, cart_item_id))
             
-            return {"message": "Cart updated successfully"}
+            # Invalidate cart cache
+            redis_client.redis_client.delete(f"user_cart:{user_id}")
             
+            return {"message": "Cart updated successfully"}
     except HTTPException:
         raise
     except Exception as e:
@@ -723,15 +839,16 @@ async def remove_from_cart(cart_item_id: int, user_id: int = 1):
     try:
         with db.get_cursor() as cursor:
             cursor.execute("DELETE FROM shopping_cart WHERE id = %s AND user_id = %s", (cart_item_id, user_id))
-            
             if cursor.rowcount == 0:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Cart item not found"
                 )
             
-            return {"message": "Item removed from cart"}
+            # Invalidate cart cache
+            redis_client.redis_client.delete(f"user_cart:{user_id}")
             
+            return {"message": "Item removed from cart"}
     except HTTPException:
         raise
     except Exception as e:
@@ -747,8 +864,10 @@ async def clear_cart(user_id: int = 1):
         with db.get_cursor() as cursor:
             cursor.execute("DELETE FROM shopping_cart WHERE user_id = %s", (user_id,))
             
-            return {"message": "Cart cleared successfully"}
+            # Invalidate cart cache
+            redis_client.redis_client.delete(f"user_cart:{user_id}")
             
+            return {"message": "Cart cleared successfully"}
     except Exception as e:
         logger.error(f"Failed to clear cart: {e}")
         raise HTTPException(
