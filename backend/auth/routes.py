@@ -4,25 +4,26 @@ from datetime import datetime, timedelta
 from shared import (
     config, db, verify_password, get_password_hash,
     create_access_token, verify_token, validate_email,
-    validate_phone, sanitize_input, get_logger, rabbitmq_client
+    validate_phone, sanitize_input, get_logger, rabbitmq_client, redis_client
 )
 from .models import (
     UserCreate, UserLogin, Token, UserResponse,
     RoleResponse, PermissionCheck, HealthResponse
 )
 import re
+
 router = APIRouter()
 logger = get_logger(__name__)
 
+
 def validate_username(username: str) -> bool:
-    """Validate username format"""
     if not username:
         return False
     pattern = r'^[a-zA-Z0-9_]{3,30}$'
     return re.match(pattern, username) is not None
 
+
 def publish_user_registration_event(user_data: dict):
-    """Publish user registration event to RabbitMQ"""
     try:
         message = {
             'event_type': 'user_registered',
@@ -32,7 +33,6 @@ def publish_user_registration_event(user_data: dict):
             'timestamp': datetime.utcnow().isoformat(),
             'data': user_data
         }
-        
         rabbitmq_client.publish_message(
             exchange='notification_events',
             routing_key='user.registered',
@@ -42,50 +42,57 @@ def publish_user_registration_event(user_data: dict):
     except Exception as e:
         logger.error(f"Failed to publish user registration event: {e}")
 
-# [Rest of the existing auth routes code remains the same until the register endpoint...]
 
 @router.post("/register", response_model=Token)
 async def register_user(
-    email: Optional[str] = Form(None),
-    phone: Optional[str] = Form(None),
-    username: Optional[str] = Form(None),
-    password: str = Form(...),
-    first_name: str = Form(...),
-    last_name: str = Form(...),
-    country_id: int = Form(1),
-    background_tasks: BackgroundTasks = None
+        email: Optional[str] = Form(None),
+        phone: Optional[str] = Form(None),
+        username: Optional[str] = Form(None),
+        password: str = Form(...),
+        first_name: str = Form(...),
+        last_name: str = Form(...),
+        country_id: int = Form(1),
+        background_tasks: BackgroundTasks = None
 ):
     first_name = sanitize_input(first_name)
     last_name = sanitize_input(last_name)
+
     if not email and not phone and not username:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email, phone, or username is required"
         )
+
     if email and not validate_email(email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid email format"
         )
+
     if phone and not validate_phone(phone):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid phone format"
         )
+
     if username and not validate_username(username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username must be 3-30 characters and contain only letters, numbers, and underscores"
         )
+
     if len(password) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Password must be at least 8 characters long"
         )
+
     if len(password.encode('utf-8')) > 72:
         password = password[:72]
+
     try:
         with db.get_cursor() as cursor:
+            # Check for existing users
             if email:
                 cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
                 if cursor.fetchone():
@@ -93,6 +100,7 @@ async def register_user(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Email already registered"
                     )
+
             if phone:
                 cursor.execute("SELECT id FROM users WHERE phone = %s", (phone,))
                 if cursor.fetchone():
@@ -100,6 +108,7 @@ async def register_user(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Phone number already registered"
                     )
+
             if username:
                 cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
                 if cursor.fetchone():
@@ -107,12 +116,17 @@ async def register_user(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Username already taken"
                     )
+
+            # Create user
             password_hash = get_password_hash(password)
             cursor.execute("""
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (email, phone, username, password_hash, first_name, last_name, country_id))
+
             user_id = cursor.lastrowid
+
+            # Assign default customer role
             cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
             role = cursor.fetchone()
             if role:
@@ -120,6 +134,8 @@ async def register_user(
                     INSERT INTO user_role_assignments (user_id, role_id, assigned_by)
                     VALUES (%s, %s, %s)
                 """, (user_id, role['id'], user_id))
+
+            # Get user roles and permissions
             cursor.execute("""
                 SELECT ur.name as role_name, p.name as permission_name
                 FROM user_role_assignments ura
@@ -128,6 +144,7 @@ async def register_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_id,))
+
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -135,6 +152,8 @@ async def register_user(
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
+
+            # Create access token
             access_token = create_access_token(
                 data={
                     "sub": str(user_id),
@@ -144,19 +163,20 @@ async def register_user(
                 },
                 expires_delta=timedelta(hours=24)
             )
-            
-            # Get created user
+
+            # Get complete user data for event
             cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             user = cursor.fetchone()
-            
-            # Publish user registration event in background
+
+            # Publish registration event
             if background_tasks:
                 background_tasks.add_task(
                     publish_user_registration_event,
                     user
                 )
-            
+
             logger.info(f"User registered successfully: {email or phone or username}")
+
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -164,6 +184,7 @@ async def register_user(
                 user_roles=list(roles),
                 user_permissions=list(permissions)
             )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -177,13 +198,9 @@ async def register_user(
 @router.get("/site-settings")
 async def get_site_settings():
     try:
-        # Use your existing config logic to get all settings
-        from shared.config import config
-
-        # Refresh cache to get latest settings
+        # Force refresh config cache to get latest from database
         config.refresh_cache()
 
-        # Get all settings using the existing logic
         settings = {
             'site_name': config.site_name,
             'site_description': config.site_description,
@@ -228,7 +245,6 @@ async def get_site_settings():
             'smtp_username': config.smtp_username,
             'smtp_password': config.smtp_password,
             'email_from': config.email_from,
-            # Add any additional settings you need
             'free_shipping_threshold': config._get_setting('free_shipping_threshold', 999),
             'return_period_days': config._get_setting('return_period_days', 10),
             'site_phone': config._get_setting('site_phone', '+91-9711317009'),
@@ -239,9 +255,7 @@ async def get_site_settings():
                 'sunday': 'Closed'
             })
         }
-
         return settings
-
     except Exception as e:
         logger.error(f"Failed to fetch site settings: {e}")
         raise HTTPException(
@@ -252,18 +266,18 @@ async def get_site_settings():
 
 @router.post("/login")
 async def login_user(login_data: UserLogin):
-    """User login endpoint"""
     try:
         with db.get_cursor() as cursor:
             # Find user by email, phone, or username
             cursor.execute("""
-                SELECT id, email, password_hash, first_name, last_name, 
+                SELECT id, email, password_hash, first_name, last_name,
                        is_active, email_verified, phone_verified
-                FROM users 
+                FROM users
                 WHERE email = %s OR phone = %s OR username = %s
             """, (login_data.login_id, login_data.login_id, login_data.login_id))
 
             user = cursor.fetchone()
+
             if not user or not verify_password(login_data.password, user['password_hash']):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -294,6 +308,7 @@ async def login_user(login_data: UserLogin):
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
 
+            # Create access token
             access_token = create_access_token(
                 data={
                     "sub": str(user['id']),
@@ -327,12 +342,11 @@ async def login_user(login_data: UserLogin):
 
 @router.post("/logout")
 async def logout_user(request: Request):
-    """User logout endpoint"""
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header[7:]
-        # Invalidate token in Redis (optional)
         try:
+            # Invalidate token in Redis
             redis_client.redis_client.delete(f"token:{token}")
         except Exception as e:
             logger.error(f"Token invalidation failed: {e}")
@@ -342,7 +356,6 @@ async def logout_user(request: Request):
 
 @router.post("/refresh")
 async def refresh_token(request: Request):
-    """Refresh access token"""
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(
@@ -352,13 +365,13 @@ async def refresh_token(request: Request):
 
     token = auth_header[7:]
     payload = verify_token(token)
+
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
 
-    # Create new token with same data
     new_token = create_access_token(
         data={
             "sub": payload['sub'],
@@ -380,14 +393,12 @@ async def refresh_token(request: Request):
 
 @router.post("/forgot-password")
 async def forgot_password(email: str = Form(...)):
-    """Initiate password reset"""
     try:
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, first_name FROM users WHERE email = %s", (email,))
             user = cursor.fetchone()
 
             if user:
-                # Generate reset token (in production, send email)
                 reset_token = create_access_token(
                     data={"sub": str(user['id']), "type": "password_reset"},
                     expires_delta=timedelta(hours=1)
@@ -415,7 +426,6 @@ async def forgot_password(email: str = Form(...)):
 
 @router.post("/reset-password")
 async def reset_password(token: str = Form(...), new_password: str = Form(...)):
-    """Reset password with token"""
     try:
         payload = verify_token(token)
         if not payload or payload.get('type') != 'password_reset':
@@ -426,7 +436,7 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
 
         user_id = int(payload['sub'])
 
-        # Verify token in Redis
+        # Verify stored token
         stored_token = redis_client.redis_client.get(f"password_reset:{user_id}")
         if not stored_token or stored_token != token:
             raise HTTPException(
@@ -435,8 +445,9 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
             )
 
         with db.get_cursor() as cursor:
-            # Update password
             new_password_hash = get_password_hash(new_password)
+
+            # Update password
             cursor.execute(
                 "UPDATE users SET password_hash = %s WHERE id = %s",
                 (new_password_hash, user_id)
@@ -448,7 +459,7 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
                 (user_id, new_password_hash)
             )
 
-            # Clear reset token
+            # Remove used token
             redis_client.redis_client.delete(f"password_reset:{user_id}")
 
             logger.info(f"Password reset successful for user {user_id}")

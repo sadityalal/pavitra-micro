@@ -2,7 +2,9 @@ import os
 import logging
 import json
 from typing import Any, Optional, Dict, List
+
 logger = logging.getLogger(__name__)
+
 
 class DatabaseConfig:
     def __init__(self):
@@ -20,11 +22,41 @@ class DatabaseConfig:
         return self._db
 
     def _get_setting(self, key: str, default: Any = None) -> Any:
+        """Get setting from database with fallback to environment variables"""
+        # First check cache
         if key in self._cache:
             return self._cache[key]
+
+        # Then check environment variables
+        env_key = key.upper()
+        if env_key in os.environ:
+            value = os.environ[env_key]
+            # Convert based on expected type
+            if isinstance(default, bool):
+                value = value.lower() in ('true', '1', 'yes')
+            elif isinstance(default, int):
+                try:
+                    value = int(value)
+                except ValueError:
+                    value = default
+            elif isinstance(default, float):
+                try:
+                    value = float(value)
+                except ValueError:
+                    value = default
+            elif isinstance(default, list):
+                try:
+                    value = json.loads(value)
+                except:
+                    value = default
+            self._cache[key] = value
+            return value
+
+        # Finally try database
         db = self._get_db()
         if not db:
             return default
+
         connection = None
         try:
             connection = db.get_connection()
@@ -45,7 +77,7 @@ class DatabaseConfig:
 
     def _convert_value(self, value: str, value_type: str) -> Any:
         if value_type == 'boolean':
-            return value.lower() == 'true'
+            return value.lower() in ('true', '1', 'yes', 'on')
         elif value_type == 'number':
             try:
                 return float(value) if '.' in value else int(value)
@@ -62,9 +94,7 @@ class DatabaseConfig:
     def refresh_cache(self):
         self._cache.clear()
 
-    # === ESSENTIAL BOOTSTRAP SETTINGS (Environment Only) ===
-    
-    # Database Configuration - Essential for bootstrapping
+    # Database configuration
     @property
     def db_host(self) -> str:
         return os.getenv('DB_HOST', 'mysql')
@@ -85,7 +115,6 @@ class DatabaseConfig:
     def db_password(self) -> str:
         return os.getenv('DB_PASSWORD', 'app123')
 
-    # JWT Configuration - Security sensitive, keep in environment
     @property
     def jwt_secret(self) -> str:
         return os.getenv('JWT_SECRET', 'dev-secret-change-in-production')
@@ -94,7 +123,6 @@ class DatabaseConfig:
     def jwt_algorithm(self) -> str:
         return os.getenv('JWT_ALGORITHM', 'HS256')
 
-    # Service Ports - Docker infrastructure
     def get_service_port(self, service_name: str) -> int:
         port_key = f"{service_name.upper()}_SERVICE_PORT"
         return int(os.getenv(port_key, '8000'))

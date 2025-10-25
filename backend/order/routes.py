@@ -61,40 +61,52 @@ async def health():
 async def create_order(order_data: OrderCreate, user_id: int = 1, background_tasks: BackgroundTasks = None):
     try:
         with db.get_cursor() as cursor:
-            subtotal = 0
-            items_data = []
-            for item in order_data.items:
-                cursor.execute("""
-                    SELECT name, sku, main_image_url, base_price, gst_rate, stock_quantity, stock_status
-                    FROM products WHERE id = %s AND status = 'active'
-                """, (item.product_id,))
-                product = cursor.fetchone()
-                if not product:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Product {item.product_id} not found"
-                    )
-                if product['stock_status'] == 'out_of_stock':
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Product {product['name']} is out of stock"
-                    )
-                if item.quantity > product['stock_quantity'] and product['stock_status'] != 'on_backorder':
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Not enough stock for {product['name']}"
-                    )
+            # Start transaction
+            connection = db.get_connection()
+            connection.start_transaction()
 
-                unit_price = float(product['base_price'])
-                item_total = unit_price * item.quantity
-                subtotal += item_total
+            try:
+                subtotal = 0
+                items_data = []
 
-                # Get variation attributes if variation_id is provided
-                variation_attributes = None
-                if item.variation_id:
-                    try:
+                # Validate all products and calculate totals
+                for item in order_data.items:
+                    cursor.execute("""
+                        SELECT name, sku, main_image_url, base_price, gst_rate, 
+                               stock_quantity, stock_status, low_stock_threshold
+                        FROM products 
+                        WHERE id = %s AND status = 'active'
+                    """, (item.product_id,))
+                    product = cursor.fetchone()
+
+                    if not product:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Product {item.product_id} not found or inactive"
+                        )
+
+                    # Check stock availability
+                    if product['stock_status'] == 'out_of_stock':
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Product {product['name']} is out of stock"
+                        )
+
+                    if item.quantity > product['stock_quantity'] and product['stock_status'] != 'on_backorder':
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Not enough stock for {product['name']}. Available: {product['stock_quantity']}"
+                        )
+
+                    unit_price = float(product['base_price'])
+                    item_total = unit_price * item.quantity
+                    subtotal += item_total
+
+                    # Handle variations
+                    variation_attributes = None
+                    if item.variation_id:
                         cursor.execute("""
-                            SELECT pav.value, pa.name 
+                            SELECT pav.value, pa.name as attribute_name
                             FROM variation_attributes va
                             JOIN product_attribute_values pav ON va.attribute_value_id = pav.id
                             JOIN product_attributes pa ON pav.attribute_id = pa.id
@@ -102,177 +114,175 @@ async def create_order(order_data: OrderCreate, user_id: int = 1, background_tas
                         """, (item.variation_id,))
                         attributes = cursor.fetchall()
                         if attributes:
-                            variation_attributes = {attr['name']: attr['value'] for attr in attributes}
-                    except Exception as e:
-                        logger.error(f"Failed to fetch variation attributes: {e}")
+                            variation_attributes = {attr['attribute_name']: attr['value'] for attr in attributes}
 
-                items_data.append({
-                    'product_id': item.product_id,
-                    'variation_id': item.variation_id,
-                    'product_name': product['name'],
-                    'product_sku': product['sku'],
-                    'product_image': product['main_image_url'],
-                    'unit_price': unit_price,
-                    'quantity': item.quantity,
-                    'total_price': item_total,
-                    'gst_rate': float(product['gst_rate']),
-                    'gst_amount': item_total * float(product['gst_rate']) / 100,
-                    'variation_attributes': variation_attributes
-                })
+                    items_data.append({
+                        'product_id': item.product_id,
+                        'variation_id': item.variation_id,
+                        'product_name': product['name'],
+                        'product_sku': product['sku'],
+                        'product_image': product['main_image_url'],
+                        'unit_price': unit_price,
+                        'quantity': item.quantity,
+                        'total_price': item_total,
+                        'gst_rate': float(product['gst_rate']),
+                        'gst_amount': item_total * float(product['gst_rate']) / 100,
+                        'variation_attributes': variation_attributes
+                    })
 
-            shipping_amount = 0.0
-            if subtotal < config.free_shipping_min_amount:
-                shipping_amount = 50.0
+                # Calculate order totals
+                shipping_amount = 0.0
+                if subtotal < config.free_shipping_min_amount:
+                    shipping_amount = 50.0  # Default shipping cost
 
-            tax_amount = sum(item['gst_amount'] for item in items_data)
-            discount_amount = 0.0
-            total_amount = subtotal + shipping_amount + tax_amount - discount_amount
+                tax_amount = sum(item['gst_amount'] for item in items_data)
+                discount_amount = 0.0  # Could be calculated from promotions
+                total_amount = subtotal + shipping_amount + tax_amount - discount_amount
 
-            if subtotal < config.min_order_amount:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Minimum order amount is {config.currency_symbol}{config.min_order_amount}"
-                )
+                # Validate minimum order amount
+                if subtotal < config.min_order_amount:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Minimum order amount is {config.currency_symbol}{config.min_order_amount}"
+                    )
 
-            cursor.execute("SELECT COUNT(*) as count FROM orders WHERE DATE(created_at) = CURDATE()")
-            daily_count = cursor.fetchone()['count'] + 1
-            order_number = f"PT{datetime.now().strftime('%Y%m%d')}{daily_count:04d}"
+                # Generate order number
+                cursor.execute("SELECT COUNT(*) as count FROM orders WHERE DATE(created_at) = CURDATE()")
+                daily_count = cursor.fetchone()['count'] + 1
+                order_number = f"PT{datetime.now().strftime('%Y%m%d')}{daily_count:04d}"
 
-            cursor.execute("""
-                INSERT INTO orders (
-                    order_number, user_id, subtotal, shipping_amount, tax_amount,
-                    discount_amount, total_amount, payment_method, shipping_address,
-                    billing_address, customer_note, is_gst_invoice, gst_number
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                order_number, user_id, subtotal, shipping_amount, tax_amount,
-                discount_amount, total_amount, order_data.payment_method.value,
-                str(order_data.shipping_address),
-                str(order_data.billing_address) if order_data.billing_address else str(order_data.shipping_address),
-                sanitize_input(order_data.customer_note) if order_data.customer_note else None,
-                order_data.use_gst_invoice,
-                sanitize_input(order_data.gst_number) if order_data.gst_number else None
-            ))
-
-            order_id = cursor.lastrowid
-
-            for item in items_data:
+                # Create order
                 cursor.execute("""
-                    INSERT INTO order_items (
-                        order_id, product_id, variation_id, product_name, product_sku,
-                        product_image, unit_price, quantity, total_price, gst_rate, gst_amount,
-                        variation_attributes
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    INSERT INTO orders (
+                        order_number, user_id, subtotal, shipping_amount, tax_amount,
+                        discount_amount, total_amount, payment_method, shipping_address,
+                        billing_address, customer_note, is_gst_invoice, gst_number,
+                        status, payment_status
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """, (
-                    order_id, item['product_id'], item['variation_id'],
-                    item['product_name'], item['product_sku'], item['product_image'],
-                    item['unit_price'], item['quantity'], item['total_price'],
-                    item['gst_rate'], item['gst_amount'],
-                    str(item['variation_attributes']) if item['variation_attributes'] else None
+                    order_number, user_id, subtotal, shipping_amount, tax_amount,
+                    discount_amount, total_amount, order_data.payment_method.value,
+                    json.dumps(order_data.shipping_address),
+                    json.dumps(order_data.billing_address) if order_data.billing_address else json.dumps(
+                        order_data.shipping_address),
+                    sanitize_input(order_data.customer_note) if order_data.customer_note else None,
+                    order_data.use_gst_invoice,
+                    sanitize_input(order_data.gst_number) if order_data.gst_number else None,
+                    'pending',  # initial status
+                    'pending'  # initial payment status
                 ))
 
-                cursor.execute("""
-                    UPDATE products
-                    SET stock_quantity = stock_quantity - %s,
-                        total_sold = total_sold + %s,
-                        stock_status = CASE
-                            WHEN stock_quantity - %s <= low_stock_threshold THEN 'low_stock'
-                            WHEN stock_quantity - %s <= 0 THEN 'out_of_stock'
-                            ELSE stock_status
-                        END
-                    WHERE id = %s
-                """, (item['quantity'], item['quantity'], item['quantity'], item['quantity'], item['product_id']))
+                order_id = cursor.lastrowid
 
-            cursor.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
-            order = cursor.fetchone()
+                # Create order items and update stock
+                for item in items_data:
+                    cursor.execute("""
+                        INSERT INTO order_items (
+                            order_id, product_id, variation_id, product_name, product_sku,
+                            product_image, unit_price, quantity, total_price, gst_rate, gst_amount,
+                            variation_attributes
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        order_id, item['product_id'], item['variation_id'],
+                        item['product_name'], item['product_sku'], item['product_image'],
+                        item['unit_price'], item['quantity'], item['total_price'],
+                        item['gst_rate'], item['gst_amount'],
+                        json.dumps(item['variation_attributes']) if item['variation_attributes'] else None
+                    ))
 
-            cursor.execute("SELECT * FROM order_items WHERE order_id = %s", (order_id,))
-            order_items = cursor.fetchall()
+                    # Update product stock
+                    cursor.execute("""
+                        UPDATE products
+                        SET stock_quantity = stock_quantity - %s,
+                            total_sold = total_sold + %s,
+                            stock_status = CASE
+                                WHEN stock_quantity - %s <= 0 THEN 'out_of_stock'
+                                WHEN stock_quantity - %s <= low_stock_threshold THEN 'low_stock'
+                                ELSE stock_status
+                            END
+                        WHERE id = %s
+                    """, (item['quantity'], item['quantity'], item['quantity'], item['quantity'], item['product_id']))
 
-            # Process order items with safe variation_attributes parsing
-            processed_items = []
-            for item in order_items:
-                variation_attributes = None
-                if item['variation_attributes']:
-                    try:
-                        if isinstance(item['variation_attributes'], str):
-                            variation_attributes = ast.literal_eval(item['variation_attributes'])
-                        else:
-                            variation_attributes = item['variation_attributes']
-                    except (ValueError, SyntaxError, Exception):
-                        variation_attributes = None
-                        logger.warning(f"Failed to parse variation_attributes for order item {item['id']}")
+                # Commit transaction
+                connection.commit()
 
-                processed_items.append({
-                    'id': item['id'],
-                    'product_id': item['product_id'],
-                    'variation_id': item['variation_id'],
-                    'product_name': item['product_name'],
-                    'product_sku': item['product_sku'],
-                    'product_image': item['product_image'],
-                    'unit_price': float(item['unit_price']),
-                    'quantity': item['quantity'],
-                    'total_price': float(item['total_price']),
-                    'gst_rate': float(item['gst_rate']),
-                    'gst_amount': float(item['gst_amount']),
-                    'variation_attributes': variation_attributes
-                })
+                # Get complete order data
+                cursor.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
+                order = cursor.fetchone()
 
-            # Safely parse addresses
-            shipping_address = {}
-            billing_address = None
+                cursor.execute("SELECT * FROM order_items WHERE order_id = %s", (order_id,))
+                order_items = cursor.fetchall()
 
-            try:
-                if isinstance(order['shipping_address'], str):
-                    shipping_address = ast.literal_eval(order['shipping_address'])
-                else:
-                    shipping_address = order['shipping_address']
-            except (ValueError, SyntaxError, Exception):
-                shipping_address = {}
-                logger.warning(f"Failed to parse shipping_address for order {order['id']}")
+                # Process order items for response
+                processed_items = []
+                for item in order_items:
+                    variation_attributes = None
+                    if item['variation_attributes']:
+                        try:
+                            variation_attributes = json.loads(item['variation_attributes']) if item[
+                                'variation_attributes'] else None
+                        except:
+                            variation_attributes = None
 
-            if order['billing_address']:
-                try:
-                    if isinstance(order['billing_address'], str):
-                        billing_address = ast.literal_eval(order['billing_address'])
-                    else:
-                        billing_address = order['billing_address']
-                except (ValueError, SyntaxError, Exception):
-                    billing_address = None
-                    logger.warning(f"Failed to parse billing_address for order {order['id']}")
+                    processed_items.append({
+                        'id': item['id'],
+                        'product_id': item['product_id'],
+                        'variation_id': item['variation_id'],
+                        'product_name': item['product_name'],
+                        'product_sku': item['product_sku'],
+                        'product_image': item['product_image'],
+                        'unit_price': float(item['unit_price']),
+                        'quantity': item['quantity'],
+                        'total_price': float(item['total_price']),
+                        'gst_rate': float(item['gst_rate']),
+                        'gst_amount': float(item['gst_amount']),
+                        'variation_attributes': variation_attributes
+                    })
 
-            order_response = OrderWithItemsResponse(
-                id=order['id'],
-                uuid=order['uuid'],
-                order_number=order['order_number'],
-                user_id=order['user_id'],
-                subtotal=float(order['subtotal']),
-                shipping_amount=float(order['shipping_amount']),
-                tax_amount=float(order['tax_amount']),
-                discount_amount=float(order['discount_amount']),
-                total_amount=float(order['total_amount']),
-                status=order['status'],
-                payment_status=order['payment_status'],
-                payment_method=order['payment_method'],
-                shipping_address=shipping_address,
-                billing_address=billing_address,
-                customer_note=order['customer_note'],
-                is_gst_invoice=bool(order['is_gst_invoice']),
-                gst_number=order['gst_number'],
-                created_at=order['created_at'],
-                updated_at=order['updated_at'],
-                items=processed_items
-            )
+                # Parse addresses
+                shipping_address = json.loads(order['shipping_address']) if isinstance(order['shipping_address'],
+                                                                                       str) else order[
+                    'shipping_address']
+                billing_address = json.loads(order['billing_address']) if order['billing_address'] and isinstance(
+                    order['billing_address'], str) else order['billing_address']
 
-            if background_tasks:
-                background_tasks.add_task(
-                    publish_order_event,
-                    order,
-                    'created'
+                order_response = OrderWithItemsResponse(
+                    id=order['id'],
+                    uuid=order['uuid'],
+                    order_number=order['order_number'],
+                    user_id=order['user_id'],
+                    subtotal=float(order['subtotal']),
+                    shipping_amount=float(order['shipping_amount']),
+                    tax_amount=float(order['tax_amount']),
+                    discount_amount=float(order['discount_amount']),
+                    total_amount=float(order['total_amount']),
+                    status=order['status'],
+                    payment_status=order['payment_status'],
+                    payment_method=order['payment_method'],
+                    shipping_address=shipping_address,
+                    billing_address=billing_address,
+                    customer_note=order['customer_note'],
+                    is_gst_invoice=bool(order['is_gst_invoice']),
+                    gst_number=order['gst_number'],
+                    created_at=order['created_at'],
+                    updated_at=order['updated_at'],
+                    items=processed_items
                 )
 
-            logger.info(f"Order created successfully: {order_number}")
-            return order_response
+                # Publish order event
+                if background_tasks:
+                    background_tasks.add_task(
+                        publish_order_event,
+                        order,
+                        'created'
+                    )
+
+                logger.info(f"Order created successfully: {order_number}")
+                return order_response
+
+            except Exception as e:
+                connection.rollback()
+                raise e
 
     except HTTPException:
         raise
