@@ -1,0 +1,65 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: pavitra-mysql
+    restart: unless-stopped
+    command:
+      - --default-authentication-plugin=mysql_native_password
+      - --innodb-buffer-pool-size=512M
+      - --innodb-log-file-size=256M
+    env_file:
+      - .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: pavitra-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-redis123}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis123}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: pavitra-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=${RABBITMQ_USER:-admin}
+      - RABBITMQ_DEFAULT_PASS=${RABBITMQ_PASSWORD:-admin123}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+volumes:
+  mysql_data:
+  redis_data:
+  rabbitmq_data:

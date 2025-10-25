@@ -1,5 +1,4 @@
 services:
-  # Auth Service
   auth-service:
     build:
       context: .
@@ -7,22 +6,19 @@ services:
     container_name: pavitra-auth
     restart: unless-stopped
     ports:
-      - "${AUTH_SERVICE_PORT}:8000"
+      - "${AUTH_SERVICE_PORT}:8001"
     env_file:
       - .env
     environment:
       SERVICE_NAME: auth
     volumes:
       - ./backend:/app
-      - ./backend/logs/auth:/app/logs
-      - ./backend/uploads:/app/uploads
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # Product Service
   product-service:
     build:
       context: .
@@ -30,22 +26,20 @@ services:
     container_name: pavitra-product
     restart: unless-stopped
     ports:
-      - "${PRODUCT_SERVICE_PORT}:8000"
+      - "${PRODUCT_SERVICE_PORT}:8002"
     env_file:
       - .env
     environment:
       SERVICE_NAME: product
     volumes:
       - ./backend:/app
-      - ./backend/logs/product:/app/logs
       - ./backend/uploads:/app/uploads
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # Order Service
   order-service:
     build:
       context: .
@@ -53,21 +47,19 @@ services:
     container_name: pavitra-order
     restart: unless-stopped
     ports:
-      - "${ORDER_SERVICE_PORT}:8000"
+      - "${ORDER_SERVICE_PORT}:8003"
     env_file:
       - .env
     environment:
       SERVICE_NAME: order
     volumes:
       - ./backend:/app
-      - ./backend/logs/order:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # User Service
   user-service:
     build:
       context: .
@@ -75,22 +67,20 @@ services:
     container_name: pavitra-user
     restart: unless-stopped
     ports:
-      - "${USER_SERVICE_PORT}:8000"
+      - "${USER_SERVICE_PORT}:8004"
     env_file:
       - .env
     environment:
       SERVICE_NAME: user
     volumes:
       - ./backend:/app
-      - ./backend/logs/user:/app/logs
       - ./backend/uploads:/app/uploads
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # Payment Service
   payment-service:
     build:
       context: .
@@ -98,21 +88,19 @@ services:
     container_name: pavitra-payment
     restart: unless-stopped
     ports:
-      - "${PAYMENT_SERVICE_PORT}:8000"
+      - "${PAYMENT_SERVICE_PORT}:8005"
     env_file:
       - .env
     environment:
       SERVICE_NAME: payment
     volumes:
       - ./backend:/app
-      - ./backend/logs/payment:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8005/health"]
       interval: 30s
       timeout: 10s
       retries: 3
 
-  # Notification Service
   notification-service:
     build:
       context: .
@@ -120,16 +108,16 @@ services:
     container_name: pavitra-notification
     restart: unless-stopped
     ports:
-      - "${NOTIFICATION_SERVICE_PORT}:8000"
+      - "${NOTIFICATION_SERVICE_PORT}:8006"
     env_file:
       - .env
     environment:
       SERVICE_NAME: notification
     volumes:
       - ./backend:/app
-      - ./backend/logs/notification:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8006/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+
