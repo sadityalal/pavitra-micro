@@ -32,60 +32,41 @@ class RedisClient:
             logger.info("Redis connection established successfully")
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
-            raise
+            # Fallback to in-memory cache or continue without Redis
+            self.redis_client = None
     
-    @property
-    def client(self):
-        return self.redis_client
-    
-    def get(self, key: str) -> Optional[Any]:
+    def cache_product(self, product_id: int, product_data: dict, expire: int = 3600):
+        """Cache product data"""
+        if not self.redis_client:
+            return False
         try:
-            value = self.redis_client.get(key)
-            if value:
-                try:
-                    return json.loads(value)
-                except json.JSONDecodeError:
-                    return value
-            return None
+            key = f"product:{product_id}"
+            return self.redis_client.setex(key, expire, json.dumps(product_data))
         except Exception as e:
-            logger.error(f"Redis get error for key {key}: {e}")
-            return None
-    
-    def set(self, key: str, value: Any, ex: Optional[int] = None) -> bool:
-        try:
-            if isinstance(value, (dict, list)):
-                value = json.dumps(value)
-            return self.redis_client.set(key, value, ex=ex)
-        except Exception as e:
-            logger.error(f"Redis set error for key {key}: {e}")
+            logger.error(f"Failed to cache product {product_id}: {e}")
             return False
     
-    def delete(self, *keys) -> int:
+    def get_cached_product(self, product_id: int) -> Optional[dict]:
+        """Get cached product data"""
+        if not self.redis_client:
+            return None
         try:
-            return self.redis_client.delete(*keys)
+            key = f"product:{product_id}"
+            data = self.redis_client.get(key)
+            return json.loads(data) if data else None
         except Exception as e:
-            logger.error(f"Redis delete error for keys {keys}: {e}")
-            return 0
-    
-    def exists(self, key: str) -> bool:
-        try:
-            return self.redis_client.exists(key) == 1
-        except Exception as e:
-            logger.error(f"Redis exists error for key {key}: {e}")
-            return False
-    
-    def incr(self, key: str, amount: int = 1) -> Optional[int]:
-        try:
-            return self.redis_client.incr(key, amount)
-        except Exception as e:
-            logger.error(f"Redis incr error for key {key}: {e}")
+            logger.error(f"Failed to get cached product {product_id}: {e}")
             return None
     
-    def expire(self, key: str, time: int) -> bool:
+    def cache_user_session(self, user_id: int, session_data: dict, expire: int = 86400):
+        """Cache user session data"""
+        if not self.redis_client:
+            return False
         try:
-            return self.redis_client.expire(key, time)
+            key = f"session:{user_id}"
+            return self.redis_client.setex(key, expire, json.dumps(session_data))
         except Exception as e:
-            logger.error(f"Redis expire error for key {key}: {e}")
+            logger.error(f"Failed to cache session for user {user_id}: {e}")
             return False
 
 # Global redis instance

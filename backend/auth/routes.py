@@ -38,49 +38,54 @@ async def get_current_user(request: Request):
         )
     return payload
 
+
 @router.post("/register", response_model=Token)
 async def register_user(
-    email: Optional[str] = Form(None),
-    phone: Optional[str] = Form(None),
-    username: Optional[str] = Form(None),
-    password: str = Form(...),
-    first_name: str = Form(...),
-    last_name: str = Form(...),
-    country_id: int = Form(1)
+        email: Optional[str] = Form(None),
+        phone: Optional[str] = Form(None),
+        username: Optional[str] = Form(None),
+        password: str = Form(...),
+        first_name: str = Form(...),
+        last_name: str = Form(...),
+        country_id: int = Form(1)
 ):
     # Input validation and sanitization
     first_name = sanitize_input(first_name)
     last_name = sanitize_input(last_name)
-    
+
     if not email and not phone and not username:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Email, phone, or username is required"
         )
-    
+
     if email and not validate_email(email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid email format"
         )
-    
+
     if phone and not validate_phone(phone):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid phone format"
         )
-    
+
     if username and not validate_username(username):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username must be 3-30 characters and contain only letters, numbers, and underscores"
         )
-    
+
+    # Fix: Limit password length for bcrypt
     if len(password) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Password must be at least 8 characters long"
         )
+
+    if len(password.encode('utf-8')) > 72:
+        password = password[:72]
 
     try:
         with db.get_cursor() as cursor:

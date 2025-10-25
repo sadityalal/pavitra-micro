@@ -1,0 +1,292 @@
+    /* Modern Calendar Styles */
+.date-picker-container {
+    position: relative;
+}
+
+.date-picker-input {
+    background-color: #fff;
+    cursor: pointer;
+    border-right: none;
+}
+
+.date-picker-input:focus {
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+    border-color: #86b7fe;
+}
+
+.calendar-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 0.375rem;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+    z-index: 1060;
+    margin-top: 0.25rem;
+    display: none;
+    animation: slideDown 0.2s ease-out;
+}
+
+.calendar-dropdown.show {
+    display: block;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.calendar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem;
+    border-bottom: 1px solid #dee2e6;
+    background: #f8f9fa;
+}
+
+.calendar-title {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.calendar-title .form-select {
+    width: auto;
+    font-weight: 500;
+}
+
+.calendar-weekdays {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+    background: #e9ecef;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.calendar-weekdays div {
+    padding: 0.5rem;
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: #6c757d;
+    background: white;
+}
+
+.calendar-days {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 1px;
+    background: #e9ecef;
+    padding: 1px;
+}
+
+.calendar-day {
+    padding: 0.75rem 0.5rem;
+    text-align: center;
+    background: white;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.875rem;
+    position: relative;
+}
+
+.calendar-day:hover {
+    background: #e9ecef;
+    transform: scale(1.05);
+}
+
+.calendar-day.selected {
+    background: #0d6efd;
+    color: white;
+    font-weight: 600;
+}
+
+.calendar-day.today {
+    background: #ffe6e6;
+    color: #dc3545;
+    font-weight: 600;
+}
+
+.calendar-day.other-month {
+    color: #adb5bd;
+    background: #f8f9fa;
+}
+
+.calendar-day.disabled {
+    color: #dee2e6;
+    background: #f8f9fa;
+    cursor: not-allowed;
+}
+
+.calendar-day.disabled:hover {
+    background: #f8f9fa;
+    transform: none;
+}
+
+.calendar-footer {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.75rem;
+    border-top: 1px solid #dee2e6;
+    background: #f8f9fa;
+}
+
+.age-display {
+    font-size: 0.875rem;
+}
+
+/* Clear date button */
+.clear-date {
+    border-left: none;
+    border-right: none;
+}
+
+.calendar-toggle {
+    border-left: none;
+}
+
+/* Responsive design */
+@media (max-width: 576px) {
+    .calendar-header {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
+    .calendar-title {
+        order: -1;
+        width: 100%;
+        justify-content: center;
+        margin-bottom: 0.5rem;
+    }
+
+    .calendar-day {
+        padding: 0.5rem 0.25rem;
+        font-size: 0.8rem;
+    }
+}
+
+/* Animation for date selection */
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+
+.calendar-day.selected {
+    animation: pulse 0.3s ease;
+}
+
+/* Loading state */
+.calendar-loading .calendar-days::before {
+    content: "Loading...";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #6c757d;
+}
+
+/* Ensure all interactive elements are properly clickable */
+.date-picker-container * {
+    box-sizing: border-box;
+}
+
+.input-group .btn {
+    position: relative;
+    z-index: 2;
+}
+
+.input-group .form-control {
+    position: relative;
+    z-index: 1;
+}
+
+/* Make sure the entire input group is clickable */
+.input-group {
+    position: relative;
+}
+
+/* Improve calendar icon click area */
+.input-group-text {
+    padding: 1rem;
+    min-width: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Better toggle button styling */
+.calendar-toggle {
+    min-width: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Ensure clear button is properly sized */
+.clear-date {
+    min-width: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Account Management Styles */
+.account-status-card {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 1.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.status-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e9ecef;
+}
+
+.status-item:last-child {
+    border-bottom: none;
+}
+
+.status-label {
+    font-weight: 500;
+    color: #495057;
+}
+
+.status-value {
+    font-weight: 600;
+}
+
+.account-actions .card {
+    margin-bottom: 1rem;
+    border-radius: 8px;
+}
+
+.account-actions .card-header {
+    border-radius: 8px 8px 0 0 !important;
+}
+
+.account-actions .card-body {
+    padding: 1.5rem;
+}
+
+.account-actions ul {
+    margin-bottom: 1rem;
+}
+
+.account-actions ul li {
+    margin-bottom: 0.25rem;
+}
