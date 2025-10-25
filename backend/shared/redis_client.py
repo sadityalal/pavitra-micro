@@ -37,16 +37,28 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Failed to connect to Redis: {e}")
             self.redis_client = None
-    
+
+
     def _ensure_connection(self):
         if not self.redis_client:
             self._connect()
+
+        if not self.redis_client:
+            return False
+
         try:
             self.redis_client.ping()
             return True
-        except:
-            self._connect()
-            return bool(self.redis_client)
+        except Exception:
+            # If connection fails, try to reconnect once
+            try:
+                self._connect()
+                if self.redis_client:
+                    self.redis_client.ping()
+                    return True
+            except Exception:
+                pass
+        return False
     
     def cache_product(self, product_id: int, product_data: dict, expire: int = 3600):
         if not self._ensure_connection():

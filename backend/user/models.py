@@ -25,16 +25,23 @@ class UserProfileUpdate(UserProfileBase):
     date_of_birth: Optional[datetime] = None
     gender: Optional[str] = None
 
-class UserProfileResponse(UserProfileBase):
+class UserProfileResponse(BaseModel):
     id: int
     uuid: str
     email: Optional[str] = None
     mobile: Optional[str] = None
+    phone: Optional[str] = None  # Add phone field to match DB
+    username: Optional[str] = None  # Add username field
+    first_name: str
+    last_name: str
     email_verified: bool
     phone_verified: bool
     is_active: bool
     roles: List[str] = []
     permissions: List[str] = []
+    country_id: Optional[int] = None
+    preferred_currency: str = "INR"
+    preferred_language: str = "en"
     avatar_url: Optional[str] = None
     date_of_birth: Optional[datetime] = None
     gender: Optional[str] = None

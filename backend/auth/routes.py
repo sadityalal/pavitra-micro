@@ -10,9 +10,16 @@ from .models import (
     UserCreate, UserLogin, Token, UserResponse,
     RoleResponse, PermissionCheck, HealthResponse
 )
-
+import re
 router = APIRouter()
 logger = get_logger(__name__)
+
+def validate_username(username: str) -> bool:
+    """Validate username format"""
+    if not username:
+        return False
+    pattern = r'^[a-zA-Z0-9_]{3,30}$'
+    return re.match(pattern, username) is not None
 
 def publish_user_registration_event(user_data: dict):
     """Publish user registration event to RabbitMQ"""

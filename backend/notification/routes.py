@@ -126,9 +126,6 @@ def log_notification(notification_type: str, recipient: str, subject: str = None
         logger.error(f"Failed to log notification: {e}")
 
 def get_email_template(template_name: str, template_data: dict) -> tuple:
-    """
-    Get email template content based on template name
-    """
     templates = {
         "welcome_email": {
             "subject": "Welcome to {app_name}!",
@@ -137,11 +134,12 @@ def get_email_template(template_name: str, template_data: dict) -> tuple:
             <html>
             <head>
                 <style>
-                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-                    .header { background: #4CAF50; color: white; padding: 20px; text-align: center; }
-                    .content { padding: 20px; background: #f9f9f9; }
-                    .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; background: #ffffff; }
+                    .header { background: #4CAF50; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                    .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 5px 5px; }
+                    .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; }
+                    .button { background: #4CAF50; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block; }
                 </style>
             </head>
             <body>
@@ -170,11 +168,12 @@ def get_email_template(template_name: str, template_data: dict) -> tuple:
             <html>
             <head>
                 <style>
-                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-                    .header { background: #2196F3; color: white; padding: 20px; text-align: center; }
-                    .order-info { background: #f9f9f9; padding: 15px; margin: 10px 0; }
-                    .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; background: #ffffff; }
+                    .header { background: #2196F3; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                    .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 5px 5px; }
+                    .order-info { background: white; padding: 15px; border: 1px solid #ddd; border-radius: 4px; margin: 15px 0; }
+                    .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; }
                 </style>
             </head>
             <body>
@@ -185,14 +184,12 @@ def get_email_template(template_name: str, template_data: dict) -> tuple:
                     <div class="content">
                         <p>Hello {customer_name},</p>
                         <p>Thank you for your order. We're getting it ready for you.</p>
-                        
                         <div class="order-info">
                             <h3>Order Details</h3>
                             <p><strong>Order Number:</strong> {order_number}</p>
                             <p><strong>Order Date:</strong> {order_date}</p>
                             <p><strong>Total Amount:</strong> {currency_symbol}{total_amount}</p>
                         </div>
-                        
                         <p>We'll notify you when your order ships.</p>
                     </div>
                     <div class="footer">
@@ -210,11 +207,12 @@ def get_email_template(template_name: str, template_data: dict) -> tuple:
             <html>
             <head>
                 <style>
-                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-                    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-                    .header { background: #FF9800; color: white; padding: 20px; text-align: center; }
-                    .button { background: #FF9800; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; }
-                    .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+                    .container { max-width: 600px; margin: 0 auto; padding: 20px; background: #ffffff; }
+                    .header { background: #FF9800; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                    .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 5px 5px; }
+                    .button { background: #FF9800; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block; }
+                    .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; }
                 </style>
             </head>
             <body>
