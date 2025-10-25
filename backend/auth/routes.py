@@ -166,4 +166,292 @@ async def register_user(
             detail="Registration failed"
         )
 
-# [Rest of the existing auth routes remain the same...]
+
+@router.get("/site-settings")
+async def get_site_settings():
+    try:
+        # Use your existing config logic to get all settings
+        from shared.config import config
+
+        # Refresh cache to get latest settings
+        config.refresh_cache()
+
+        # Get all settings using the existing logic
+        settings = {
+            'site_name': config.site_name,
+            'site_description': config.site_description,
+            'currency': config.currency,
+            'currency_symbol': config.currency_symbol,
+            'default_gst_rate': config.default_gst_rate,
+            'enable_guest_checkout': config.enable_guest_checkout,
+            'maintenance_mode': config.maintenance_mode,
+            'enable_reviews': config.enable_reviews,
+            'enable_wishlist': config.enable_wishlist,
+            'min_order_amount': config.min_order_amount,
+            'free_shipping_min_amount': config.free_shipping_min_amount,
+            'default_currency': config.default_currency,
+            'supported_currencies': config.supported_currencies,
+            'default_country': config.default_country,
+            'app_debug': config.app_debug,
+            'log_level': config.log_level,
+            'cors_origins': config.cors_origins,
+            'rate_limit_requests': config.rate_limit_requests,
+            'rate_limit_window': config.rate_limit_window,
+            'razorpay_test_mode': config.razorpay_test_mode,
+            'stripe_test_mode': config.stripe_test_mode,
+            'email_notifications': config.email_notifications,
+            'sms_notifications': config.sms_notifications,
+            'push_notifications': config.push_notifications,
+            'refund_policy_days': config.refund_policy_days,
+            'auto_refund_enabled': config.auto_refund_enabled,
+            'refund_processing_fee': config.refund_processing_fee,
+            'app_name': config.app_name,
+            'app_description': config.app_description,
+            'debug_mode': config.debug_mode,
+            'redis_host': config.redis_host,
+            'redis_port': config.redis_port,
+            'redis_password': config.redis_password,
+            'redis_db': config.redis_db,
+            'rabbitmq_host': config.rabbitmq_host,
+            'rabbitmq_port': config.rabbitmq_port,
+            'rabbitmq_user': config.rabbitmq_user,
+            'rabbitmq_password': config.rabbitmq_password,
+            'smtp_host': config.smtp_host,
+            'smtp_port': config.smtp_port,
+            'smtp_username': config.smtp_username,
+            'smtp_password': config.smtp_password,
+            'email_from': config.email_from,
+            # Add any additional settings you need
+            'free_shipping_threshold': config._get_setting('free_shipping_threshold', 999),
+            'return_period_days': config._get_setting('return_period_days', 10),
+            'site_phone': config._get_setting('site_phone', '+91-9711317009'),
+            'site_email': config._get_setting('site_email', 'support@pavitraenterprises.com'),
+            'business_hours': config._get_setting('business_hours', {
+                'monday_friday': '9am-6pm',
+                'saturday': '10am-4pm',
+                'sunday': 'Closed'
+            })
+        }
+
+        return settings
+
+    except Exception as e:
+        logger.error(f"Failed to fetch site settings: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch site settings"
+        )
+
+
+@router.post("/login")
+async def login_user(login_data: UserLogin):
+    """User login endpoint"""
+    try:
+        with db.get_cursor() as cursor:
+            # Find user by email, phone, or username
+            cursor.execute("""
+                SELECT id, email, password_hash, first_name, last_name, 
+                       is_active, email_verified, phone_verified
+                FROM users 
+                WHERE email = %s OR phone = %s OR username = %s
+            """, (login_data.login_id, login_data.login_id, login_data.login_id))
+
+            user = cursor.fetchone()
+            if not user or not verify_password(login_data.password, user['password_hash']):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials"
+                )
+
+            if not user['is_active']:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Account is deactivated"
+                )
+
+            # Get user roles and permissions
+            cursor.execute("""
+                SELECT ur.name as role_name, p.name as permission_name
+                FROM user_role_assignments ura
+                JOIN user_roles ur ON ura.role_id = ur.id
+                LEFT JOIN role_permissions rp ON ur.id = rp.role_id
+                LEFT JOIN permissions p ON rp.permission_id = p.id
+                WHERE ura.user_id = %s
+            """, (user['id'],))
+
+            roles = set()
+            permissions = set()
+            for row in cursor.fetchall():
+                if row['role_name']:
+                    roles.add(row['role_name'])
+                if row['permission_name']:
+                    permissions.add(row['permission_name'])
+
+            access_token = create_access_token(
+                data={
+                    "sub": str(user['id']),
+                    "email": user['email'],
+                    "roles": list(roles),
+                    "permissions": list(permissions)
+                },
+                expires_delta=timedelta(hours=24)
+            )
+
+            # Update last login
+            cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
+
+            return Token(
+                access_token=access_token,
+                token_type="bearer",
+                expires_in=86400,
+                user_roles=list(roles),
+                user_permissions=list(permissions)
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Login failed"
+        )
+
+
+@router.post("/logout")
+async def logout_user(request: Request):
+    """User logout endpoint"""
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+        # Invalidate token in Redis (optional)
+        try:
+            redis_client.redis_client.delete(f"token:{token}")
+        except Exception as e:
+            logger.error(f"Token invalidation failed: {e}")
+
+    return {"message": "Logged out successfully"}
+
+
+@router.post("/refresh")
+async def refresh_token(request: Request):
+    """Refresh access token"""
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+
+    token = auth_header[7:]
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token"
+        )
+
+    # Create new token with same data
+    new_token = create_access_token(
+        data={
+            "sub": payload['sub'],
+            "email": payload.get('email'),
+            "roles": payload.get('roles', []),
+            "permissions": payload.get('permissions', [])
+        },
+        expires_delta=timedelta(hours=24)
+    )
+
+    return Token(
+        access_token=new_token,
+        token_type="bearer",
+        expires_in=86400,
+        user_roles=payload.get('roles', []),
+        user_permissions=payload.get('permissions', [])
+    )
+
+
+@router.post("/forgot-password")
+async def forgot_password(email: str = Form(...)):
+    """Initiate password reset"""
+    try:
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT id, first_name FROM users WHERE email = %s", (email,))
+            user = cursor.fetchone()
+
+            if user:
+                # Generate reset token (in production, send email)
+                reset_token = create_access_token(
+                    data={"sub": str(user['id']), "type": "password_reset"},
+                    expires_delta=timedelta(hours=1)
+                )
+
+                # Store reset token in Redis
+                redis_client.redis_client.setex(
+                    f"password_reset:{user['id']}",
+                    3600,
+                    reset_token
+                )
+
+                logger.info(f"Password reset initiated for user {user['id']}")
+
+            # Always return success to prevent email enumeration
+            return {"message": "If the email exists, a reset link has been sent"}
+
+    except Exception as e:
+        logger.error(f"Password reset failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Password reset failed"
+        )
+
+
+@router.post("/reset-password")
+async def reset_password(token: str = Form(...), new_password: str = Form(...)):
+    """Reset password with token"""
+    try:
+        payload = verify_token(token)
+        if not payload or payload.get('type') != 'password_reset':
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid reset token"
+            )
+
+        user_id = int(payload['sub'])
+
+        # Verify token in Redis
+        stored_token = redis_client.redis_client.get(f"password_reset:{user_id}")
+        if not stored_token or stored_token != token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid or expired reset token"
+            )
+
+        with db.get_cursor() as cursor:
+            # Update password
+            new_password_hash = get_password_hash(new_password)
+            cursor.execute(
+                "UPDATE users SET password_hash = %s WHERE id = %s",
+                (new_password_hash, user_id)
+            )
+
+            # Store in password history
+            cursor.execute(
+                "INSERT INTO password_history (user_id, password_hash) VALUES (%s, %s)",
+                (user_id, new_password_hash)
+            )
+
+            # Clear reset token
+            redis_client.redis_client.delete(f"password_reset:{user_id}")
+
+            logger.info(f"Password reset successful for user {user_id}")
+            return {"message": "Password reset successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Password reset failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Password reset failed"
+        )

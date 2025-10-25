@@ -644,3 +644,129 @@ async def get_new_arrivals(
         page_size=page_size
     )
     return await get_products(search=search, sort_by="created_at", sort_order="desc")
+
+
+@router.post("/admin/products", dependencies=[Depends(require_roles(['admin', 'vendor']))])
+async def create_product(product_data: ProductCreate, user_id: int = 1):
+    """Create new product (Admin/Vendor only)"""
+    try:
+        with db.get_cursor() as cursor:
+            # Check if SKU already exists
+            cursor.execute("SELECT id FROM products WHERE sku = %s", (product_data.sku,))
+            if cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="SKU already exists"
+                )
+
+            # Check if slug already exists
+            cursor.execute("SELECT id FROM products WHERE slug = %s", (product_data.slug,))
+            if cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Slug already exists"
+                )
+
+            cursor.execute("""
+                INSERT INTO products (
+                    sku, name, slug, short_description, description, specification,
+                    base_price, compare_price, category_id, brand_id, gst_rate,
+                    track_inventory, stock_quantity, product_type, is_featured
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                product_data.sku,
+                sanitize_input(product_data.name),
+                sanitize_input(product_data.slug),
+                sanitize_input(product_data.short_description) if product_data.short_description else None,
+                sanitize_input(product_data.description) if product_data.description else None,
+                str(product_data.specification) if product_data.specification else None,
+                product_data.base_price,
+                product_data.compare_price,
+                product_data.category_id,
+                product_data.brand_id,
+                product_data.gst_rate,
+                product_data.track_inventory,
+                product_data.stock_quantity,
+                product_data.product_type.value,
+                product_data.is_featured
+            ))
+
+            product_id = cursor.lastrowid
+            cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
+            product = cursor.fetchone()
+
+            return ProductResponse(**product)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create product: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create product"
+        )
+
+
+@router.put("/admin/products/{product_id}", dependencies=[Depends(require_roles(['admin', 'vendor']))])
+async def update_product(product_id: int, product_data: ProductCreate, user_id: int = 1):
+    """Update product (Admin/Vendor only)"""
+    try:
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT id FROM products WHERE id = %s", (product_id,))
+            if not cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Product not found"
+                )
+
+            # Check if SKU already exists (excluding current product)
+            cursor.execute("SELECT id FROM products WHERE sku = %s AND id != %s", (product_data.sku, product_id))
+            if cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="SKU already exists"
+                )
+
+            cursor.execute("""
+                UPDATE products SET
+                    sku = %s, name = %s, slug = %s, short_description = %s,
+                    description = %s, specification = %s, base_price = %s,
+                    compare_price = %s, category_id = %s, brand_id = %s,
+                    gst_rate = %s, track_inventory = %s, stock_quantity = %s,
+                    product_type = %s, is_featured = %s, updated_at = NOW()
+                WHERE id = %s
+            """, (
+                product_data.sku,
+                sanitize_input(product_data.name),
+                sanitize_input(product_data.slug),
+                sanitize_input(product_data.short_description) if product_data.short_description else None,
+                sanitize_input(product_data.description) if product_data.description else None,
+                str(product_data.specification) if product_data.specification else None,
+                product_data.base_price,
+                product_data.compare_price,
+                product_data.category_id,
+                product_data.brand_id,
+                product_data.gst_rate,
+                product_data.track_inventory,
+                product_data.stock_quantity,
+                product_data.product_type.value,
+                product_data.is_featured,
+                product_id
+            ))
+
+            cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
+            product = cursor.fetchone()
+
+            # Invalidate cache
+            redis_client.invalidate_product_cache(product_id)
+
+            return ProductResponse(**product)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update product: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update product"
+        )

@@ -874,3 +874,107 @@ async def clear_cart(user_id: int = 1):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to clear cart"
         )
+
+
+@router.post("/profile/avatar")
+async def upload_avatar(
+        file: UploadFile = File(...),
+        user_id: int = 1
+):
+    """Upload user avatar"""
+    try:
+        # Validate file type
+        allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed."
+            )
+
+        # Validate file size (5MB max)
+        max_size = 5 * 1024 * 1024
+        file.file.seek(0, 2)  # Seek to end
+        file_size = file.file.tell()
+        file.file.seek(0)  # Seek back to start
+
+        if file_size > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File too large. Maximum size is 5MB."
+            )
+
+        # Generate unique filename
+        file_extension = file.filename.split('.')[-1]
+        unique_filename = f"avatar_{user_id}_{int(datetime.now().timestamp())}.{file_extension}"
+        file_path = f"/app/uploads/avatars/{unique_filename}"
+
+        # Save file (in production, use cloud storage)
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        # Update user avatar in database
+        with db.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE users SET avatar_url = %s WHERE id = %s",
+                (f"/uploads/avatars/{unique_filename}", user_id)
+            )
+
+        invalidate_user_cache(user_id)
+
+        return {"message": "Avatar uploaded successfully", "avatar_url": f"/uploads/avatars/{unique_filename}"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to upload avatar: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload avatar"
+        )
+
+
+@router.post("/change-password")
+async def change_password(
+        current_password: str = Form(...),
+        new_password: str = Form(...),
+        user_id: int = 1
+):
+    """Change user password"""
+    try:
+        with db.get_cursor() as cursor:
+            # Get current password hash
+            cursor.execute("SELECT password_hash FROM users WHERE id = %s", (user_id,))
+            user = cursor.fetchone()
+
+            if not user or not verify_password(current_password, user['password_hash']):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Current password is incorrect"
+                )
+
+            # Update password
+            new_password_hash = get_password_hash(new_password)
+            cursor.execute(
+                "UPDATE users SET password_hash = %s WHERE id = %s",
+                (new_password_hash, user_id)
+            )
+
+            # Store in password history
+            cursor.execute(
+                "INSERT INTO password_history (user_id, password_hash) VALUES (%s, %s)",
+                (user_id, new_password_hash)
+            )
+
+            logger.info(f"Password changed for user {user_id}")
+            return {"message": "Password changed successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to change password: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to change password"
+        )
