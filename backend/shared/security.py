@@ -11,8 +11,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing - CHANGED: Use Argon2 instead of bcrypt
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)

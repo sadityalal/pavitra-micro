@@ -54,45 +54,45 @@ async def register_user(
         country_id: int = Form(1),
         background_tasks: BackgroundTasks = None
 ):
-    first_name = sanitize_input(first_name)
-    last_name = sanitize_input(last_name)
-
-    if not email and not phone and not username:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email, phone, or username is required"
-        )
-
-    if email and not validate_email(email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid email format"
-        )
-
-    if phone and not validate_phone(phone):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid phone format"
-        )
-
-    if username and not validate_username(username):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Username must be 3-30 characters and contain only letters, numbers, and underscores"
-        )
-
-    if len(password) < 8:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must be at least 8 characters long"
-        )
-
-    if len(password.encode('utf-8')) > 72:
-        password = password[:72]
-
     try:
+        first_name = sanitize_input(first_name)
+        last_name = sanitize_input(last_name)
+
+        if not email and not phone and not username:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email, phone, or username is required"
+            )
+
+        if email and not validate_email(email):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email format"
+            )
+
+        if phone and not validate_phone(phone):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid phone format"
+            )
+
+        if username and not validate_username(username):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username must be 3-30 characters and contain only letters, numbers, and underscores"
+            )
+
+        if len(password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters long"
+            )
+
+        # NO PASSWORD LENGTH RESTRICTIONS WITH ARGON2 - it securely handles any length
+        logger.info(f"Processing registration with Argon2 hashing")
+
         with db.get_cursor() as cursor:
-            # Check for existing users
+            # Check for existing user
             if email:
                 cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
                 if cursor.fetchone():
@@ -117,7 +117,7 @@ async def register_user(
                         detail="Username already taken"
                     )
 
-            # Create user
+            # Create user with Argon2 password hashing
             password_hash = get_password_hash(password)
             cursor.execute("""
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
@@ -126,7 +126,7 @@ async def register_user(
 
             user_id = cursor.lastrowid
 
-            # Assign default customer role
+            # Assign customer role
             cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
             role = cursor.fetchone()
             if role:
@@ -164,7 +164,7 @@ async def register_user(
                 expires_delta=timedelta(hours=24)
             )
 
-            # Get complete user data for event
+            # Get user data for event
             cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             user = cursor.fetchone()
 
@@ -175,8 +175,7 @@ async def register_user(
                     user
                 )
 
-            logger.info(f"User registered successfully: {email or phone or username}")
-
+            logger.info(f"User registered successfully with Argon2: {email or phone or username}")
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -188,7 +187,7 @@ async def register_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Registration failed: {e}")
+        logger.error(f"Registration failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed"
@@ -198,9 +197,7 @@ async def register_user(
 @router.get("/site-settings")
 async def get_site_settings():
     try:
-        # Force refresh config cache to get latest from database
         config.refresh_cache()
-
         settings = {
             'site_name': config.site_name,
             'site_description': config.site_description,
@@ -245,11 +242,11 @@ async def get_site_settings():
             'smtp_username': config.smtp_username,
             'smtp_password': config.smtp_password,
             'email_from': config.email_from,
-            'free_shipping_threshold': config._get_setting('free_shipping_threshold', 999),
-            'return_period_days': config._get_setting('return_period_days', 10),
-            'site_phone': config._get_setting('site_phone', '+91-9711317009'),
-            'site_email': config._get_setting('site_email', 'support@pavitraenterprises.com'),
-            'business_hours': config._get_setting('business_hours', {
+            'free_shipping_threshold': getattr(config, 'free_shipping_threshold', 999),
+            'return_period_days': getattr(config, 'return_period_days', 10),
+            'site_phone': getattr(config, 'site_phone', '+91-9711317009'),
+            'site_email': getattr(config, 'site_email', 'support@pavitraenterprises.com'),
+            'business_hours': getattr(config, 'business_hours', {
                 'monday_friday': '9am-6pm',
                 'saturday': '10am-4pm',
                 'sunday': 'Closed'
@@ -268,7 +265,6 @@ async def get_site_settings():
 async def login_user(login_data: UserLogin):
     try:
         with db.get_cursor() as cursor:
-            # Find user by email, phone, or username
             cursor.execute("""
                 SELECT id, email, password_hash, first_name, last_name,
                        is_active, email_verified, phone_verified
@@ -322,6 +318,7 @@ async def login_user(login_data: UserLogin):
             # Update last login
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
 
+            logger.info(f"User login successful with Argon2 verification: {user['email']}")
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -346,8 +343,8 @@ async def logout_user(request: Request):
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header[7:]
         try:
-            # Invalidate token in Redis
             redis_client.redis_client.delete(f"token:{token}")
+            logger.info("User logged out successfully")
         except Exception as e:
             logger.error(f"Token invalidation failed: {e}")
 
@@ -382,6 +379,7 @@ async def refresh_token(request: Request):
         expires_delta=timedelta(hours=24)
     )
 
+    logger.info(f"Token refreshed successfully for user {payload['sub']}")
     return Token(
         access_token=new_token,
         token_type="bearer",
@@ -404,18 +402,14 @@ async def forgot_password(email: str = Form(...)):
                     expires_delta=timedelta(hours=1)
                 )
 
-                # Store reset token in Redis
                 redis_client.redis_client.setex(
                     f"password_reset:{user['id']}",
                     3600,
                     reset_token
                 )
-
                 logger.info(f"Password reset initiated for user {user['id']}")
 
-            # Always return success to prevent email enumeration
             return {"message": "If the email exists, a reset link has been sent"}
-
     except Exception as e:
         logger.error(f"Password reset failed: {e}")
         raise HTTPException(
@@ -435,9 +429,8 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
             )
 
         user_id = int(payload['sub'])
-
-        # Verify stored token
         stored_token = redis_client.redis_client.get(f"password_reset:{user_id}")
+
         if not stored_token or stored_token != token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -445,24 +438,21 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
             )
 
         with db.get_cursor() as cursor:
+            # Use Argon2 for new password hashing
             new_password_hash = get_password_hash(new_password)
-
-            # Update password
             cursor.execute(
                 "UPDATE users SET password_hash = %s WHERE id = %s",
                 (new_password_hash, user_id)
             )
 
-            # Store in password history
             cursor.execute(
                 "INSERT INTO password_history (user_id, password_hash) VALUES (%s, %s)",
                 (user_id, new_password_hash)
             )
 
-            # Remove used token
             redis_client.redis_client.delete(f"password_reset:{user_id}")
+            logger.info(f"Password reset successful for user {user_id} using Argon2")
 
-            logger.info(f"Password reset successful for user {user_id}")
             return {"message": "Password reset successfully"}
 
     except HTTPException:

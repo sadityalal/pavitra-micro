@@ -8,17 +8,17 @@ logger = logging.getLogger(__name__)
 
 class RedisClient:
     _instance = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(RedisClient, cls).__new__(cls)
             cls._instance._initialize()
         return cls._instance
-    
+
     def _initialize(self):
         self.redis_client = None
         self._connect()
-    
+
     def _connect(self):
         try:
             self.redis_client = redis.Redis(
@@ -38,19 +38,15 @@ class RedisClient:
             logger.error(f"Failed to connect to Redis: {e}")
             self.redis_client = None
 
-
     def _ensure_connection(self):
         if not self.redis_client:
             self._connect()
-
         if not self.redis_client:
             return False
-
         try:
             self.redis_client.ping()
             return True
         except Exception:
-            # If connection fails, try to reconnect once
             try:
                 self._connect()
                 if self.redis_client:
@@ -59,7 +55,7 @@ class RedisClient:
             except Exception:
                 pass
         return False
-    
+
     def cache_product(self, product_id: int, product_data: dict, expire: int = 3600):
         if not self._ensure_connection():
             return False
@@ -69,7 +65,7 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Failed to cache product {product_id}: {e}")
             return False
-    
+
     def get_cached_product(self, product_id: int) -> Optional[dict]:
         if not self._ensure_connection():
             return None
@@ -80,7 +76,7 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Failed to get cached product {product_id}: {e}")
             return None
-    
+
     def cache_user_session(self, user_id: int, session_data: dict, expire: int = 86400):
         if not self._ensure_connection():
             return False
@@ -90,7 +86,7 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Failed to cache session for user {user_id}: {e}")
             return False
-    
+
     def get_cached_session(self, user_id: int) -> Optional[dict]:
         if not self._ensure_connection():
             return None
@@ -101,7 +97,7 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Failed to get cached session for user {user_id}: {e}")
             return None
-    
+
     def invalidate_product_cache(self, product_id: int):
         if not self._ensure_connection():
             return False
@@ -111,7 +107,7 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Failed to invalidate product cache {product_id}: {e}")
             return False
-    
+
     def cache_categories(self, categories_data: list, expire: int = 1800):
         if not self._ensure_connection():
             return False
@@ -121,7 +117,7 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Failed to cache categories: {e}")
             return False
-    
+
     def get_cached_categories(self) -> Optional[list]:
         if not self._ensure_connection():
             return None
@@ -132,10 +128,10 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Failed to get cached categories: {e}")
             return None
-    
+
     def rate_limit_check(self, key: str, limit: int, window: int) -> bool:
         if not self._ensure_connection():
-            return True  # Allow if Redis is down
+            return True
         try:
             current = self.redis_client.incr(key)
             if current == 1:

@@ -40,8 +40,8 @@ class UserResponse(UserBase):
     roles: List[str] = []
     permissions: List[str] = []
     country_id: Optional[int]
-    preferred_currency: str
-    preferred_language: str
+    preferred_currency: str = "INR"
+    preferred_language: str = "en"
     avatar_url: Optional[str] = None
     created_at: datetime
     updated_at: datetime

@@ -6,15 +6,13 @@ import secrets
 
 logger = logging.getLogger(__name__)
 
-
-class DatabaseConfig:  # KEEP ORIGINAL NAME
+class DatabaseConfig:
     def __init__(self):
         self._cache = {}
         self._db = None
         self._validate_required_settings()
 
     def _validate_required_settings(self):
-        """Validate critical security settings"""
         if not self.debug_mode and not os.getenv('JWT_SECRET'):
             raise ValueError("JWT_SECRET environment variable is required in production")
 
@@ -23,6 +21,12 @@ class DatabaseConfig:  # KEEP ORIGINAL NAME
             try:
                 from .database import db
                 self._db = db
+                # Test the connection
+                try:
+                    self._db.get_connection()
+                    logger.info("Database connection established in config")
+                except Exception as e:
+                    logger.warning(f"Database connection test failed: {e}")
             except ImportError:
                 logger.warning("Database not available yet")
                 return None
@@ -121,7 +125,7 @@ class DatabaseConfig:  # KEEP ORIGINAL NAME
 
     def get_service_port(self, service_name: str) -> int:
         port_key = f"{service_name.upper()}_SERVICE_PORT"
-        return int(os.getenv(port_key, '8000'))
+        return int(os.getenv(port_key, '8001'))
 
     @property
     def redis_host(self) -> str:
@@ -149,11 +153,11 @@ class DatabaseConfig:  # KEEP ORIGINAL NAME
 
     @property
     def rabbitmq_user(self) -> str:
-        return self._get_setting('rabbitmq_user', 'guest')
+        return self._get_setting('rabbitmq_user', 'admin')
 
     @property
     def rabbitmq_password(self) -> str:
-        return self._get_setting('rabbitmq_password', 'guest')
+        return self._get_setting('rabbitmq_password', 'admin123')
 
     @property
     def smtp_host(self) -> str:
@@ -225,7 +229,10 @@ class DatabaseConfig:  # KEEP ORIGINAL NAME
 
     @property
     def maintenance_mode(self) -> bool:
-        return self._get_setting('maintenance_mode', False)
+        # Debug: Check what value we're getting
+        value = self._get_setting('maintenance_mode', False)
+        logger.debug(f"Maintenance mode config - value: {value}, type: {type(value)}")
+        return value
 
     @property
     def debug_mode(self) -> bool:
@@ -350,6 +357,5 @@ class DatabaseConfig:  # KEEP ORIGINAL NAME
             'saturday': '10am-4pm',
             'sunday': 'Closed'
         })
-
 
 config = DatabaseConfig()

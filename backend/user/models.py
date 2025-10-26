@@ -30,8 +30,8 @@ class UserProfileResponse(BaseModel):
     uuid: str
     email: Optional[str] = None
     mobile: Optional[str] = None
-    phone: Optional[str] = None  # Add phone field to match DB
-    username: Optional[str] = None  # Add username field
+    phone: Optional[str] = None
+    username: Optional[str] = None
     first_name: str
     last_name: str
     email_verified: bool
