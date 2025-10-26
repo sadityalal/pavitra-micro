@@ -792,53 +792,78 @@ async def get_brand(brand_id: int):
             detail="Failed to fetch brand"
         )
 
-@router.get("/featured/products", response_model=ProductListResponse)
-async def get_featured_products(
-    request: Request,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(12, ge=1, le=50)
-):
-    search = ProductSearch(
-        page=page,
-        page_size=page_size
-    )
-    return await get_products(request, search, featured=True)
 
-@router.get("/trending/products", response_model=ProductListResponse)
-async def get_trending_products(
-    request: Request,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(12, ge=1, le=50)
-):
-    search = ProductSearch(
-        page=page,
-        page_size=page_size
-    )
-    return await get_products(request, search, trending=True, sort_by="view_count", sort_order="desc")
-
-@router.get("/bestseller/products", response_model=ProductListResponse)
-async def get_bestseller_products(
-    request: Request,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(12, ge=1, le=50)
-):
-    search = ProductSearch(
-        page=page,
-        page_size=page_size
-    )
-    return await get_products(request, search, bestseller=True, sort_by="total_sold", sort_order="desc")
-
-@router.get("/new-arrivals/products", response_model=ProductListResponse)
-async def get_new_arrivals(
-    request: Request,
-    page: int = Query(1, ge=1),
-    page_size: int = Query(12, ge=1, le=50)
-):
-    search = ProductSearch(
-        page=page,
-        page_size=page_size
-    )
-    return await get_products(request, search, sort_by="created_at", sort_order="desc")
+# @router.get("/featured/products", response_model=ProductListResponse)
+# async def get_featured_products(
+#         request: Request,
+#         page: int = Query(1, ge=1),
+#         page_size: int = Query(12, ge=1, le=50)
+# ):
+#     # Create search object manually
+#     class ManualSearch:
+#         def __init__(self, page, page_size):
+#             self.page = page
+#             self.page_size = page_size
+#             self.query = None
+#             self.category_id = None
+#             self.brand_id = None
+#
+#     search = ManualSearch(page=page, page_size=page_size)
+#     return await get_products(request, search, featured=True)
+#
+#
+# @router.get("/trending/products", response_model=ProductListResponse)
+# async def get_trending_products(
+#         request: Request,
+#         page: int = Query(1, ge=1),
+#         page_size: int = Query(12, ge=1, le=50)
+# ):
+#     class ManualSearch:
+#         def __init__(self, page, page_size):
+#             self.page = page
+#             self.page_size = page_size
+#             self.query = None
+#             self.category_id = None
+#             self.brand_id = None
+#
+#     search = ManualSearch(page=page, page_size=page_size)
+#     return await get_products(request, search, trending=True, sort_by="view_count", sort_order="desc")
+#
+#
+# @router.get("/bestseller/products", response_model=ProductListResponse)
+# async def get_bestseller_products(
+#         request: Request,
+#         page: int = Query(1, ge=1),
+#         page_size: int = Query(12, ge=1, le=50)
+# ):
+#     class ManualSearch:
+#         def __init__(self, page, page_size):
+#             self.page = page
+#             self.page_size = page_size
+#             self.query = None
+#             self.category_id = None
+#             self.brand_id = None
+#
+#     search = ManualSearch(page=page, page_size=page_size)
+#     return await get_products(request, search, bestseller=True, sort_by="total_sold", sort_order="desc")
+#
+#
+# @router.get("/new-arrivals/products", response_model=ProductListResponse)
+# async def get_new_arrivals(
+#         request: Request,
+#         page: int = Query(1, ge=1),
+#         page_size: int = Query(12, ge=1, le=50)
+# ):
+#     class ManualSearch:
+#         def __init__(self, page, page_size):
+#             self.page = page
+#             self.page_size = page_size
+#             self.query = None
+#             self.category_id = None
+#             self.brand_id = None
+#
+#     search = ManualSearch(page=page, page_size=page_size)
+#     return await get_products(request, search, sort_by="created_at", sort_order="desc")
 
 @router.post("/admin/products", response_model=ProductResponse)
 async def create_product(
