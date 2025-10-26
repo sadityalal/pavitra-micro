@@ -2,10 +2,8 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from shared import config, setup_logging, get_logger, db
 from .routes import router
-
 setup_logging("auth-service")
 logger = get_logger(__name__)
-
 app = FastAPI(
     title=f"{config.app_name} - Auth Service",
     description=config.app_description,
@@ -13,7 +11,6 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins,
@@ -22,9 +19,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def maintenance_mode_middleware(request, call_next):
+    # Skip maintenance check for health endpoints and docs
+    maintenance_exempt_paths = [
+        "/health", "/docs", "/redoc", "/refresh-config",
+        "/api/v1/auth/health", "/api/v1/auth/site-settings",
+        "/api/v1/auth/debug/maintenance", "/api/v1/auth/debug/settings"
+    ]
+    
+    if any(request.url.path.startswith(path) for path in maintenance_exempt_paths):
+        response = await call_next(request)
+        return response
+    
+    # Check maintenance mode with fresh config
+    config.refresh_cache()
+    
+    # DEBUG: Log the actual value and type
+    logger.info(f"DEBUG Middleware: maintenance_mode={config.maintenance_mode}, type={type(config.maintenance_mode)}")
+    
+    if config.maintenance_mode:
+        logger.warning(f"Maintenance mode blocking request to: {request.url.path}")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service is under maintenance. Please try again later."
+        )
+    
+    response = await call_next(request)
+    return response
+
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database connection during startup"""
     logger.info("🔄 Initializing database connection on startup...")
     try:
         db.initialize()
@@ -43,7 +68,8 @@ async def health():
                 "status": "healthy",
                 "service": "auth",
                 "database": "connected",
-                "app_name": config.app_name
+                "app_name": config.app_name,
+                "maintenance_mode": config.maintenance_mode
             }
         else:
             logger.error(f"Database health check failed: {health_data.get('error')}")
@@ -58,12 +84,22 @@ async def health():
             detail="Service unhealthy"
         )
 
+@app.post("/refresh-config")
+async def refresh_config():
+    config.refresh_cache()
+    return {
+        "message": "Configuration cache refreshed",
+        "maintenance_mode": config.maintenance_mode,
+        "timestamp": "updated"
+    }
+
 @app.get("/")
 async def root():
     return {
         "message": f"{config.app_name} - Auth Service",
         "version": "1.0.0",
-        "environment": "development" if config.debug_mode else "production"
+        "environment": "development" if config.debug_mode else "production",
+        "maintenance_mode": config.maintenance_mode
     }
 
 if __name__ == "__main__":

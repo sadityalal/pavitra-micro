@@ -4,16 +4,16 @@ import json
 import time
 from typing import Any, Optional, Dict, List
 import secrets
-
 logger = logging.getLogger(__name__)
-
 
 class DatabaseConfig:
     def __init__(self):
         self._cache = {}
         self._cache_timestamps = {}
         self._db = None
-        self._cache_duration = 10
+        self._cache_duration = 10  # 10 seconds cache for performance
+        self._last_settings_check = 0
+        self._settings_version = 0
         self._validate_required_settings()
 
     def _validate_required_settings(self):
@@ -35,14 +35,47 @@ class DatabaseConfig:
                 return None
         return self._db
 
-    def _get_setting(self, key: str, default: Any = None) -> Any:
+    def _check_settings_version(self):
+        """Check if settings have been updated in database"""
         current_time = time.time()
+        if current_time - self._last_settings_check < 5:  # Check every 5 seconds max
+            return
+            
+        self._last_settings_check = current_time
+        db = self._get_db()
+        if not db:
+            return
+            
+        connection = None
+        try:
+            connection = db.get_connection()
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("SELECT MAX(updated_at) as last_update FROM site_settings")
+            result = cursor.fetchone()
+            if result and result['last_update']:
+                # Convert timestamp to version number
+                new_version = int(result['last_update'].timestamp())
+                if new_version > self._settings_version:
+                    logger.info("Settings updated in database, clearing cache")
+                    self._cache.clear()
+                    self._cache_timestamps.clear()
+                    self._settings_version = new_version
+        except Exception as e:
+            logger.warning(f"Failed to check settings version: {e}")
+        finally:
+            if connection and connection.is_connected():
+                connection.close()
 
+    def _get_setting(self, key: str, default: Any = None) -> Any:
+        # Always check if settings have been updated
+        self._check_settings_version()
+        
+        current_time = time.time()
         if (key in self._cache and
                 key in self._cache_timestamps and
                 current_time - self._cache_timestamps[key] < self._cache_duration):
             return self._cache[key]
-
+            
         env_key = key.upper()
         if env_key in os.environ:
             value = os.environ[env_key]
@@ -50,11 +83,12 @@ class DatabaseConfig:
             self._cache[key] = value
             self._cache_timestamps[key] = current_time
             return value
-
+            
         db = self._get_db()
         if not db:
+            logger.warning(f"Database not available for setting {key}, using default: {default}")
             return default
-
+            
         connection = None
         try:
             connection = db.get_connection()
@@ -62,10 +96,14 @@ class DatabaseConfig:
             cursor.execute("SELECT setting_value, setting_type FROM site_settings WHERE setting_key = %s", (key,))
             result = cursor.fetchone()
             if result:
-                value = self._convert_value(result['setting_value'], result['setting_type'])
+                # Use the setting_type from database to determine conversion
+                db_type = result['setting_type']
+                value = self._convert_value_by_type(result['setting_value'], db_type)
                 self._cache[key] = value
                 self._cache_timestamps[key] = current_time
+                logger.info(f"Loaded setting {key} from database: {value} (db_type: {db_type}, python_type: {type(value)})")
                 return value
+            logger.warning(f"Setting {key} not found in database, using default: {default}")
             return default
         except Exception as e:
             logger.warning(f"Failed to get {key} from database: {e}, using default: {default}")
@@ -74,35 +112,62 @@ class DatabaseConfig:
             if connection and connection.is_connected():
                 connection.close()
 
-    def _convert_value(self, value: str, target_type: Any) -> Any:
-        # FIX: Proper boolean conversion for string 'true'/'false'
-        if target_type == bool:
+    def _convert_value_by_type(self, value: str, db_type: str) -> Any:
+        """Convert value based on database setting_type"""
+        if db_type == 'boolean':
             if isinstance(value, bool):
                 return value
             if isinstance(value, str):
-                return value.lower() in ('true', '1', 'yes', 'on', 't')
+                # More comprehensive boolean conversion
+                true_values = ['true', '1', 'yes', 'on', 't', 'y']
+                false_values = ['false', '0', 'no', 'off', 'f', 'n']
+                lower_val = value.lower().strip()
+                if lower_val in true_values:
+                    return True
+                elif lower_val in false_values:
+                    return False
+                else:
+                    logger.warning(f"Unable to convert '{value}' to boolean, using False")
+                    return False
             return bool(value)
-        elif target_type == int:
+        elif db_type == 'number':
             try:
-                return int(value)
+                if '.' in str(value):
+                    return float(value)
+                else:
+                    return int(value)
             except (ValueError, TypeError):
                 return 0
-        elif target_type == float:
+        elif db_type == 'json':
             try:
-                return float(value)
-            except (ValueError, TypeError):
-                return 0.0
-        elif target_type == list:
-            try:
-                return json.loads(value)
+                if isinstance(value, str):
+                    return json.loads(value)
+                return value
             except json.JSONDecodeError:
                 return []
+        else:  # string type
+            return str(value)
+
+    def _convert_value(self, value: str, target_type: Any) -> Any:
+        """Fallback conversion based on target type"""
+        if target_type == bool:
+            return self._convert_value_by_type(value, 'boolean')
+        elif target_type == int:
+            return self._convert_value_by_type(value, 'number')
+        elif target_type == float:
+            return self._convert_value_by_type(value, 'number')
+        elif target_type == list:
+            return self._convert_value_by_type(value, 'json')
         else:
             return str(value)
 
     def refresh_cache(self):
+        """Force refresh all cached settings"""
         self._cache.clear()
         self._cache_timestamps.clear()
+        self._settings_version = 0
+        self._last_settings_check = 0
+        logger.info("Configuration cache forcefully refreshed")
 
     @property
     def db_host(self) -> str:
@@ -244,6 +309,7 @@ class DatabaseConfig:
 
     @property
     def maintenance_mode(self) -> bool:
+        # IMPORTANT: Default should be False, not True
         return self._get_setting('maintenance_mode', False)
 
     @property
@@ -369,6 +435,5 @@ class DatabaseConfig:
             'saturday': '10am-4pm',
             'sunday': 'Closed'
         })
-
 
 config = DatabaseConfig()

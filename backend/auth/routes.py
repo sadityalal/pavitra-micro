@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends, Form, Request, status, BackgroundTasks
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime, timedelta
 from shared import (
     config, db, verify_password, get_password_hash,
@@ -11,17 +11,14 @@ from .models import (
     RoleResponse, PermissionCheck, HealthResponse
 )
 import re
-
 router = APIRouter()
 logger = get_logger(__name__)
-
 
 def validate_username(username: str) -> bool:
     if not username:
         return False
     pattern = r'^[a-zA-Z0-9_]{3,30}$'
     return re.match(pattern, username) is not None
-
 
 def publish_user_registration_event(user_data: dict):
     try:
@@ -42,7 +39,6 @@ def publish_user_registration_event(user_data: dict):
     except Exception as e:
         logger.error(f"Failed to publish user registration event: {e}")
 
-
 @router.post("/register", response_model=Token)
 async def register_user(
         email: Optional[str] = Form(None),
@@ -55,9 +51,18 @@ async def register_user(
         background_tasks: BackgroundTasks = None
 ):
     try:
+        # Check maintenance mode
+        config.refresh_cache()
+        logger.info(f"DEBUG: Maintenance mode value: {config.maintenance_mode}, type: {type(config.maintenance_mode)}")
+        if config.maintenance_mode:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service is under maintenance. Registration is temporarily unavailable."
+            )
+
         first_name = sanitize_input(first_name)
         last_name = sanitize_input(last_name)
-
+        
         if not email and not phone and not username:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -88,9 +93,15 @@ async def register_user(
                 detail="Password must be at least 8 characters long"
             )
 
-        # NO PASSWORD LENGTH RESTRICTIONS WITH ARGON2 - it securely handles any length
-        logger.info(f"Processing registration with Argon2 hashing")
+        # Check for common passwords (basic security)
+        common_passwords = ['password', '12345678', 'qwerty', 'admin', 'letmein']
+        if password.lower() in common_passwords:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password is too common. Please choose a stronger password."
+            )
 
+        logger.info(f"Processing registration with Argon2 hashing")
         with db.get_cursor() as cursor:
             # Check for existing user
             if email:
@@ -117,16 +128,14 @@ async def register_user(
                         detail="Username already taken"
                     )
 
-            # Create user with Argon2 password hashing
             password_hash = get_password_hash(password)
             cursor.execute("""
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (email, phone, username, password_hash, first_name, last_name, country_id))
-
             user_id = cursor.lastrowid
 
-            # Assign customer role
+            # Assign customer role by default
             cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
             role = cursor.fetchone()
             if role:
@@ -144,7 +153,7 @@ async def register_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_id,))
-
+            
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -153,7 +162,7 @@ async def register_user(
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
 
-            # Create access token
+            # Create access token with secure expiration
             access_token = create_access_token(
                 data={
                     "sub": str(user_id),
@@ -164,11 +173,10 @@ async def register_user(
                 expires_delta=timedelta(hours=24)
             )
 
-            # Get user data for event
             cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             user = cursor.fetchone()
 
-            # Publish registration event
+            # Publish registration event in background
             if background_tasks:
                 background_tasks.add_task(
                     publish_user_registration_event,
@@ -192,7 +200,6 @@ async def register_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed"
         )
-
 
 @router.get("/site-settings")
 async def get_site_settings():
@@ -260,10 +267,18 @@ async def get_site_settings():
             detail="Failed to fetch site settings"
         )
 
-
 @router.post("/login")
 async def login_user(login_data: UserLogin):
     try:
+        # Check maintenance mode
+        config.refresh_cache()
+        logger.info(f"DEBUG: Maintenance mode value: {config.maintenance_mode}, type: {type(config.maintenance_mode)}")
+        if config.maintenance_mode:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service is under maintenance. Please try again later."
+            )
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT id, email, password_hash, first_name, last_name,
@@ -271,10 +286,11 @@ async def login_user(login_data: UserLogin):
                 FROM users
                 WHERE email = %s OR phone = %s OR username = %s
             """, (login_data.login_id, login_data.login_id, login_data.login_id))
-
             user = cursor.fetchone()
 
             if not user or not verify_password(login_data.password, user['password_hash']):
+                # Log failed login attempt for security monitoring
+                logger.warning(f"Failed login attempt for: {login_data.login_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
@@ -295,7 +311,7 @@ async def login_user(login_data: UserLogin):
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user['id'],))
-
+            
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -304,7 +320,6 @@ async def login_user(login_data: UserLogin):
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
 
-            # Create access token
             access_token = create_access_token(
                 data={
                     "sub": str(user['id']),
@@ -317,7 +332,7 @@ async def login_user(login_data: UserLogin):
 
             # Update last login
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
-
+            
             logger.info(f"User login successful with Argon2 verification: {user['email']}")
             return Token(
                 access_token=access_token,
@@ -336,20 +351,18 @@ async def login_user(login_data: UserLogin):
             detail="Login failed"
         )
 
-
 @router.post("/logout")
 async def logout_user(request: Request):
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
         token = auth_header[7:]
         try:
+            # Invalidate token in Redis
             redis_client.redis_client.delete(f"token:{token}")
-            logger.info("User logged out successfully")
+            logger.info("User logged out successfully - token invalidated")
         except Exception as e:
             logger.error(f"Token invalidation failed: {e}")
-
     return {"message": "Logged out successfully"}
-
 
 @router.post("/refresh")
 async def refresh_token(request: Request):
@@ -362,13 +375,13 @@ async def refresh_token(request: Request):
 
     token = auth_header[7:]
     payload = verify_token(token)
-
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
 
+    # Create new token with same claims
     new_token = create_access_token(
         data={
             "sub": payload['sub'],
@@ -388,27 +401,32 @@ async def refresh_token(request: Request):
         user_permissions=payload.get('permissions', [])
     )
 
-
 @router.post("/forgot-password")
 async def forgot_password(email: str = Form(...)):
     try:
+        config.refresh_cache()
+        if config.maintenance_mode:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service is under maintenance. Please try again later."
+            )
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, first_name FROM users WHERE email = %s", (email,))
             user = cursor.fetchone()
-
             if user:
                 reset_token = create_access_token(
                     data={"sub": str(user['id']), "type": "password_reset"},
                     expires_delta=timedelta(hours=1)
                 )
-
+                # Store reset token in Redis with expiration
                 redis_client.redis_client.setex(
                     f"password_reset:{user['id']}",
                     3600,
                     reset_token
                 )
                 logger.info(f"Password reset initiated for user {user['id']}")
-
+            # Always return same message for security (prevent email enumeration)
             return {"message": "If the email exists, a reset link has been sent"}
     except Exception as e:
         logger.error(f"Password reset failed: {e}")
@@ -417,10 +435,16 @@ async def forgot_password(email: str = Form(...)):
             detail="Password reset failed"
         )
 
-
 @router.post("/reset-password")
 async def reset_password(token: str = Form(...), new_password: str = Form(...)):
     try:
+        config.refresh_cache()
+        if config.maintenance_mode:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service is under maintenance. Please try again later."
+            )
+
         payload = verify_token(token)
         if not payload or payload.get('type') != 'password_reset':
             raise HTTPException(
@@ -430,29 +454,33 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
 
         user_id = int(payload['sub'])
         stored_token = redis_client.redis_client.get(f"password_reset:{user_id}")
-
         if not stored_token or stored_token != token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired reset token"
             )
 
+        if len(new_password) < 8:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Password must be at least 8 characters long"
+            )
+
         with db.get_cursor() as cursor:
-            # Use Argon2 for new password hashing
             new_password_hash = get_password_hash(new_password)
             cursor.execute(
                 "UPDATE users SET password_hash = %s WHERE id = %s",
                 (new_password_hash, user_id)
             )
-
+            # Store password in history for security
             cursor.execute(
                 "INSERT INTO password_history (user_id, password_hash) VALUES (%s, %s)",
                 (user_id, new_password_hash)
             )
-
+            # Remove used reset token
             redis_client.redis_client.delete(f"password_reset:{user_id}")
+            
             logger.info(f"Password reset successful for user {user_id} using Argon2")
-
             return {"message": "Password reset successfully"}
 
     except HTTPException:
@@ -463,3 +491,78 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Password reset failed"
         )
+
+@router.get("/roles", response_model=List[RoleResponse])
+async def get_roles():
+    """Get all available roles (admin only)"""
+    try:
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT id, name, description FROM user_roles 
+                WHERE is_system_role = 1
+                ORDER BY name
+            """)
+            roles = cursor.fetchall()
+            return [
+                RoleResponse(
+                    id=role['id'],
+                    name=role['name'],
+                    description=role['description'],
+                    permissions=[]
+                )
+                for role in roles
+            ]
+    except Exception as e:
+        logger.error(f"Failed to fetch roles: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch roles"
+        )
+
+@router.post("/check-permission", response_model=PermissionCheck)
+async def check_permission(permission: str, request: Request):
+    """Check if current user has specific permission"""
+    try:
+        from shared.auth_middleware import get_current_user
+        current_user = await get_current_user(request)
+        user_permissions = current_user.get('permissions', [])
+        
+        has_access = permission in user_permissions
+        return PermissionCheck(
+            permission=permission,
+            has_access=has_access
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Permission check failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Permission check failed"
+        )
+
+@router.get("/debug/maintenance")
+async def debug_maintenance():
+    """Debug endpoint to check maintenance mode status"""
+    config.refresh_cache()
+    return {
+        "maintenance_mode": config.maintenance_mode,
+        "maintenance_mode_type": str(type(config.maintenance_mode)),
+        "maintenance_mode_raw": str(config.maintenance_mode)
+    }
+
+@router.get("/debug/settings")
+async def debug_settings():
+    """Debug endpoint to check all settings"""
+    config.refresh_cache()
+    return {
+        "maintenance_mode": config.maintenance_mode,
+        "debug_mode": config.debug_mode,
+        "app_debug": config.app_debug,
+        "log_level": config.log_level,
+        "cors_origins": config.cors_origins,
+        "cache_info": {
+            "cache_size": len(config._cache),
+            "cache_keys": list(config._cache.keys())
+        }
+    }

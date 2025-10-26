@@ -4,9 +4,7 @@ from .security import verify_token
 from .redis_client import redis_client
 from .database import db
 import logging
-
 logger = logging.getLogger(__name__)
-
 
 async def get_current_user(request: Request) -> Dict[str, Any]:
     auth_header = request.headers.get("Authorization")
@@ -17,14 +15,20 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
         )
 
     token = auth_header[7:]
+    
+    # Check if token is blacklisted (logout)
+    if redis_client.redis_client.exists(f"token_blacklist:{token}"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been invalidated"
+        )
 
-    # Check cache first
+    # Try to get user from cache first
     cached_user = redis_client.get_cached_session(f"token:{token}")
     if cached_user:
         logger.info("User authenticated from cache")
         return cached_user
 
-    # Verify token
     payload = verify_token(token)
     if not payload:
         raise HTTPException(
@@ -32,11 +36,10 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
             detail="Invalid or expired token"
         )
 
-    # Get user data from database
     try:
         with db.get_cursor() as cursor:
             cursor.execute("""
-                SELECT 
+                SELECT
                     u.id, u.uuid, u.email, u.first_name, u.last_name, u.phone,
                     u.email_verified, u.phone_verified, u.is_active,
                     u.country_id, u.preferred_currency, u.preferred_language,
@@ -44,8 +47,8 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
                 FROM users u
                 WHERE u.id = %s AND u.is_active = 1
             """, (int(payload['sub']),))
-
             user_data = cursor.fetchone()
+            
             if not user_data:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -54,7 +57,7 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
 
             # Get user roles and permissions
             cursor.execute("""
-                SELECT 
+                SELECT
                     ur.name as role_name,
                     p.name as permission_name
                 FROM user_role_assignments ura
@@ -63,7 +66,7 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_data['id'],))
-
+            
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -72,7 +75,6 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
 
-            # Build user payload
             user_payload = {
                 'sub': user_data['id'],
                 'uuid': user_data['uuid'],
@@ -91,15 +93,15 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
                 'permissions': list(permissions)
             }
 
-            # Cache user session
+            # Cache user session for 1 hour
             redis_client.cache_user_session(
                 user_id=user_data['id'],
                 session_data=user_payload,
                 expire=3600
             )
-
+            
             return user_payload
-
+            
     except HTTPException:
         raise
     except Exception as e:
@@ -109,54 +111,62 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
             detail="Failed to authenticate user"
         )
 
-
 async def require_roles(required_roles: List[str], request: Request):
     user = await get_current_user(request)
     user_roles = user.get('roles', [])
-
+    
     if not any(role in user_roles for role in required_roles):
+        logger.warning(f"User {user['sub']} with roles {user_roles} attempted to access endpoint requiring {required_roles}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient role permissions"
         )
-
     return user
-
 
 async def require_permissions(required_permissions: List[str], request: Request):
     user = await get_current_user(request)
     user_permissions = user.get('permissions', [])
-
+    
     if not any(perm in user_permissions for perm in required_permissions):
+        logger.warning(f"User {user['sub']} with permissions {user_permissions} attempted to access endpoint requiring {required_permissions}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient permissions"
         )
-
     return user
-
 
 async def require_any_role(required_roles: List[str], request: Request):
     user = await get_current_user(request)
     user_roles = user.get('roles', [])
-
+    
     if not any(role in user_roles for role in required_roles):
+        logger.warning(f"User {user['sub']} with roles {user_roles} attempted to access endpoint requiring any of {required_roles}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Insufficient role permissions"
         )
-
     return user
-
 
 async def require_all_roles(required_roles: List[str], request: Request):
     user = await get_current_user(request)
     user_roles = user.get('roles', [])
-
+    
     if not all(role in user_roles for role in required_roles):
+        logger.warning(f"User {user['sub']} with roles {user_roles} attempted to access endpoint requiring all of {required_roles}")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Missing required roles"
         )
-
     return user
+
+def blacklist_token(token: str, expire: int = 86400):
+    """Blacklist a token to prevent reuse after logout"""
+    try:
+        redis_client.redis_client.setex(
+            f"token_blacklist:{token}",
+            expire,
+            "blacklisted"
+        )
+        logger.info(f"Token blacklisted successfully")
+    except Exception as e:
+        logger.error(f"Failed to blacklist token: {e}")
