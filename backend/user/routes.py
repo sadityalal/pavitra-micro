@@ -1,8 +1,8 @@
-from fastapi import APIRouter, HTTPException, Depends, Form, status, BackgroundTasks, UploadFile, File, Request
+from fastapi import APIRouter, HTTPException, Depends, Form, status, BackgroundTasks, UploadFile, File
 from typing import List, Optional
 from shared import config, db, sanitize_input, get_logger, redis_client, rabbitmq_client
 from shared.security import verify_password, get_password_hash
-from shared.auth_middleware import get_current_user, require_roles, require_permissions
+from shared.auth_middleware import get_current_user
 from .models import (
     UserProfileResponse, UserProfileUpdate, AddressResponse,
     AddressCreate, WishlistResponse, CartResponse, HealthResponse
@@ -13,6 +13,17 @@ import os
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+def require_roles(required_roles: List[str]):
+    def role_dependency(current_user: dict = Depends(get_current_user)):
+        user_roles = current_user.get('roles', [])
+        if not any(role in user_roles for role in required_roles):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Insufficient role permissions"
+            )
+        return current_user
+    return role_dependency
 
 
 def publish_user_event(user_data: dict, event_type: str):
@@ -156,18 +167,10 @@ async def health():
         )
 
 
-# ========== ADMIN/STAFF ONLY ENDPOINTS ==========
-
-@router.get("/profile/{user_id}", response_model=UserProfileResponse)
-async def get_user_profile_admin(user_id: int, request: Request):
-    """
-    Get any user's profile - ADMIN/STAFF ONLY
-    Requires: view_users permission
-    """
-    # Only users with view_users permission can access this
-    current_user = await require_permissions(["view_users"], request)
-
+@router.get("/profile", response_model=UserProfileResponse)
+async def get_user_profile(current_user: dict = Depends(get_current_user)):
     try:
+        user_id = current_user['sub']
         cached_profile = get_cached_user_profile(user_id)
         if cached_profile:
             logger.info(f"Returning cached profile for user {user_id}")
@@ -185,7 +188,6 @@ async def get_user_profile_admin(user_id: int, request: Request):
                 WHERE u.id = %s
             """, (user_id,))
             user = cursor.fetchone()
-
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -234,8 +236,7 @@ async def get_user_profile_admin(user_id: int, request: Request):
                 updated_at=user['updated_at']
             )
 
-            cache_user_profile(user_id, profile_data.dict())
-            logger.info(f"Admin {current_user['sub']} accessed profile of user {user_id}")
+            cache_user_profile(user_id, profile_data.model_dump())
             return profile_data
 
     except Exception as e:
@@ -246,165 +247,14 @@ async def get_user_profile_admin(user_id: int, request: Request):
         )
 
 
-@router.get("/profiles", response_model=List[UserProfileResponse])
-async def list_users(
-        request: Request,
-        skip: int = 0,
-        limit: int = 100,
-        is_active: Optional[bool] = None
-):
-    """
-    List users with pagination - ADMIN/STAFF ONLY
-    Requires: view_users permission
-    """
-    current_user = await require_permissions(["view_users"], request)
-
-    try:
-        with db.get_cursor() as cursor:
-            query = "SELECT * FROM users WHERE 1=1"
-            params = []
-
-            if is_active is not None:
-                query += " AND is_active = %s"
-                params.append(is_active)
-
-            query += " LIMIT %s OFFSET %s"
-            params.extend([limit, skip])
-
-            cursor.execute(query, params)
-            users = cursor.fetchall()
-
-            user_profiles = []
-            for user in users:
-                cursor.execute("""
-                    SELECT ur.name as role_name
-                    FROM user_role_assignments ura
-                    JOIN user_roles ur ON ura.role_id = ur.id
-                    WHERE ura.user_id = %s
-                """, (user['id'],))
-
-                roles = [row['role_name'] for row in cursor.fetchall()]
-
-                profile = UserProfileResponse(
-                    id=user['id'],
-                    uuid=user['uuid'],
-                    email=user['email'],
-                    mobile=user['phone'],
-                    first_name=user['first_name'],
-                    last_name=user['last_name'],
-                    phone=user['phone'],
-                    username=user['username'],
-                    country_id=user['country_id'],
-                    email_verified=bool(user['email_verified']),
-                    phone_verified=bool(user['phone_verified']),
-                    is_active=bool(user['is_active']),
-                    roles=roles,
-                    permissions=[],
-                    preferred_currency=user.get('preferred_currency', 'INR'),
-                    preferred_language=user.get('preferred_language', 'en'),
-                    avatar_url=user['avatar_url'],
-                    date_of_birth=user['date_of_birth'],
-                    gender=user['gender'],
-                    last_login=user['last_login'],
-                    created_at=user['created_at'],
-                    updated_at=user['updated_at']
-                )
-                user_profiles.append(profile)
-
-            logger.info(f"Admin {current_user['sub']} listed {len(user_profiles)} users")
-            return user_profiles
-
-    except Exception as e:
-        logger.error(f"Failed to list users: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to list users"
-        )
-
-
-# ========== USER'S OWN DATA ENDPOINTS ==========
-
-@router.get("/my/profile", response_model=UserProfileResponse)
-async def get_my_profile(request: Request):
-    """
-    Get current user's own profile
-    """
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
-    try:
-        cached_profile = get_cached_user_profile(user_id)
-        if cached_profile:
-            return UserProfileResponse(**cached_profile)
-
-        with db.get_cursor() as cursor:
-            cursor.execute("""
-                SELECT
-                    u.*,
-                    c.country_name,
-                    c.currency_code,
-                    c.currency_symbol
-                FROM users u
-                LEFT JOIN countries c ON u.country_id = c.id
-                WHERE u.id = %s
-            """, (user_id,))
-            user = cursor.fetchone()
-
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="User not found"
-                )
-
-            profile_data = UserProfileResponse(
-                id=user['id'],
-                uuid=user['uuid'],
-                email=user['email'],
-                mobile=user['phone'],
-                first_name=user['first_name'],
-                last_name=user['last_name'],
-                phone=user['phone'],
-                username=user['username'],
-                country_id=user['country_id'],
-                email_verified=bool(user['email_verified']),
-                phone_verified=bool(user['phone_verified']),
-                is_active=bool(user['is_active']),
-                roles=current_user.get('roles', []),
-                permissions=current_user.get('permissions', []),
-                preferred_currency=user.get('preferred_currency', 'INR'),
-                preferred_language=user.get('preferred_language', 'en'),
-                avatar_url=user['avatar_url'],
-                date_of_birth=user['date_of_birth'],
-                gender=user['gender'],
-                last_login=user['last_login'],
-                created_at=user['created_at'],
-                updated_at=user['updated_at']
-            )
-
-            cache_user_profile(user_id, profile_data.dict())
-            return profile_data
-
-    except Exception as e:
-        logger.error(f"Failed to fetch user profile: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch user profile"
-        )
-
-
-@router.put("/my/profile", response_model=UserProfileResponse)
-async def update_my_profile(
+@router.put("/profile", response_model=UserProfileResponse)
+async def update_user_profile(
         profile_data: UserProfileUpdate,
-        request: Request,
+        current_user: dict = Depends(get_current_user),
         background_tasks: BackgroundTasks = None
 ):
-    """
-    Update current user's own profile
-    """
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
     try:
+        user_id = current_user['sub']
         with db.get_cursor() as cursor:
             if profile_data.username:
                 cursor.execute("""
@@ -474,7 +324,7 @@ async def update_my_profile(
                 )
 
             invalidate_user_cache(user_id)
-            return await get_my_profile(request)
+            return await get_user_profile(current_user)
 
     except HTTPException:
         raise
@@ -486,17 +336,13 @@ async def update_my_profile(
         )
 
 
-# ========== ADDRESS ENDPOINTS (User's own addresses) ==========
-
-@router.get("/my/addresses", response_model=List[AddressResponse])
-async def get_my_addresses(request: Request):
-    """Get current user's own addresses"""
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
+@router.get("/addresses", response_model=List[AddressResponse])
+async def get_user_addresses(current_user: dict = Depends(get_current_user)):
     try:
+        user_id = current_user['sub']
         cached_addresses = get_cached_user_addresses(user_id)
         if cached_addresses:
+            logger.info(f"Returning cached addresses for user {user_id}")
             return [AddressResponse(**addr) for addr in cached_addresses]
 
         with db.get_cursor() as cursor:
@@ -529,7 +375,7 @@ async def get_my_addresses(request: Request):
                 for addr in addresses
             ]
 
-            cache_user_addresses(user_id, [addr.dict() for addr in address_list])
+            cache_user_addresses(user_id, [addr.model_dump() for addr in address_list])
             return address_list
 
     except Exception as e:
@@ -540,17 +386,14 @@ async def get_my_addresses(request: Request):
         )
 
 
-@router.post("/my/addresses", response_model=AddressResponse)
-async def create_my_address(
+@router.post("/addresses", response_model=AddressResponse)
+async def create_user_address(
         address_data: AddressCreate,
-        request: Request,
+        current_user: dict = Depends(get_current_user),
         background_tasks: BackgroundTasks = None
 ):
-    """Create address for current user"""
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
     try:
+        user_id = current_user['sub']
         with db.get_cursor() as cursor:
             if address_data.is_default:
                 cursor.execute("""
@@ -586,6 +429,7 @@ async def create_my_address(
             address = cursor.fetchone()
 
             invalidate_user_cache(user_id)
+
             return AddressResponse(
                 id=address['id'],
                 user_id=address['user_id'],
@@ -613,17 +457,124 @@ async def create_my_address(
         )
 
 
-# ========== WISHLIST ENDPOINTS (User's own wishlist) ==========
-
-@router.get("/my/wishlist", response_model=WishlistResponse)
-async def get_my_wishlist(request: Request):
-    """Get current user's own wishlist"""
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
+@router.put("/addresses/{address_id}", response_model=AddressResponse)
+async def update_user_address(
+        address_id: int,
+        address_data: AddressCreate,
+        current_user: dict = Depends(get_current_user),
+        background_tasks: BackgroundTasks = None
+):
     try:
+        user_id = current_user['sub']
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT id FROM user_addresses WHERE id = %s AND user_id = %s", (address_id, user_id))
+            if not cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Address not found"
+                )
+
+            if address_data.is_default:
+                cursor.execute("""
+                    UPDATE user_addresses
+                    SET is_default = 0
+                    WHERE user_id = %s AND address_type = %s AND id != %s
+                """, (user_id, address_data.address_type.value, address_id))
+
+            cursor.execute("""
+                UPDATE user_addresses
+                SET address_type = %s, full_name = %s, phone = %s, address_line1 = %s,
+                    address_line2 = %s, landmark = %s, city = %s, state = %s,
+                    country = %s, postal_code = %s, address_type_detail = %s,
+                    is_default = %s, updated_at = NOW()
+                WHERE id = %s
+            """, (
+                address_data.address_type.value,
+                sanitize_input(address_data.full_name),
+                sanitize_input(address_data.phone),
+                sanitize_input(address_data.address_line1),
+                sanitize_input(address_data.address_line2) if address_data.address_line2 else None,
+                sanitize_input(address_data.landmark) if address_data.landmark else None,
+                sanitize_input(address_data.city),
+                sanitize_input(address_data.state),
+                sanitize_input(address_data.country),
+                sanitize_input(address_data.postal_code),
+                address_data.address_type_detail.value,
+                address_data.is_default,
+                address_id
+            ))
+
+            cursor.execute("SELECT * FROM user_addresses WHERE id = %s", (address_id,))
+            address = cursor.fetchone()
+
+            invalidate_user_cache(user_id)
+
+            return AddressResponse(
+                id=address['id'],
+                user_id=address['user_id'],
+                address_type=address['address_type'],
+                full_name=address['full_name'],
+                phone=address['phone'],
+                address_line1=address['address_line1'],
+                address_line2=address['address_line2'],
+                landmark=address['landmark'],
+                city=address['city'],
+                state=address['state'],
+                country=address['country'],
+                postal_code=address['postal_code'],
+                address_type_detail=address['address_type_detail'],
+                is_default=bool(address['is_default']),
+                created_at=address['created_at'],
+                updated_at=address['updated_at']
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update address: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update address"
+        )
+
+
+@router.delete("/addresses/{address_id}")
+async def delete_user_address(
+        address_id: int,
+        current_user: dict = Depends(get_current_user)
+):
+    try:
+        user_id = current_user['sub']
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT id FROM user_addresses WHERE id = %s AND user_id = %s", (address_id, user_id))
+            if not cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Address not found"
+                )
+
+            cursor.execute("DELETE FROM user_addresses WHERE id = %s", (address_id,))
+            invalidate_user_cache(user_id)
+
+            return {"message": "Address deleted successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete address: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete address"
+        )
+
+
+@router.get("/wishlist", response_model=WishlistResponse)
+async def get_user_wishlist(current_user: dict = Depends(get_current_user)):
+    try:
+        user_id = current_user['sub']
         cached_wishlist = get_cached_user_wishlist(user_id)
         if cached_wishlist:
+            logger.info(f"Returning cached wishlist for user {user_id}")
             return WishlistResponse(**cached_wishlist)
 
         with db.get_cursor() as cursor:
@@ -661,7 +612,7 @@ async def get_my_wishlist(request: Request):
                 total_count=len(items)
             )
 
-            cache_user_wishlist(user_id, wishlist_data.dict())
+            cache_user_wishlist(user_id, wishlist_data.model_dump())
             return wishlist_data
 
     except Exception as e:
@@ -672,13 +623,13 @@ async def get_my_wishlist(request: Request):
         )
 
 
-@router.post("/my/wishlist/{product_id}")
-async def add_to_my_wishlist(product_id: int, request: Request):
-    """Add product to current user's wishlist"""
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
+@router.post("/wishlist/{product_id}")
+async def add_to_wishlist(
+        product_id: int,
+        current_user: dict = Depends(get_current_user)
+):
     try:
+        user_id = current_user['sub']
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id FROM products WHERE id = %s AND status = 'active'", (product_id,))
             if not cursor.fetchone():
@@ -699,6 +650,7 @@ async def add_to_my_wishlist(product_id: int, request: Request):
 
             redis_client.redis_client.delete(f"user_wishlist:{user_id}")
             logger.info(f"Product {product_id} added to wishlist for user {user_id}")
+
             return {"message": "Product added to wishlist"}
 
     except HTTPException:
@@ -711,17 +663,45 @@ async def add_to_my_wishlist(product_id: int, request: Request):
         )
 
 
-# ========== CART ENDPOINTS (User's own cart) ==========
-
-@router.get("/my/cart", response_model=CartResponse)
-async def get_my_cart(request: Request):
-    """Get current user's own cart"""
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
+@router.delete("/wishlist/{product_id}")
+async def remove_from_wishlist(
+        product_id: int,
+        current_user: dict = Depends(get_current_user)
+):
     try:
+        user_id = current_user['sub']
+        with db.get_cursor() as cursor:
+            cursor.execute("DELETE FROM wishlists WHERE user_id = %s AND product_id = %s", (user_id, product_id))
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Product not found in wishlist"
+                )
+
+            cursor.execute("UPDATE products SET wishlist_count = GREATEST(0, wishlist_count - 1) WHERE id = %s",
+                           (product_id,))
+            redis_client.redis_client.delete(f"user_wishlist:{user_id}")
+            logger.info(f"Product {product_id} removed from wishlist for user {user_id}")
+
+            return {"message": "Product removed from wishlist"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to remove from wishlist: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to remove from wishlist"
+        )
+
+
+@router.get("/cart", response_model=CartResponse)
+async def get_user_cart(current_user: dict = Depends(get_current_user)):
+    try:
+        user_id = current_user['sub']
         cached_cart = get_cached_user_cart(user_id)
         if cached_cart:
+            logger.info(f"Returning cached cart for user {user_id}")
             return CartResponse(**cached_cart)
 
         with db.get_cursor() as cursor:
@@ -772,7 +752,7 @@ async def get_my_cart(request: Request):
                 total_items=total_items
             )
 
-            cache_user_cart(user_id, cart_data.dict())
+            cache_user_cart(user_id, cart_data.model_dump())
             return cart_data
 
     except Exception as e:
@@ -783,13 +763,14 @@ async def get_my_cart(request: Request):
         )
 
 
-@router.post("/my/cart/{product_id}")
-async def add_to_my_cart(product_id: int, quantity: int = 1, request: Request):
-    """Add product to current user's cart"""
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
+@router.post("/cart/{product_id}")
+async def add_to_cart(
+        product_id: int,
+        quantity: int = 1,
+        current_user: dict = Depends(get_current_user)
+):
     try:
+        user_id = current_user['sub']
         if quantity < 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -833,8 +814,8 @@ async def add_to_my_cart(product_id: int, quantity: int = 1, request: Request):
                 SELECT id, quantity FROM shopping_cart
                 WHERE user_id = %s AND product_id = %s AND variation_id IS NULL
             """, (user_id, product_id))
-            existing_item = cursor.fetchone()
 
+            existing_item = cursor.fetchone()
             if existing_item:
                 new_quantity = existing_item['quantity'] + quantity
                 if new_quantity > max_quantity:
@@ -855,6 +836,7 @@ async def add_to_my_cart(product_id: int, quantity: int = 1, request: Request):
 
             redis_client.redis_client.delete(f"user_cart:{user_id}")
             logger.info(f"Product {product_id} added to cart for user {user_id}")
+
             return {"message": "Product added to cart"}
 
     except HTTPException:
@@ -867,19 +849,177 @@ async def add_to_my_cart(product_id: int, quantity: int = 1, request: Request):
         )
 
 
-# ========== PASSWORD CHANGE (User's own password) ==========
+@router.put("/cart/{cart_item_id}")
+async def update_cart_item(
+        cart_item_id: int,
+        quantity: int,
+        current_user: dict = Depends(get_current_user)
+):
+    try:
+        user_id = current_user['sub']
+        if quantity < 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Quantity cannot be negative"
+            )
 
-@router.post("/my/change-password")
-async def change_my_password(
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT sc.*, p.stock_quantity, p.stock_status, p.max_cart_quantity
+                FROM shopping_cart sc
+                JOIN products p ON sc.product_id = p.id
+                WHERE sc.id = %s AND sc.user_id = %s
+            """, (cart_item_id, user_id))
+
+            cart_item = cursor.fetchone()
+            if not cart_item:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Cart item not found"
+                )
+
+            if quantity == 0:
+                cursor.execute("DELETE FROM shopping_cart WHERE id = %s", (cart_item_id,))
+                redis_client.redis_client.delete(f"user_cart:{user_id}")
+                return {"message": "Item removed from cart"}
+
+            max_quantity = min(cart_item['max_cart_quantity'], cart_item['stock_quantity'])
+            if quantity > max_quantity and cart_item['stock_status'] != 'on_backorder':
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Maximum {max_quantity} items available"
+                )
+
+            cursor.execute("""
+                UPDATE shopping_cart
+                SET quantity = %s, updated_at = NOW()
+                WHERE id = %s
+            """, (quantity, cart_item_id))
+
+            redis_client.redis_client.delete(f"user_cart:{user_id}")
+            return {"message": "Cart updated successfully"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update cart: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update cart"
+        )
+
+
+@router.delete("/cart/{cart_item_id}")
+async def remove_from_cart(
+        cart_item_id: int,
+        current_user: dict = Depends(get_current_user)
+):
+    try:
+        user_id = current_user['sub']
+        with db.get_cursor() as cursor:
+            cursor.execute("DELETE FROM shopping_cart WHERE id = %s AND user_id = %s", (cart_item_id, user_id))
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Cart item not found"
+                )
+
+            redis_client.redis_client.delete(f"user_cart:{user_id}")
+            return {"message": "Item removed from cart"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to remove from cart: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to remove from cart"
+        )
+
+
+@router.delete("/cart")
+async def clear_cart(current_user: dict = Depends(get_current_user)):
+    try:
+        user_id = current_user['sub']
+        with db.get_cursor() as cursor:
+            cursor.execute("DELETE FROM shopping_cart WHERE user_id = %s", (user_id,))
+            redis_client.redis_client.delete(f"user_cart:{user_id}")
+            return {"message": "Cart cleared successfully"}
+
+    except Exception as e:
+        logger.error(f"Failed to clear cart: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to clear cart"
+        )
+
+
+@router.post("/profile/avatar")
+async def upload_avatar(
+        file: UploadFile = File(...),
+        current_user: dict = Depends(get_current_user)
+):
+    try:
+        user_id = current_user['sub']
+        allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+        if file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed."
+            )
+
+        max_size = 5 * 1024 * 1024
+        file.file.seek(0, 2)
+        file_size = file.file.tell()
+        file.file.seek(0)
+
+        if file_size > max_size:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File too large. Maximum size is 5MB."
+            )
+
+        file_extension = file.filename.split('.')[-1]
+        unique_filename = f"avatar_{user_id}_{int(datetime.now().timestamp())}.{file_extension}"
+        file_path = f"/app/uploads/avatars/{unique_filename}"
+
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+        with open(file_path, "wb") as buffer:
+            content = await file.read()
+            buffer.write(content)
+
+        with db.get_cursor() as cursor:
+            cursor.execute(
+                "UPDATE users SET avatar_url = %s WHERE id = %s",
+                (f"/uploads/avatars/{unique_filename}", user_id)
+            )
+
+        invalidate_user_cache(user_id)
+
+        return {
+            "message": "Avatar uploaded successfully",
+            "avatar_url": f"/uploads/avatars/{unique_filename}"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to upload avatar: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload avatar"
+        )
+
+
+@router.post("/change-password")
+async def change_password(
         current_password: str = Form(...),
         new_password: str = Form(...),
-        request: Request
+        current_user: dict = Depends(get_current_user)
 ):
-    """Change current user's password"""
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
     try:
+        user_id = current_user['sub']
         if len(new_password) < 8:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -920,63 +1060,136 @@ async def change_my_password(
         )
 
 
-# ========== AVATAR UPLOAD (User's own avatar) ==========
-
-@router.post("/my/avatar")
-async def upload_my_avatar(
-        file: UploadFile = File(...),
-        request: Request
+# Admin endpoints
+@router.get("/admin/users")
+async def get_all_users(
+        skip: int = 0,
+        limit: int = 100,
+        current_user: dict = Depends(require_roles(["admin", "super_admin"]))
 ):
-    """Upload avatar for current user"""
-    current_user = await get_current_user(request)
-    user_id = int(current_user['sub'])
-
     try:
-        allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-        if file.content_type not in allowed_types:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed."
-            )
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    u.id, u.uuid, u.email, u.first_name, u.last_name, u.phone,
+                    u.email_verified, u.phone_verified, u.is_active, u.last_login,
+                    u.created_at, u.updated_at,
+                    GROUP_CONCAT(DISTINCT ur.name) as roles
+                FROM users u
+                LEFT JOIN user_role_assignments ura ON u.id = ura.user_id
+                LEFT JOIN user_roles ur ON ura.role_id = ur.id
+                GROUP BY u.id
+                ORDER BY u.created_at DESC
+                LIMIT %s OFFSET %s
+            """, (limit, skip))
 
-        max_size = 5 * 1024 * 1024
-        file.file.seek(0, 2)
-        file_size = file.file.tell()
-        file.file.seek(0)
+            users = cursor.fetchall()
 
-        if file_size > max_size:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="File too large. Maximum size is 5MB."
-            )
+            cursor.execute("SELECT COUNT(*) as total FROM users")
+            total = cursor.fetchone()['total']
 
-        file_extension = file.filename.split('.')[-1]
-        unique_filename = f"avatar_{user_id}_{int(datetime.now().timestamp())}.{file_extension}"
-        file_path = f"/app/uploads/avatars/{unique_filename}"
+            return {
+                "users": users,
+                "total": total,
+                "skip": skip,
+                "limit": limit
+            }
 
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    except Exception as e:
+        logger.error(f"Failed to fetch users: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch users"
+        )
 
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
 
+@router.put("/admin/users/{user_id}/status")
+async def update_user_status(
+        user_id: int,
+        is_active: bool,
+        current_user: dict = Depends(require_roles(["admin", "super_admin"]))
+):
+    try:
         with db.get_cursor() as cursor:
             cursor.execute(
-                "UPDATE users SET avatar_url = %s WHERE id = %s",
-                (f"/uploads/avatars/{unique_filename}", user_id)
+                "UPDATE users SET is_active = %s, updated_at = NOW() WHERE id = %s",
+                (is_active, user_id)
             )
 
-        invalidate_user_cache(user_id)
-        return {
-            "message": "Avatar uploaded successfully",
-            "avatar_url": f"/uploads/avatars/{unique_filename}"
-        }
+            if cursor.rowcount == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+
+            action = "activated" if is_active else "deactivated"
+            logger.info(f"User {user_id} {action} by admin {current_user['sub']}")
+
+            return {"message": f"User {action} successfully"}
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to upload avatar: {e}")
+        logger.error(f"Failed to update user status: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload avatar"
+            detail="Failed to update user status"
         )
+
+
+@router.get("/debug/test")
+async def debug_test():
+    """Comprehensive debug endpoint"""
+    import traceback
+    try:
+        # Test basic imports
+        from shared import config, db, get_logger
+
+        logger = get_logger(__name__)
+
+        # Test config
+        maintenance_mode = config.maintenance_mode
+        debug_mode = config.debug_mode
+
+        # Test database with more details
+        db_status = "unknown"
+        user_count = 0
+        try:
+            with db.get_cursor() as cursor:
+                cursor.execute("SELECT 1 as test")
+                db_status = "connected"
+
+                # Try to count users
+                cursor.execute("SELECT COUNT(*) as count FROM users")
+                user_count = cursor.fetchone()['count']
+        except Exception as db_error:
+            db_status = f"error: {str(db_error)}"
+            logger.error(f"Database error: {db_error}")
+
+        # Test Redis
+        redis_status = "unknown"
+        try:
+            from shared.redis_client import redis_client
+            redis_status = "connected" if redis_client._ensure_connection() else "disconnected"
+        except Exception as redis_error:
+            redis_status = f"error: {str(redis_error)}"
+
+        return {
+            "status": "ok",
+            "maintenance_mode": maintenance_mode,
+            "debug_mode": debug_mode,
+            "database": db_status,
+            "user_count": user_count,
+            "redis": redis_status,
+            "service": "user"
+        }
+
+    except Exception as e:
+        error_traceback = traceback.format_exc()
+        return {
+            "status": "error",
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "traceback": error_traceback,
+            "service": "user"
+        }

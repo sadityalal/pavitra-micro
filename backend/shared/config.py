@@ -1,15 +1,19 @@
 import os
 import logging
 import json
+import time
 from typing import Any, Optional, Dict, List
 import secrets
 
 logger = logging.getLogger(__name__)
 
+
 class DatabaseConfig:
     def __init__(self):
         self._cache = {}
+        self._cache_timestamps = {}
         self._db = None
+        self._cache_duration = 10
         self._validate_required_settings()
 
     def _validate_required_settings(self):
@@ -21,7 +25,6 @@ class DatabaseConfig:
             try:
                 from .database import db
                 self._db = db
-                # Test the connection
                 try:
                     self._db.get_connection()
                     logger.info("Database connection established in config")
@@ -33,7 +36,11 @@ class DatabaseConfig:
         return self._db
 
     def _get_setting(self, key: str, default: Any = None) -> Any:
-        if key in self._cache:
+        current_time = time.time()
+
+        if (key in self._cache and
+                key in self._cache_timestamps and
+                current_time - self._cache_timestamps[key] < self._cache_duration):
             return self._cache[key]
 
         env_key = key.upper()
@@ -41,6 +48,7 @@ class DatabaseConfig:
             value = os.environ[env_key]
             value = self._convert_value(value, type(default))
             self._cache[key] = value
+            self._cache_timestamps[key] = current_time
             return value
 
         db = self._get_db()
@@ -56,6 +64,7 @@ class DatabaseConfig:
             if result:
                 value = self._convert_value(result['setting_value'], result['setting_type'])
                 self._cache[key] = value
+                self._cache_timestamps[key] = current_time
                 return value
             return default
         except Exception as e:
@@ -66,8 +75,13 @@ class DatabaseConfig:
                 connection.close()
 
     def _convert_value(self, value: str, target_type: Any) -> Any:
+        # FIX: Proper boolean conversion for string 'true'/'false'
         if target_type == bool:
-            return str(value).lower() in ('true', '1', 'yes', 'on')
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() in ('true', '1', 'yes', 'on', 't')
+            return bool(value)
         elif target_type == int:
             try:
                 return int(value)
@@ -88,6 +102,7 @@ class DatabaseConfig:
 
     def refresh_cache(self):
         self._cache.clear()
+        self._cache_timestamps.clear()
 
     @property
     def db_host(self) -> str:
@@ -229,10 +244,7 @@ class DatabaseConfig:
 
     @property
     def maintenance_mode(self) -> bool:
-        # Debug: Check what value we're getting
-        value = self._get_setting('maintenance_mode', False)
-        logger.debug(f"Maintenance mode config - value: {value}, type: {type(value)}")
-        return value
+        return self._get_setting('maintenance_mode', False)
 
     @property
     def debug_mode(self) -> bool:
@@ -357,5 +369,6 @@ class DatabaseConfig:
             'saturday': '10am-4pm',
             'sunday': 'Closed'
         })
+
 
 config = DatabaseConfig()

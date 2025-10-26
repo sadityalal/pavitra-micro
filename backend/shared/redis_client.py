@@ -87,15 +87,14 @@ class RedisClient:
             logger.error(f"Failed to cache session for user {user_id}: {e}")
             return False
 
-    def get_cached_session(self, user_id: int) -> Optional[dict]:
+    def get_cached_session(self, session_key: str) -> Optional[dict]:
         if not self._ensure_connection():
             return None
         try:
-            key = f"session:{user_id}"
-            data = self.redis_client.get(key)
+            data = self.redis_client.get(session_key)
             return json.loads(data) if data else None
         except Exception as e:
-            logger.error(f"Failed to get cached session for user {user_id}: {e}")
+            logger.error(f"Failed to get cached session {session_key}: {e}")
             return None
 
     def invalidate_product_cache(self, product_id: int):
@@ -140,5 +139,17 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
             return True
+
+    def delete_pattern(self, pattern: str) -> bool:
+        if not self._ensure_connection():
+            return False
+        try:
+            keys = self.redis_client.keys(pattern)
+            if keys:
+                return self.redis_client.delete(*keys) > 0
+            return True
+        except Exception as e:
+            logger.error(f"Failed to delete pattern {pattern}: {e}")
+            return False
 
 redis_client = RedisClient()
