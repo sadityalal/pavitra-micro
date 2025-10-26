@@ -11,11 +11,103 @@ import hashlib
 import hmac
 import json
 
+# Import payment gateways safely
+try:
+    import razorpay
+    import stripe
+except ImportError as e:
+    get_logger(__name__).warning(f"Payment gateway libraries not available: {e}")
+    razorpay = None
+    stripe = None
+
 router = APIRouter()
 logger = get_logger(__name__)
 
+
+class SecurePaymentGatewayService:
+    def __init__(self):
+        self.razorpay_client = None
+        self.stripe_client = None
+
+        if config.razorpay_key_id and config.razorpay_secret:
+            if not razorpay:
+                logger.warning("Razorpay library not available")
+            else:
+                try:
+                    self.razorpay_client = razorpay.Client(
+                        auth=(config.razorpay_key_id, config.razorpay_secret)
+                    )
+                    if config.razorpay_test_mode:
+                        logger.info("Razorpay client initialized in test mode")
+                    else:
+                        logger.info("Razorpay client initialized in live mode")
+                except Exception as e:
+                    logger.error(f"Failed to initialize Razorpay client: {e}")
+
+        if config.stripe_secret_key:
+            if not stripe:
+                logger.warning("Stripe library not available")
+            else:
+                try:
+                    stripe.api_key = config.stripe_secret_key
+                    self.stripe_client = stripe
+                    if config.stripe_test_mode:
+                        logger.info("Stripe client initialized in test mode")
+                    else:
+                        logger.info("Stripe client initialized in live mode")
+                except Exception as e:
+                    logger.error(f"Failed to initialize Stripe client: {e}")
+
+    def verify_razorpay_payment(self, payment_id: str, signature: str, order_id: str) -> bool:
+        if not self.razorpay_client:
+            logger.error("Razorpay client not available")
+            return False
+
+        try:
+            if not all([payment_id, signature, order_id]):
+                logger.error("Missing required parameters for Razorpay verification")
+                return False
+
+            params = {
+                'razorpay_order_id': order_id,
+                'razorpay_payment_id': payment_id,
+                'razorpay_signature': signature
+            }
+            self.razorpay_client.utility.verify_payment_signature(params)
+            logger.info(f"Razorpay payment verified successfully: {payment_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Razorpay verification failed: {e}")
+            return False
+
+    def verify_stripe_payment(self, payment_intent_id: str) -> bool:
+        if not self.stripe_client:
+            logger.error("Stripe client not available")
+            return False
+
+        try:
+            if not payment_intent_id:
+                logger.error("Missing payment_intent_id for Stripe verification")
+                return False
+
+            payment_intent = self.stripe_client.PaymentIntent.retrieve(payment_intent_id)
+            is_successful = payment_intent.status == 'succeeded'
+
+            if is_successful:
+                logger.info(f"Stripe payment verified successfully: {payment_intent_id}")
+            else:
+                logger.warning(f"Stripe payment not successful: {payment_intent.status}")
+
+            return is_successful
+        except Exception as e:
+            logger.error(f"Stripe verification failed: {e}")
+            return False
+
+
+payment_gateway_service = SecurePaymentGatewayService()
+
+
 def publish_payment_event(payment_data: dict, event_type: str):
-    """Publish payment event to RabbitMQ"""
     try:
         message = {
             'event_type': event_type,
@@ -27,7 +119,6 @@ def publish_payment_event(payment_data: dict, event_type: str):
             'timestamp': datetime.utcnow().isoformat(),
             'data': payment_data
         }
-        
         rabbitmq_client.publish_message(
             exchange='payment_events',
             routing_key=f'payment.{event_type}',
@@ -37,8 +128,8 @@ def publish_payment_event(payment_data: dict, event_type: str):
     except Exception as e:
         logger.error(f"Failed to publish payment event: {e}")
 
+
 def cache_payment_methods(user_id: int, methods: List[dict], expire: int = 3600):
-    """Cache user payment methods in Redis"""
     try:
         key = f"payment_methods:{user_id}"
         redis_client.redis_client.setex(key, expire, json.dumps(methods))
@@ -46,8 +137,8 @@ def cache_payment_methods(user_id: int, methods: List[dict], expire: int = 3600)
     except Exception as e:
         logger.error(f"Failed to cache payment methods: {e}")
 
+
 def get_cached_payment_methods(user_id: int) -> Optional[List[dict]]:
-    """Get cached payment methods from Redis"""
     try:
         key = f"payment_methods:{user_id}"
         data = redis_client.redis_client.get(key)
@@ -58,8 +149,8 @@ def get_cached_payment_methods(user_id: int) -> Optional[List[dict]]:
         logger.error(f"Failed to get cached payment methods: {e}")
         return None
 
+
 def invalidate_payment_cache(user_id: int):
-    """Invalidate payment-related cache for user"""
     try:
         keys = [
             f"payment_methods:{user_id}",
@@ -70,6 +161,7 @@ def invalidate_payment_cache(user_id: int):
         logger.info(f"Invalidated payment cache for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to invalidate payment cache: {e}")
+
 
 @router.get("/health", response_model=HealthResponse)
 async def health():
@@ -92,6 +184,7 @@ async def health():
             timestamp=datetime.utcnow()
         )
 
+
 @router.post("/initiate", response_model=PaymentInitiateResponse)
 async def initiate_payment(payment_data: PaymentCreate, user_id: int = 1, background_tasks: BackgroundTasks = None):
     try:
@@ -102,21 +195,25 @@ async def initiate_payment(payment_data: PaymentCreate, user_id: int = 1, backgr
                 WHERE id = %s AND user_id = %s
             """, (payment_data.order_id, user_id))
             order = cursor.fetchone()
+
             if not order:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Order not found"
                 )
+
             if order['payment_status'] == 'paid':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Order is already paid"
                 )
+
             if abs(payment_data.amount - float(order['total_amount'])) > 0.01:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Payment amount does not match order total"
                 )
+
             cursor.execute("""
                 INSERT INTO payment_transactions (
                     order_id, user_id, amount, currency, payment_method,
@@ -132,10 +229,13 @@ async def initiate_payment(payment_data: PaymentCreate, user_id: int = 1, backgr
                 'pending',
                 'pending'
             ))
+
             payment_id = cursor.lastrowid
             gateway_order_id = f"PT_{payment_id}_{int(datetime.now().timestamp())}"
+
             razorpay_order_id = None
             razorpay_key = None
+
             if payment_data.gateway.value == 'razorpay' and config.razorpay_key_id:
                 razorpay_order_id = gateway_order_id
                 razorpay_key = config.razorpay_key_id
@@ -144,20 +244,19 @@ async def initiate_payment(payment_data: PaymentCreate, user_id: int = 1, backgr
                     SET gateway_order_id = %s
                     WHERE id = %s
                 """, (razorpay_order_id, payment_id))
-            
-            # Get created payment
+
             cursor.execute("SELECT * FROM payment_transactions WHERE id = %s", (payment_id,))
             payment = cursor.fetchone()
-            
-            # Publish payment initiated event
+
             if background_tasks:
                 background_tasks.add_task(
                     publish_payment_event,
                     payment,
                     'initiated'
                 )
-            
+
             logger.info(f"Payment initiated: {payment_id} for order {payment_data.order_id}")
+
             return PaymentInitiateResponse(
                 payment_id=payment_id,
                 gateway_order_id=gateway_order_id,
@@ -167,6 +266,7 @@ async def initiate_payment(payment_data: PaymentCreate, user_id: int = 1, backgr
                 currency=payment_data.currency,
                 callback_url=f"/api/v1/payments/verify/{payment_id}"
             )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -176,33 +276,50 @@ async def initiate_payment(payment_data: PaymentCreate, user_id: int = 1, backgr
             detail="Failed to initiate payment"
         )
 
+
 @router.post("/verify/{payment_id}")
 async def verify_payment(
-    payment_id: int, 
-    verify_data: PaymentVerifyRequest, 
-    user_id: int = 1,
-    background_tasks: BackgroundTasks = None
+        payment_id: int,
+        verify_data: PaymentVerifyRequest,
+        user_id: int = 1,
+        background_tasks: BackgroundTasks = None
 ):
     try:
         with db.get_cursor() as cursor:
             cursor.execute("""
-                SELECT pt.*, o.total_amount, o.user_id
+                SELECT pt.*, o.total_amount, o.user_id, pt.gateway_name
                 FROM payment_transactions pt
                 JOIN orders o ON pt.order_id = o.id
                 WHERE pt.id = %s
             """, (payment_id,))
             payment = cursor.fetchone()
+
             if not payment:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Payment not found"
                 )
+
             if payment['user_id'] != user_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access denied"
                 )
-            is_successful = True  # In real implementation, verify with payment gateway
+
+            is_successful = False
+            if payment['gateway_name'] == 'razorpay':
+                is_successful = payment_gateway_service.verify_razorpay_payment(
+                    verify_data.gateway_transaction_id,
+                    verify_data.gateway_signature,
+                    payment['gateway_order_id']
+                )
+            elif payment['gateway_name'] == 'stripe':
+                is_successful = payment_gateway_service.verify_stripe_payment(
+                    verify_data.gateway_transaction_id
+                )
+            else:
+                is_successful = True
+
             if is_successful:
                 cursor.execute("""
                     UPDATE payment_transactions
@@ -218,6 +335,7 @@ async def verify_payment(
                     verify_data.upi_id,
                     payment_id
                 ))
+
                 cursor.execute("""
                     UPDATE orders
                     SET payment_status = 'paid',
@@ -225,27 +343,25 @@ async def verify_payment(
                         status = 'confirmed'
                     WHERE id = %s
                 """, (payment['order_id'],))
+
                 cursor.execute("""
                     INSERT INTO order_history (order_id, field_changed, old_value, new_value, change_type, reason)
                     VALUES (%s, 'payment_status', 'pending', 'paid', 'system', 'Payment completed successfully')
                 """, (payment['order_id'],))
-                
-                # Get updated payment
+
                 cursor.execute("SELECT * FROM payment_transactions WHERE id = %s", (payment_id,))
                 updated_payment = cursor.fetchone()
-                
-                # Publish payment completed event
+
                 if background_tasks:
                     background_tasks.add_task(
                         publish_payment_event,
                         updated_payment,
                         'completed'
                     )
-                
-                # Invalidate order cache
+
                 redis_client.invalidate_product_cache(f"order:{payment['order_id']}")
-                
                 logger.info(f"Payment verified successfully: {payment_id}")
+
                 return {
                     "success": True,
                     "message": "Payment verified successfully",
@@ -260,11 +376,13 @@ async def verify_payment(
                         failure_reason = 'Payment verification failed'
                     WHERE id = %s
                 """, (payment_id,))
+
                 logger.warning(f"Payment verification failed: {payment_id}")
                 return {
                     "success": False,
                     "message": "Payment verification failed"
                 }
+
     except HTTPException:
         raise
     except Exception as e:
@@ -274,20 +392,20 @@ async def verify_payment(
             detail="Failed to verify payment"
         )
 
+
 @router.get("/transactions", response_model=List[PaymentResponse])
 async def get_payment_transactions(
-    user_id: int = 1,
-    page: int = 1,
-    page_size: int = 20
+        user_id: int = 1,
+        page: int = 1,
+        page_size: int = 20
 ):
     try:
-        # Try to get from cache first
         cache_key = f"payment_transactions:{user_id}:{page}:{page_size}"
         cached_data = get_cached_payment_methods(cache_key)
         if cached_data:
             logger.info(f"Returning cached payment transactions for user {user_id}")
             return cached_data
-        
+
         with db.get_cursor() as cursor:
             offset = (page - 1) * page_size
             cursor.execute("""
@@ -296,6 +414,7 @@ async def get_payment_transactions(
                 ORDER BY created_at DESC
                 LIMIT %s OFFSET %s
             """, (user_id, page_size, offset))
+
             payments = cursor.fetchall()
             payment_list = [
                 PaymentResponse(
@@ -323,17 +442,17 @@ async def get_payment_transactions(
                 )
                 for payment in payments
             ]
-            
-            # Cache the results
-            cache_payment_methods(cache_key, payment_list, expire=300)  # 5 minutes
-            
+
+            cache_payment_methods(cache_key, payment_list, expire=300)
             return payment_list
+
     except Exception as e:
         logger.error(f"Failed to fetch payment transactions: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch payment transactions"
         )
+
 
 @router.get("/transactions/{payment_id}", response_model=PaymentResponse)
 async def get_payment_transaction(payment_id: int, user_id: int = 1):
@@ -344,11 +463,13 @@ async def get_payment_transaction(payment_id: int, user_id: int = 1):
                 WHERE id = %s AND user_id = %s
             """, (payment_id, user_id))
             payment = cursor.fetchone()
+
             if not payment:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Payment transaction not found"
                 )
+
             return PaymentResponse(
                 id=payment['id'],
                 uuid=payment['uuid'],
@@ -372,6 +493,7 @@ async def get_payment_transaction(payment_id: int, user_id: int = 1):
                 created_at=payment['created_at'],
                 updated_at=payment['updated_at']
             )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -381,21 +503,22 @@ async def get_payment_transaction(payment_id: int, user_id: int = 1):
             detail="Failed to fetch payment transaction"
         )
 
+
 @router.get("/methods", response_model=List[PaymentMethodResponse])
 async def get_payment_methods(user_id: int = 1):
     try:
-        # Try to get from cache first
         cached_methods = get_cached_payment_methods(user_id)
         if cached_methods:
             logger.info(f"Returning cached payment methods for user {user_id}")
             return cached_methods
-        
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM payment_methods
                 WHERE user_id = %s AND is_active = 1
                 ORDER BY is_default DESC, created_at DESC
             """, (user_id,))
+
             methods = cursor.fetchall()
             method_list = [
                 PaymentMethodResponse(
@@ -412,11 +535,10 @@ async def get_payment_methods(user_id: int = 1):
                 )
                 for method in methods
             ]
-            
-            # Cache the results
+
             cache_payment_methods(user_id, method_list)
-            
             return method_list
+
     except Exception as e:
         logger.error(f"Failed to fetch payment methods: {e}")
         raise HTTPException(
@@ -424,44 +546,77 @@ async def get_payment_methods(user_id: int = 1):
             detail="Failed to fetch payment methods"
         )
 
+
 @router.post("/refund", response_model=RefundResponse)
 async def create_refund(
-    refund_data: RefundCreate, 
-    user_id: int = 1,
-    background_tasks: BackgroundTasks = None
+        refund_data: RefundCreate,
+        user_id: int = 1,
+        background_tasks: BackgroundTasks = None
 ):
     try:
         with db.get_cursor() as cursor:
             cursor.execute("""
-                SELECT pt.*, o.user_id
+                SELECT pt.*, o.user_id, pt.gateway_name, pt.gateway_transaction_id
                 FROM payment_transactions pt
                 JOIN orders o ON pt.order_id = o.id
                 WHERE pt.id = %s
             """, (refund_data.payment_id,))
             payment = cursor.fetchone()
+
             if not payment:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Payment not found"
                 )
+
             if payment['user_id'] != user_id:
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Access denied"
                 )
+
             if payment['status'] != 'completed':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Only completed payments can be refunded"
                 )
+
             max_refund = float(payment['amount']) - float(payment['refund_amount'])
             if refund_data.amount > max_refund:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Maximum refund amount is {max_refund}"
                 )
-            refund_success = True
-            gateway_refund_id = f"REF_{payment['id']}_{int(datetime.now().timestamp())}"
+
+            refund_success = False
+            gateway_refund_id = None
+
+            if payment['gateway_name'] == 'razorpay' and payment_gateway_service.razorpay_client:
+                try:
+                    refund = payment_gateway_service.razorpay_client.payment.refund(
+                        payment['gateway_transaction_id'],
+                        {'amount': int(refund_data.amount * 100)}
+                    )
+                    refund_success = True
+                    gateway_refund_id = refund['id']
+                except Exception as e:
+                    logger.error(f"Razorpay refund failed: {e}")
+                    refund_success = False
+            elif payment['gateway_name'] == 'stripe' and payment_gateway_service.stripe_client:
+                try:
+                    refund = payment_gateway_service.stripe_client.Refund.create(
+                        payment_intent=payment['gateway_transaction_id'],
+                        amount=int(refund_data.amount * 100)
+                    )
+                    refund_success = True
+                    gateway_refund_id = refund.id
+                except Exception as e:
+                    logger.error(f"Stripe refund failed: {e}")
+                    refund_success = False
+            else:
+                refund_success = True
+                gateway_refund_id = f"MANUAL_REF_{payment['id']}_{int(datetime.now().timestamp())}"
+
             if refund_success:
                 new_refund_amount = float(payment['refund_amount']) + refund_data.amount
                 cursor.execute("""
@@ -471,6 +626,7 @@ async def create_refund(
                         status = CASE WHEN %s = amount THEN 'refunded' ELSE status END
                     WHERE id = %s
                 """, (new_refund_amount, new_refund_amount, new_refund_amount, refund_data.payment_id))
+
                 if new_refund_amount == float(payment['amount']):
                     cursor.execute("""
                         UPDATE orders
@@ -478,28 +634,27 @@ async def create_refund(
                             status = 'refunded'
                         WHERE id = %s
                     """, (payment['order_id'],))
+
                 cursor.execute("""
                     INSERT INTO refunds (payment_id, amount, reason, status, gateway_refund_id)
                     VALUES (%s, %s, %s, 'completed', %s)
                 """, (refund_data.payment_id, refund_data.amount, refund_data.reason, gateway_refund_id))
+
                 refund_id = cursor.lastrowid
-                
-                # Get updated payment
+
                 cursor.execute("SELECT * FROM payment_transactions WHERE id = %s", (refund_data.payment_id,))
                 updated_payment = cursor.fetchone()
-                
-                # Publish refund event
+
                 if background_tasks:
                     background_tasks.add_task(
                         publish_payment_event,
                         updated_payment,
                         'refunded'
                     )
-                
-                # Invalidate cache
+
                 invalidate_payment_cache(user_id)
-                
                 logger.info(f"Refund processed: {refund_id} for payment {refund_data.payment_id}")
+
                 return RefundResponse(
                     id=refund_id,
                     payment_id=refund_data.payment_id,
@@ -512,8 +667,9 @@ async def create_refund(
             else:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Refund processing failed"
+                    detail="Refund processing failed at payment gateway"
                 )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -523,19 +679,46 @@ async def create_refund(
             detail="Failed to process refund"
         )
 
+
 @router.post("/webhook/razorpay")
 async def razorpay_webhook(request: Request, background_tasks: BackgroundTasks = None):
     try:
+        content_type = request.headers.get('content-type')
+        if content_type != 'application/json':
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid content type"
+            )
+
         body = await request.body()
         signature = request.headers.get('X-Razorpay-Signature', '')
-        
-        # Verify webhook signature (implement proper verification)
+
+        if not signature:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Missing signature"
+            )
+
+        if payment_gateway_service.razorpay_client:
+            try:
+                payment_gateway_service.razorpay_client.utility.verify_webhook_signature(
+                    body.decode(), signature, config.razorpay_secret
+                )
+            except Exception as e:
+                logger.error(f"Webhook signature verification failed: {e}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid webhook signature"
+                )
+
         webhook_data = json.loads(body)
         event = webhook_data.get('event')
+
         logger.info(f"Razorpay webhook received: {event}")
-        
+
         if event == 'payment.captured':
             payment_data = webhook_data.get('payload', {}).get('payment', {}).get('entity', {})
+
             with db.get_cursor() as cursor:
                 cursor.execute("""
                     UPDATE payment_transactions
@@ -545,11 +728,12 @@ async def razorpay_webhook(request: Request, background_tasks: BackgroundTasks =
                         captured_at = NOW()
                     WHERE gateway_order_id = %s
                 """, (payment_data.get('id'), payment_data.get('order_id')))
-                
+
                 cursor.execute("""
                     SELECT order_id FROM payment_transactions
                     WHERE gateway_order_id = %s
                 """, (payment_data.get('order_id'),))
+
                 payment = cursor.fetchone()
                 if payment:
                     cursor.execute("""
@@ -559,20 +743,22 @@ async def razorpay_webhook(request: Request, background_tasks: BackgroundTasks =
                             status = 'confirmed'
                         WHERE id = %s
                     """, (payment['order_id'],))
-                    
-                    # Get updated payment
-                    cursor.execute("SELECT * FROM payment_transactions WHERE gateway_order_id = %s", (payment_data.get('order_id'),))
+
+                    cursor.execute("SELECT * FROM payment_transactions WHERE gateway_order_id = %s",
+                                   (payment_data.get('order_id'),))
                     updated_payment = cursor.fetchone()
-                    
-                    # Publish payment completed event
+
                     if background_tasks and updated_payment:
                         background_tasks.add_task(
                             publish_payment_event,
                             updated_payment,
                             'completed'
                         )
-        
+
         return {"status": "success"}
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Webhook processing failed: {e}")
         raise HTTPException(

@@ -1,30 +1,94 @@
 import os
 import logging
 import json
+import time
 from typing import Any, Optional, Dict, List
+import secrets
 logger = logging.getLogger(__name__)
 
 class DatabaseConfig:
     def __init__(self):
         self._cache = {}
+        self._cache_timestamps = {}
         self._db = None
+        self._cache_duration = 10  # 10 seconds cache for performance
+        self._last_settings_check = 0
+        self._settings_version = 0
+        self._validate_required_settings()
+
+    def _validate_required_settings(self):
+        if not self.debug_mode and not os.getenv('JWT_SECRET'):
+            raise ValueError("JWT_SECRET environment variable is required in production")
 
     def _get_db(self):
         if self._db is None:
             try:
                 from .database import db
                 self._db = db
+                try:
+                    self._db.get_connection()
+                    logger.info("Database connection established in config")
+                except Exception as e:
+                    logger.warning(f"Database connection test failed: {e}")
             except ImportError:
                 logger.warning("Database not available yet")
                 return None
         return self._db
 
-    def _get_setting(self, key: str, default: Any = None) -> Any:
-        if key in self._cache:
-            return self._cache[key]
+    def _check_settings_version(self):
+        """Check if settings have been updated in database"""
+        current_time = time.time()
+        if current_time - self._last_settings_check < 5:  # Check every 5 seconds max
+            return
+            
+        self._last_settings_check = current_time
         db = self._get_db()
         if not db:
+            return
+            
+        connection = None
+        try:
+            connection = db.get_connection()
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("SELECT MAX(updated_at) as last_update FROM site_settings")
+            result = cursor.fetchone()
+            if result and result['last_update']:
+                # Convert timestamp to version number
+                new_version = int(result['last_update'].timestamp())
+                if new_version > self._settings_version:
+                    logger.info("Settings updated in database, clearing cache")
+                    self._cache.clear()
+                    self._cache_timestamps.clear()
+                    self._settings_version = new_version
+        except Exception as e:
+            logger.warning(f"Failed to check settings version: {e}")
+        finally:
+            if connection and connection.is_connected():
+                connection.close()
+
+    def _get_setting(self, key: str, default: Any = None) -> Any:
+        # Always check if settings have been updated
+        self._check_settings_version()
+        
+        current_time = time.time()
+        if (key in self._cache and
+                key in self._cache_timestamps and
+                current_time - self._cache_timestamps[key] < self._cache_duration):
+            return self._cache[key]
+            
+        env_key = key.upper()
+        if env_key in os.environ:
+            value = os.environ[env_key]
+            value = self._convert_value(value, type(default))
+            self._cache[key] = value
+            self._cache_timestamps[key] = current_time
+            return value
+            
+        db = self._get_db()
+        if not db:
+            logger.warning(f"Database not available for setting {key}, using default: {default}")
             return default
+            
         connection = None
         try:
             connection = db.get_connection()
@@ -32,9 +96,14 @@ class DatabaseConfig:
             cursor.execute("SELECT setting_value, setting_type FROM site_settings WHERE setting_key = %s", (key,))
             result = cursor.fetchone()
             if result:
-                value = self._convert_value(result['setting_value'], result['setting_type'])
+                # Use the setting_type from database to determine conversion
+                db_type = result['setting_type']
+                value = self._convert_value_by_type(result['setting_value'], db_type)
                 self._cache[key] = value
+                self._cache_timestamps[key] = current_time
+                logger.info(f"Loaded setting {key} from database: {value} (db_type: {db_type}, python_type: {type(value)})")
                 return value
+            logger.warning(f"Setting {key} not found in database, using default: {default}")
             return default
         except Exception as e:
             logger.warning(f"Failed to get {key} from database: {e}, using default: {default}")
@@ -43,28 +112,63 @@ class DatabaseConfig:
             if connection and connection.is_connected():
                 connection.close()
 
-    def _convert_value(self, value: str, value_type: str) -> Any:
-        if value_type == 'boolean':
-            return value.lower() == 'true'
-        elif value_type == 'number':
-            try:
-                return float(value) if '.' in value else int(value)
-            except ValueError:
+    def _convert_value_by_type(self, value: str, db_type: str) -> Any:
+        """Convert value based on database setting_type"""
+        if db_type == 'boolean':
+            if isinstance(value, bool):
                 return value
-        elif value_type == 'json':
+            if isinstance(value, str):
+                # More comprehensive boolean conversion
+                true_values = ['true', '1', 'yes', 'on', 't', 'y']
+                false_values = ['false', '0', 'no', 'off', 'f', 'n']
+                lower_val = value.lower().strip()
+                if lower_val in true_values:
+                    return True
+                elif lower_val in false_values:
+                    return False
+                else:
+                    logger.warning(f"Unable to convert '{value}' to boolean, using False")
+                    return False
+            return bool(value)
+        elif db_type == 'number':
             try:
-                return json.loads(value)
+                if '.' in str(value):
+                    return float(value)
+                else:
+                    return int(value)
+            except (ValueError, TypeError):
+                return 0
+        elif db_type == 'json':
+            try:
+                if isinstance(value, str):
+                    return json.loads(value)
+                return value
             except json.JSONDecodeError:
-                return value
+                return []
+        else:  # string type
+            return str(value)
+
+    def _convert_value(self, value: str, target_type: Any) -> Any:
+        """Fallback conversion based on target type"""
+        if target_type == bool:
+            return self._convert_value_by_type(value, 'boolean')
+        elif target_type == int:
+            return self._convert_value_by_type(value, 'number')
+        elif target_type == float:
+            return self._convert_value_by_type(value, 'number')
+        elif target_type == list:
+            return self._convert_value_by_type(value, 'json')
         else:
-            return value
+            return str(value)
 
     def refresh_cache(self):
+        """Force refresh all cached settings"""
         self._cache.clear()
+        self._cache_timestamps.clear()
+        self._settings_version = 0
+        self._last_settings_check = 0
+        logger.info("Configuration cache forcefully refreshed")
 
-    # === ESSENTIAL BOOTSTRAP SETTINGS (Environment Only) ===
-    
-    # Database Configuration - Essential for bootstrapping
     @property
     def db_host(self) -> str:
         return os.getenv('DB_HOST', 'mysql')
@@ -85,28 +189,24 @@ class DatabaseConfig:
     def db_password(self) -> str:
         return os.getenv('DB_PASSWORD', 'app123')
 
-    # JWT Configuration - Security sensitive, keep in environment
     @property
     def jwt_secret(self) -> str:
-        return os.getenv('JWT_SECRET', 'dev-secret-change-in-production')
+        secret = os.getenv('JWT_SECRET')
+        if not secret:
+            if not self.debug_mode:
+                raise ValueError("JWT_SECRET environment variable is required in production")
+            logger.warning("Using default JWT secret - INSECURE FOR PRODUCTION")
+            return 'dev-secret-change-in-production-' + secrets.token_urlsafe(32)
+        return secret
 
     @property
     def jwt_algorithm(self) -> str:
         return os.getenv('JWT_ALGORITHM', 'HS256')
 
-    # Service Ports - Docker infrastructure
     def get_service_port(self, service_name: str) -> int:
         port_key = f"{service_name.upper()}_SERVICE_PORT"
-        return int(os.getenv(port_key, '8000'))
+        return int(os.getenv(port_key, '8001'))
 
-    # Upload Path - File system path
-    @property
-    def upload_path(self) -> str:
-        return os.getenv('UPLOAD_PATH', '/app/uploads')
-
-    # === ALL OTHER SETTINGS (From Database) ===
-
-    # Redis Configuration
     @property
     def redis_host(self) -> str:
         return self._get_setting('redis_host', 'redis')
@@ -123,68 +223,65 @@ class DatabaseConfig:
     def redis_db(self) -> int:
         return self._get_setting('redis_db', 0)
 
-    # RabbitMQ Configuration
     @property
     def rabbitmq_host(self) -> str:
-        return self._get_setting('rabbitmq_host', '')
+        return self._get_setting('rabbitmq_host', 'rabbitmq')
 
     @property
     def rabbitmq_port(self) -> int:
-        return self._get_setting('rabbitmq_port', )
+        return self._get_setting('rabbitmq_port', 5672)
 
     @property
     def rabbitmq_user(self) -> str:
-        return self._get_setting('rabbitmq_user', )
+        return self._get_setting('rabbitmq_user', 'admin')
 
     @property
     def rabbitmq_password(self) -> str:
-        return self._get_setting('rabbitmq_password', )
+        return self._get_setting('rabbitmq_password', 'admin123')
 
-    # SMTP Configuration
     @property
     def smtp_host(self) -> str:
-        return self._get_setting('smtp_host', )
+        return self._get_setting('smtp_host', 'smtp.gmail.com')
 
     @property
     def smtp_port(self) -> int:
-        return self._get_setting('smtp_port', )
+        return self._get_setting('smtp_port', 587)
 
     @property
     def smtp_username(self) -> str:
-        return self._get_setting('smtp_username', )
+        return self._get_setting('smtp_username', '')
 
     @property
     def smtp_password(self) -> str:
-        return self._get_setting('smtp_password',)
+        return self._get_setting('smtp_password', '')
 
     @property
     def email_from(self) -> str:
-        return self._get_setting('email_from', )
+        return self._get_setting('email_from', 'noreply@pavitra-trading.com')
 
     @property
     def email_from_name(self) -> str:
-        return self._get_setting('email_from_name',)
+        return self._get_setting('email_from_name', 'Pavitra Trading')
 
-    # Application Settings
     @property
     def site_name(self) -> str:
-        return self._get_setting('site_name', )
+        return self._get_setting('site_name', 'Pavitra Trading')
 
     @property
     def site_description(self) -> str:
-        return self._get_setting('site_description',)
+        return self._get_setting('site_description', 'Your trusted online shopping destination')
 
     @property
     def app_name(self) -> str:
-        return self._get_setting('app_name',)
+        return self._get_setting('app_name', 'Pavitra Trading')
 
     @property
     def app_description(self) -> str:
-        return self._get_setting('app_description',)
+        return self._get_setting('app_description', 'E-commerce Platform')
 
     @property
     def currency(self) -> str:
-        return self._get_setting('currency', )
+        return self._get_setting('currency', 'INR')
 
     @property
     def currency_symbol(self) -> str:
@@ -212,6 +309,7 @@ class DatabaseConfig:
 
     @property
     def maintenance_mode(self) -> bool:
+        # IMPORTANT: Default should be False, not True
         return self._get_setting('maintenance_mode', False)
 
     @property
@@ -239,14 +337,6 @@ class DatabaseConfig:
         return self._get_setting('free_shipping_min_amount', 500.0)
 
     @property
-    def max_upload_size(self) -> int:
-        return self._get_setting('max_upload_size', 5242880)
-
-    @property
-    def allowed_file_types(self) -> List[str]:
-        return self._get_setting('allowed_file_types', ['jpg', 'jpeg', 'png', 'gif', 'webp'])
-
-    @property
     def log_level(self) -> str:
         return self._get_setting('log_level', 'INFO')
 
@@ -269,6 +359,22 @@ class DatabaseConfig:
     @property
     def stripe_test_mode(self) -> bool:
         return self._get_setting('stripe_test_mode', True)
+
+    @property
+    def razorpay_key_id(self) -> str:
+        return self._get_setting('razorpay_key_id', '')
+
+    @property
+    def razorpay_secret(self) -> str:
+        return self._get_setting('razorpay_secret', '')
+
+    @property
+    def stripe_publishable_key(self) -> str:
+        return self._get_setting('stripe_publishable_key', '')
+
+    @property
+    def stripe_secret_key(self) -> str:
+        return self._get_setting('stripe_secret_key', '')
 
     @property
     def email_notifications(self) -> bool:
@@ -294,31 +400,40 @@ class DatabaseConfig:
     def refund_processing_fee(self) -> float:
         return self._get_setting('refund_processing_fee', 0.0)
 
-    # Payment Gateway Settings
     @property
-    def razorpay_key_id(self) -> str:
-        return self._get_setting('razorpay_key_id', '')
+    def max_upload_size(self) -> int:
+        return self._get_setting('max_upload_size', 5242880)
 
     @property
-    def razorpay_secret(self) -> str:
-        return self._get_setting('razorpay_secret', '')
+    def allowed_file_types(self) -> List[str]:
+        return self._get_setting('allowed_file_types', ['jpg', 'jpeg', 'png', 'gif', 'webp'])
 
     @property
-    def stripe_publishable_key(self) -> str:
-        return self._get_setting('stripe_publishable_key', '')
+    def upload_path(self) -> str:
+        return os.getenv('UPLOAD_PATH', '/app/uploads')
 
     @property
-    def stripe_secret_key(self) -> str:
-        return self._get_setting('stripe_secret_key', '')
+    def free_shipping_threshold(self) -> float:
+        return self._get_setting('free_shipping_threshold', 999.0)
 
     @property
-    def mysql_host_name(self) -> str:
-        return self._get_setting('mysql_host_name', '')
+    def return_period_days(self) -> int:
+        return self._get_setting('return_period_days', 10)
+
     @property
-    def mysql_user(self) -> str:
-        return self._get_setting('mysql_user', '')
+    def site_phone(self) -> str:
+        return self._get_setting('site_phone', '+91-9711317009')
+
     @property
-    def mysql_password(self) -> str:
-        return self._get_setting('mysql_password', '')
+    def site_email(self) -> str:
+        return self._get_setting('site_email', 'support@pavitraenterprises.com')
+
+    @property
+    def business_hours(self) -> Dict[str, str]:
+        return self._get_setting('business_hours', {
+            'monday_friday': '9am-6pm',
+            'saturday': '10am-4pm',
+            'sunday': 'Closed'
+        })
 
 config = DatabaseConfig()

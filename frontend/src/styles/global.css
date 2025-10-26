@@ -1,0 +1,41 @@
+/* CSS Variables */
+:root {
+  --default-font: "Roboto", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --heading-font: "Montserrat", sans-serif;
+  --nav-font: "Poppins", sans-serif;
+  --background-color: #ffffff;
+  --default-color: #444444;
+  --heading-color: #000000;
+  --accent-color: #252223;
+  --surface-color: #ffffff;
+  --contrast-color: #ffffff;
+  --primary-color: #0ea5e9;
+  --secondary-color: #64748b;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--default-font);
+  background: var(--background-color);
+  color: var(--default-color);
+  line-height: 1.6;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 20px;
+}
+
+/* Utility Classes */
+.text-primary { color: var(--primary-color) !important; }
+.bg-primary { background-color: var(--primary-color) !important; }
+.btn-primary { 
+  background-color: var(--primary-color) !important;
+  border-color: var(--primary-color) !important;
+}
