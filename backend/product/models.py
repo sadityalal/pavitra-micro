@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -40,6 +40,8 @@ class ProductCreate(ProductBase):
     is_featured: bool = False
 
 class ProductResponse(ProductBase):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     uuid: str
     specification: Optional[Dict[str, Any]] = None
@@ -63,10 +65,9 @@ class ProductResponse(ProductBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
-
 class CategoryResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     uuid: str
     name: str
@@ -77,10 +78,9 @@ class CategoryResponse(BaseModel):
     is_active: bool
     sort_order: int
 
-    class Config:
-        from_attributes = True
-
 class BrandResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: int
     uuid: str
     name: str
@@ -88,9 +88,6 @@ class BrandResponse(BaseModel):
     description: Optional[str] = None
     logo_url: Optional[str] = None
     is_active: bool
-
-    class Config:
-        from_attributes = True
 
 class ProductSearch(BaseModel):
     query: Optional[str] = None
