@@ -2,6 +2,7 @@ import json
 import logging
 from shared import get_logger, rabbitmq_client, db, config
 from .routes import email_service, sms_service, push_service, telegram_service, whatsapp_service, log_notification
+from .notification_router import notification_router
 
 logger = get_logger(__name__)
 
@@ -221,40 +222,95 @@ class NotificationConsumer:
                 """, (user_id,))
                 user = cursor.fetchone()
                 
-                # CUSTOMER NOTIFICATION - Email confirmation
-                if user and user['email']:
-                    template_data = {
-                        'customer_name': user['first_name'],
-                        'order_number': order_data.get('order_number'),
-                        'order_date': order_data.get('created_at'),
-                        'total_amount': order_data.get('total_amount')
-                    }
+                if not user:
+                    logger.error(f"User {user_id} not found for order notification")
+                    return
+                
+                # CUSTOMER NOTIFICATION - Use smart routing based on user preferences
+                channels = notification_router.get_user_notification_channels(user_id, 'order_confirmations')
+                
+                for channel in channels:
+                    contacts = notification_router.get_notification_contacts(user_id, channel)
                     
-                    subject = f"Order Confirmation - {order_data.get('order_number')}"
-                    html_content = f"""
-                    <h1>Order Confirmed!</h1>
-                    <p>Hello {user['first_name']},</p>
-                    <p>Thank you for your order. We're getting it ready for you.</p>
-                    <p><strong>Order Number:</strong> {order_data.get('order_number')}</p>
-                    <p><strong>Total Amount:</strong> ₹{order_data.get('total_amount')}</p>
-                    <p>We'll notify you when your order ships.</p>
-                    """
+                    if channel == 'email' and 'email' in contacts:
+                        # Send email notification
+                        subject = f"Order Confirmation - {order_data.get('order_number')}"
+                        html_content = f"""
+                        <h1>Order Confirmed!</h1>
+                        <p>Hello {user['first_name']},</p>
+                        <p>Thank you for your order. We're getting it ready for you.</p>
+                        <p><strong>Order Number:</strong> {order_data.get('order_number')}</p>
+                        <p><strong>Total Amount:</strong> ₹{order_data.get('total_amount')}</p>
+                        <p>We'll notify you when your order ships.</p>
+                        """
+                        
+                        email_service.send_email(contacts['email'], subject, html_content)
+                        log_notification(
+                            notification_type="email",
+                            recipient=contacts['email'],
+                            subject=subject,
+                            template_name="order_confirmation",
+                            status="sent"
+                        )
+                        logger.info(f"Order confirmation email sent to {contacts['email']}")
                     
-                    email_service.send_email(user['email'], subject, html_content)
-                    log_notification(
-                        notification_type="email",
-                        recipient=user['email'],
-                        subject=subject,
-                        template_name="order_confirmation",
-                        status="sent"
-                    )
+                    elif channel == 'telegram' and ('username' in contacts or 'phone' in contacts):
+                        # Send Telegram notification
+                        telegram_msg = f"""
+🛍️ <b>Order Confirmed!</b>
+
+Hello {user['first_name']},
+Thank you for your order #{order_data.get('order_number')}.
+
+Amount: ₹{order_data.get('total_amount')}
+Items: {order_data.get('item_count', 1)}
+
+We'll notify you when your order ships.
+                        """
+                        telegram_contact = contacts.get('username') or contacts.get('phone')
+                        if telegram_contact:
+                            telegram_service.send_message(telegram_contact, telegram_msg)
+                            log_notification(
+                                notification_type="telegram",
+                                recipient=telegram_contact,
+                                message=telegram_msg,
+                                template_name="order_confirmation",
+                                status="sent"
+                            )
+                            logger.info(f"Order confirmation Telegram sent to {telegram_contact}")
+                    
+                    elif channel == 'whatsapp' and 'phone' in contacts:
+                        # Send WhatsApp notification
+                        whatsapp_msg = f"🛍️ Order Confirmed! Order #{order_data.get('order_number')} for ₹{order_data.get('total_amount')}. We'll notify you when it ships."
+                        whatsapp_service.send_message(contacts['phone'], whatsapp_msg)
+                        log_notification(
+                            notification_type="whatsapp",
+                            recipient=contacts['phone'],
+                            message=whatsapp_msg,
+                            template_name="order_confirmation",
+                            status="sent"
+                        )
+                        logger.info(f"Order confirmation WhatsApp sent to {contacts['phone']}")
+                    
+                    elif channel == 'sms' and 'phone' in contacts:
+                        # Send SMS notification
+                        sms_msg = f"Order confirmed! #{order_data.get('order_number')} - ₹{order_data.get('total_amount')}. We'll notify when shipped."
+                        sms_service.send_sms(contacts['phone'], sms_msg)
+                        log_notification(
+                            notification_type="sms",
+                            recipient=contacts['phone'],
+                            message=sms_msg,
+                            template_name="order_confirmation",
+                            status="sent"
+                        )
+                        logger.info(f"Order confirmation SMS sent to {contacts['phone']}")
                 
                 # BUSINESS ALERT - Notify admin about new order
                 business_order_data = {
                     'id': order_data.get('id'),
                     'order_number': order_data.get('order_number'),
-                    'customer_name': user['first_name'] if user else 'Unknown',
-                    'customer_email': user['email'] if user else 'Unknown',
+                    'customer_name': user['first_name'],
+                    'customer_email': user['email'],
                     'total_amount': order_data.get('total_amount'),
                     'item_count': order_data.get('item_count', 1),
                     'created_at': order_data.get('created_at')
@@ -277,24 +333,54 @@ class NotificationConsumer:
                 """, (user_id,))
                 user = cursor.fetchone()
                 
-                if user and user['email']:
-                    subject = f"Order Update - {order_data.get('order_number')}"
-                    html_content = f"""
-                    <h1>Order Status Updated</h1>
-                    <p>Hello {user['first_name']},</p>
-                    <p>Your order status has been updated.</p>
-                    <p><strong>Order Number:</strong> {order_data.get('order_number')}</p>
-                    <p><strong>New Status:</strong> {new_status}</p>
-                    """
+                if not user:
+                    return
+                
+                # Use smart routing for order updates
+                channels = notification_router.get_user_notification_channels(user_id, 'shipping_updates')
+                
+                for channel in channels:
+                    contacts = notification_router.get_notification_contacts(user_id, channel)
                     
-                    email_service.send_email(user['email'], subject, html_content)
-                    log_notification(
-                        notification_type="email",
-                        recipient=user['email'],
-                        subject=subject,
-                        template_name="order_status_update",
-                        status="sent"
-                    )
+                    if channel == 'email' and 'email' in contacts:
+                        subject = f"Order Update - {order_data.get('order_number')}"
+                        html_content = f"""
+                        <h1>Order Status Updated</h1>
+                        <p>Hello {user['first_name']},</p>
+                        <p>Your order status has been updated.</p>
+                        <p><strong>Order Number:</strong> {order_data.get('order_number')}</p>
+                        <p><strong>New Status:</strong> {new_status}</p>
+                        """
+                        email_service.send_email(contacts['email'], subject, html_content)
+                        log_notification(
+                            notification_type="email",
+                            recipient=contacts['email'],
+                            subject=subject,
+                            template_name="order_status_update",
+                            status="sent"
+                        )
+                    
+                    elif channel == 'whatsapp' and 'phone' in contacts:
+                        whatsapp_msg = f"Order #{order_data.get('order_number')} status updated to: {new_status}"
+                        whatsapp_service.send_message(contacts['phone'], whatsapp_msg)
+                        log_notification(
+                            notification_type="whatsapp",
+                            recipient=contacts['phone'],
+                            message=whatsapp_msg,
+                            template_name="order_status_update",
+                            status="sent"
+                        )
+                    
+                    elif channel == 'sms' and 'phone' in contacts:
+                        sms_msg = f"Order #{order_data.get('order_number')} status: {new_status}"
+                        sms_service.send_sms(contacts['phone'], sms_msg)
+                        log_notification(
+                            notification_type="sms",
+                            recipient=contacts['phone'],
+                            message=sms_msg,
+                            template_name="order_status_update",
+                            status="sent"
+                        )
                     
         except Exception as e:
             logger.error(f"Error handling order updated notification: {e}")
@@ -311,25 +397,52 @@ class NotificationConsumer:
                 """, (user_id,))
                 user = cursor.fetchone()
                 
-                # CUSTOMER NOTIFICATION
-                if user and user['email']:
-                    subject = "Payment Received - Thank You!"
-                    html_content = f"""
-                    <h1>Payment Received</h1>
-                    <p>Hello {user['first_name']},</p>
-                    <p>We have successfully received your payment.</p>
-                    <p><strong>Amount:</strong> ₹{payment_data.get('amount')}</p>
-                    <p><strong>Payment Method:</strong> {payment_data.get('payment_method')}</p>
-                    """
+                if not user:
+                    return
+                
+                # CUSTOMER NOTIFICATION - Payment success
+                channels = notification_router.get_user_notification_channels(user_id, 'payment_notifications')
+                
+                for channel in channels:
+                    contacts = notification_router.get_notification_contacts(user_id, channel)
                     
-                    email_service.send_email(user['email'], subject, html_content)
-                    log_notification(
-                        notification_type="email",
-                        recipient=user['email'],
-                        subject=subject,
-                        template_name="payment_received",
-                        status="sent"
-                    )
+                    if channel == 'email' and 'email' in contacts:
+                        subject = "Payment Received - Thank You!"
+                        html_content = f"""
+                        <h1>Payment Received</h1>
+                        <p>Hello {user['first_name']},</p>
+                        <p>We have successfully received your payment.</p>
+                        <p><strong>Amount:</strong> ₹{payment_data.get('amount')}</p>
+                        <p><strong>Payment Method:</strong> {payment_data.get('payment_method')}</p>
+                        """
+                        email_service.send_email(contacts['email'], subject, html_content)
+                        log_notification(
+                            notification_type="email",
+                            recipient=contacts['email'],
+                            subject=subject,
+                            template_name="payment_received",
+                            status="sent"
+                        )
+                    
+                    elif channel == 'telegram' and ('username' in contacts or 'phone' in contacts):
+                        telegram_msg = f"""
+💰 <b>Payment Received</b>
+
+Hello {user['first_name']},
+Payment of ₹{payment_data.get('amount')} received via {payment_data.get('payment_method')}.
+
+Thank you for your payment!
+                        """
+                        telegram_contact = contacts.get('username') or contacts.get('phone')
+                        if telegram_contact:
+                            telegram_service.send_message(telegram_contact, telegram_msg)
+                            log_notification(
+                                notification_type="telegram",
+                                recipient=telegram_contact,
+                                message=telegram_msg,
+                                template_name="payment_received",
+                                status="sent"
+                            )
                 
                 # BUSINESS ALERT
                 business_payment_data = {
@@ -356,25 +469,32 @@ class NotificationConsumer:
                 """, (user_id,))
                 user = cursor.fetchone()
                 
-                # CUSTOMER NOTIFICATION
-                if user and user['email']:
-                    subject = "Payment Failed - Please Try Again"
-                    html_content = f"""
-                    <h1>Payment Failed</h1>
-                    <p>Hello {user['first_name']},</p>
-                    <p>We were unable to process your payment.</p>
-                    <p><strong>Reason:</strong> {payment_data.get('failure_reason', 'Unknown error')}</p>
-                    <p>Please try again or use a different payment method.</p>
-                    """
+                if not user:
+                    return
+                
+                # CUSTOMER NOTIFICATION - Payment failure
+                channels = notification_router.get_user_notification_channels(user_id, 'payment_notifications')
+                
+                for channel in channels:
+                    contacts = notification_router.get_notification_contacts(user_id, channel)
                     
-                    email_service.send_email(user['email'], subject, html_content)
-                    log_notification(
-                        notification_type="email",
-                        recipient=user['email'],
-                        subject=subject,
-                        template_name="payment_failed",
-                        status="sent"
-                    )
+                    if channel == 'email' and 'email' in contacts:
+                        subject = "Payment Failed - Please Try Again"
+                        html_content = f"""
+                        <h1>Payment Failed</h1>
+                        <p>Hello {user['first_name']},</p>
+                        <p>We were unable to process your payment.</p>
+                        <p><strong>Reason:</strong> {payment_data.get('failure_reason', 'Unknown error')}</p>
+                        <p>Please try again or use a different payment method.</p>
+                        """
+                        email_service.send_email(contacts['email'], subject, html_content)
+                        log_notification(
+                            notification_type="email",
+                            recipient=contacts['email'],
+                            subject=subject,
+                            template_name="payment_failed",
+                            status="sent"
+                        )
                 
                 # BUSINESS ALERT
                 business_payment_data = {
@@ -393,27 +513,46 @@ class NotificationConsumer:
     def handle_user_registered(self, message):
         try:
             user_data = message.get('data', {})
+            user_id = user_data.get('id')
             email = user_data.get('email')
             first_name = user_data.get('first_name')
             
-            # CUSTOMER NOTIFICATION - Welcome email
-            if email:
-                subject = "Welcome to Pavitra Trading!"
-                html_content = f"""
-                <h1>Welcome to Pavitra Trading!</h1>
-                <p>Hello {first_name},</p>
-                <p>Thank you for registering with us. We're excited to have you as a member!</p>
-                <p>Start exploring our products and enjoy a seamless shopping experience.</p>
-                """
+            if not user_id or not email:
+                return
+            
+            # CUSTOMER NOTIFICATION - Welcome message
+            channels = notification_router.get_user_notification_channels(user_id, 'welcome_messages')
+            
+            for channel in channels:
+                contacts = notification_router.get_notification_contacts(user_id, channel)
                 
-                email_service.send_email(email, subject, html_content)
-                log_notification(
-                    notification_type="email",
-                    recipient=email,
-                    subject=subject,
-                    template_name="welcome_email",
-                    status="sent"
-                )
+                if channel == 'email' and 'email' in contacts:
+                    subject = "Welcome to Pavitra Trading!"
+                    html_content = f"""
+                    <h1>Welcome to Pavitra Trading!</h1>
+                    <p>Hello {first_name},</p>
+                    <p>Thank you for registering with us. We're excited to have you as a member!</p>
+                    <p>Start exploring our products and enjoy a seamless shopping experience.</p>
+                    """
+                    email_service.send_email(contacts['email'], subject, html_content)
+                    log_notification(
+                        notification_type="email",
+                        recipient=contacts['email'],
+                        subject=subject,
+                        template_name="welcome_email",
+                        status="sent"
+                    )
+                
+                elif channel == 'whatsapp' and 'phone' in contacts:
+                    whatsapp_msg = f"Welcome to Pavitra Trading, {first_name}! Thank you for registering. Start shopping now!"
+                    whatsapp_service.send_message(contacts['phone'], whatsapp_msg)
+                    log_notification(
+                        notification_type="whatsapp",
+                        recipient=contacts['phone'],
+                        message=whatsapp_msg,
+                        template_name="welcome_message",
+                        status="sent"
+                    )
                 
         except Exception as e:
             logger.error(f"Error handling user registered notification: {e}")
@@ -421,31 +560,50 @@ class NotificationConsumer:
     def handle_password_reset(self, message):
         try:
             reset_data = message.get('data', {})
+            user_id = reset_data.get('user_id')
             email = reset_data.get('email')
             reset_url = reset_data.get('reset_url')
             first_name = reset_data.get('first_name', 'User')
             
-            # CUSTOMER NOTIFICATION - Password reset email
-            if email and reset_url:
-                subject = "Password Reset Request"
-                html_content = f"""
-                <h1>Password Reset</h1>
-                <p>Hello {first_name},</p>
-                <p>We received a request to reset your password.</p>
-                <p>Click the link below to reset your password:</p>
-                <p><a href="{reset_url}">Reset Password</a></p>
-                <p>This link will expire in 1 hour.</p>
-                <p>If you didn't request this, please ignore this email.</p>
-                """
+            if not user_id or not email or not reset_url:
+                return
+            
+            # CUSTOMER NOTIFICATION - Password reset
+            channels = notification_router.get_user_notification_channels(user_id, 'password_reset')
+            
+            for channel in channels:
+                contacts = notification_router.get_notification_contacts(user_id, channel)
                 
-                email_service.send_email(email, subject, html_content)
-                log_notification(
-                    notification_type="email",
-                    recipient=email,
-                    subject=subject,
-                    template_name="password_reset",
-                    status="sent"
-                )
+                if channel == 'email' and 'email' in contacts:
+                    subject = "Password Reset Request"
+                    html_content = f"""
+                    <h1>Password Reset</h1>
+                    <p>Hello {first_name},</p>
+                    <p>We received a request to reset your password.</p>
+                    <p>Click the link below to reset your password:</p>
+                    <p><a href="{reset_url}">Reset Password</a></p>
+                    <p>This link will expire in 1 hour.</p>
+                    <p>If you didn't request this, please ignore this email.</p>
+                    """
+                    email_service.send_email(contacts['email'], subject, html_content)
+                    log_notification(
+                        notification_type="email",
+                        recipient=contacts['email'],
+                        subject=subject,
+                        template_name="password_reset",
+                        status="sent"
+                    )
+                
+                elif channel == 'sms' and 'phone' in contacts:
+                    sms_msg = f"Password reset link: {reset_url} (expires in 1 hour)"
+                    sms_service.send_sms(contacts['phone'], sms_msg)
+                    log_notification(
+                        notification_type="sms",
+                        recipient=contacts['phone'],
+                        message=sms_msg,
+                        template_name="password_reset",
+                        status="sent"
+                    )
                 
         except Exception as e:
             logger.error(f"Error handling password reset notification: {e}")
@@ -462,25 +620,32 @@ class NotificationConsumer:
                 """, (user_id,))
                 user = cursor.fetchone()
                 
-                # CUSTOMER NOTIFICATION
-                if user and user['email']:
-                    subject = f"Order Cancelled - {order_data.get('order_number')}"
-                    html_content = f"""
-                    <h1>Order Cancelled</h1>
-                    <p>Hello {user['first_name']},</p>
-                    <p>Your order has been cancelled as requested.</p>
-                    <p><strong>Order Number:</strong> {order_data.get('order_number')}</p>
-                    <p><strong>Reason:</strong> {order_data.get('cancellation_reason', 'Customer request')}</p>
-                    """
+                if not user:
+                    return
+                
+                # CUSTOMER NOTIFICATION - Order cancelled
+                channels = notification_router.get_user_notification_channels(user_id, 'order_updates')
+                
+                for channel in channels:
+                    contacts = notification_router.get_notification_contacts(user_id, channel)
                     
-                    email_service.send_email(user['email'], subject, html_content)
-                    log_notification(
-                        notification_type="email",
-                        recipient=user['email'],
-                        subject=subject,
-                        template_name="order_cancelled",
-                        status="sent"
-                    )
+                    if channel == 'email' and 'email' in contacts:
+                        subject = f"Order Cancelled - {order_data.get('order_number')}"
+                        html_content = f"""
+                        <h1>Order Cancelled</h1>
+                        <p>Hello {user['first_name']},</p>
+                        <p>Your order has been cancelled as requested.</p>
+                        <p><strong>Order Number:</strong> {order_data.get('order_number')}</p>
+                        <p><strong>Reason:</strong> {order_data.get('cancellation_reason', 'Customer request')}</p>
+                        """
+                        email_service.send_email(contacts['email'], subject, html_content)
+                        log_notification(
+                            notification_type="email",
+                            recipient=contacts['email'],
+                            subject=subject,
+                            template_name="order_cancelled",
+                            status="sent"
+                        )
                     
         except Exception as e:
             logger.error(f"Error handling order cancelled notification: {e}")
@@ -497,33 +662,40 @@ class NotificationConsumer:
                 """, (user_id,))
                 user = cursor.fetchone()
                 
-                # CUSTOMER NOTIFICATION
-                if user and user['email']:
-                    subject = f"Refund Processed - {refund_data.get('order_number')}"
-                    html_content = f"""
-                    <h1>Refund Processed</h1>
-                    <p>Hello {user['first_name']},</p>
-                    <p>Your refund has been processed successfully.</p>
-                    <p><strong>Order Number:</strong> {refund_data.get('order_number')}</p>
-                    <p><strong>Refund Amount:</strong> ₹{refund_data.get('amount')}</p>
-                    <p><strong>Refund Method:</strong> {refund_data.get('payment_method')}</p>
-                    <p>It may take 5-7 business days for the refund to reflect in your account.</p>
-                    """
+                if not user:
+                    return
+                
+                # CUSTOMER NOTIFICATION - Refund processed
+                channels = notification_router.get_user_notification_channels(user_id, 'payment_notifications')
+                
+                for channel in channels:
+                    contacts = notification_router.get_notification_contacts(user_id, channel)
                     
-                    email_service.send_email(user['email'], subject, html_content)
-                    log_notification(
-                        notification_type="email",
-                        recipient=user['email'],
-                        subject=subject,
-                        template_name="refund_processed",
-                        status="sent"
-                    )
+                    if channel == 'email' and 'email' in contacts:
+                        subject = f"Refund Processed - {refund_data.get('order_number')}"
+                        html_content = f"""
+                        <h1>Refund Processed</h1>
+                        <p>Hello {user['first_name']},</p>
+                        <p>Your refund has been processed successfully.</p>
+                        <p><strong>Order Number:</strong> {refund_data.get('order_number')}</p>
+                        <p><strong>Refund Amount:</strong> ₹{refund_data.get('amount')}</p>
+                        <p><strong>Refund Method:</strong> {refund_data.get('payment_method')}</p>
+                        <p>It may take 5-7 business days for the refund to reflect in your account.</p>
+                        """
+                        email_service.send_email(contacts['email'], subject, html_content)
+                        log_notification(
+                            notification_type="email",
+                            recipient=contacts['email'],
+                            subject=subject,
+                            template_name="refund_processed",
+                            status="sent"
+                        )
                 
                 # BUSINESS ALERT
                 business_refund_data = {
                     'order_number': refund_data.get('order_number'),
                     'amount': refund_data.get('amount'),
-                    'customer_name': user['first_name'] if user else 'Unknown',
+                    'customer_name': user['first_name'],
                     'reason': refund_data.get('reason', 'N/A'),
                     'processed_at': refund_data.get('processed_at')
                 }

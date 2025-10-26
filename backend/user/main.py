@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from shared import config, setup_logging, get_logger, db
 from .routes import router
+from .notification_routes import router as notification_router
+
 setup_logging("user-service")
 logger = get_logger(__name__)
 app = FastAPI(
@@ -18,6 +20,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Notification
+app.include_router(notification_router, prefix="/api/v1/users")
+
 @app.middleware("http")
 async def maintenance_mode_middleware(request, call_next):
     # Skip maintenance check for health endpoints and docs
