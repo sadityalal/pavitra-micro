@@ -1,7 +1,8 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from shared import config, setup_logging, get_logger, db
 from .routes import router
+from .business_routes import router as business_router
 from .message_consumer import notification_consumer
 import threading
 
@@ -12,8 +13,8 @@ app = FastAPI(
     title=f"{config.app_name} - Notification Service",
     description=config.app_description,
     version="1.0.0",
-    docs_url="/docs" if not config.maintenance_mode else None,
-    redoc_url="/redoc" if not config.maintenance_mode else None
+    docs_url="/docs",
+    redoc_url="/redoc"
 )
 
 app.add_middleware(
@@ -26,57 +27,96 @@ app.add_middleware(
 
 @app.middleware("http")
 async def maintenance_mode_middleware(request, call_next):
-    if config.maintenance_mode and request.url.path not in ["/health", "/docs", "/redoc"]:
+    maintenance_exempt_paths = [
+        "/health", "/docs", "/redoc", "/refresh-config",
+        "/api/v1/notifications/health", "/api/v1/notifications/debug/test"
+    ]
+    
+    if any(request.url.path.startswith(path) for path in maintenance_exempt_paths):
+        response = await call_next(request)
+        return response
+    
+    config.refresh_cache()
+    logger.info(f"DEBUG Middleware: maintenance_mode={config.maintenance_mode}, type={type(config.maintenance_mode)}")
+    
+    if config.maintenance_mode:
+        logger.warning(f"Maintenance mode blocking request to: {request.url.path}")
         raise HTTPException(
-            status_code=503,
-            detail="Service is under maintenance"
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service is under maintenance. Please try again later."
         )
+    
     response = await call_next(request)
     return response
 
-app.include_router(router, prefix="/api/v1/notifications")
-
 @app.on_event("startup")
 async def startup_event():
-    """Start RabbitMQ consumer on startup"""
-    def start_consumer():
-        notification_consumer.start_consuming()
-    
-    # Start consumer in background thread
-    consumer_thread = threading.Thread(target=start_consumer, daemon=True)
-    consumer_thread.start()
-    logger.info("Notification consumer started in background thread")
+    logger.info("🔄 Initializing database connection on startup...")
+    try:
+        db.initialize()
+        logger.info("✅ Database initialized successfully")
+        
+        # Start message consumer in background thread
+        def start_consumer():
+            notification_consumer.start_consuming()
+        
+        consumer_thread = threading.Thread(target=start_consumer, daemon=True)
+        consumer_thread.start()
+        logger.info("✅ Notification consumer started in background thread")
+        
+    except Exception as e:
+        logger.error(f"❌ Database initialization failed: {e}")
+
+app.include_router(router, prefix="/api/v1/notifications")
+app.include_router(business_router, prefix="/api/v1/notifications")
 
 @app.get("/health")
 async def health():
     try:
-        db.health_check()
-        app_name = config.app_name
-        return {
-            "status": "healthy",
-            "service": "notification",
-            "database": "connected",
-            "app_name": app_name
-        }
+        health_data = db.health_check()
+        if health_data.get('status') == 'healthy':
+            return {
+                "status": "healthy",
+                "service": "notification",
+                "database": "connected",
+                "app_name": config.app_name,
+                "maintenance_mode": config.maintenance_mode
+            }
+        else:
+            logger.error(f"Database health check failed: {health_data.get('error')}")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service unhealthy - database connection failed"
+            )
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         raise HTTPException(
-            status_code=503,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Service unhealthy"
         )
+
+@app.post("/refresh-config")
+async def refresh_config():
+    config.refresh_cache()
+    return {
+        "message": "Configuration cache refreshed",
+        "maintenance_mode": config.maintenance_mode,
+        "timestamp": "updated"
+    }
 
 @app.get("/")
 async def root():
     return {
         "message": f"{config.app_name} - Notification Service",
         "version": "1.0.0",
-        "environment": config.debug_mode and "development" or "production"
+        "environment": "development" if config.debug_mode else "production",
+        "maintenance_mode": config.maintenance_mode
     }
 
 if __name__ == "__main__":
     import uvicorn
     port = config.get_service_port('notification')
-    logger.info(f"Starting Notification Service on port {port}")
+    logger.info(f"🚀 Starting Notification Service on port {port}")
     uvicorn.run(
         app,
         host="0.0.0.0",
