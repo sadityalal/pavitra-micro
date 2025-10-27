@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
-import { authService } from '../services/authService';
+import api from '../services/api';
 
 const AuthContext = createContext();
 
@@ -22,35 +22,22 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const initializeAuth = async () => {
-    try {
-      if (authService.isAuthenticated()) {
-        const userData = authService.getUserData();
-        setUser({
-          ...userData,
-          isAuthenticated: true
-        });
-        
-        // Verify token is still valid
-        try {
-          await authService.refreshToken();
-        } catch (error) {
-          console.log('Token refresh failed, logging out');
-          await authService.logout();
-          setUser(null);
-        }
+    const token = localStorage.getItem('authToken');
+    if (token) {
+      try {
+        const userProfile = await api.getUserProfile();
+        setUser(userProfile);
+      } catch (error) {
+        console.error('Failed to get user profile:', error);
+        localStorage.removeItem('authToken');
       }
-    } catch (error) {
-      console.error('Auth initialization failed:', error);
-      await authService.logout();
-      setUser(null);
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   };
 
   const loadSiteSettings = async () => {
     try {
-      const settings = await authService.getSiteSettings();
+      const settings = await api.getSiteSettings();
       setSiteSettings(settings);
     } catch (error) {
       console.error('Failed to load site settings:', error);
@@ -59,71 +46,64 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (loginData) => {
     try {
-      setLoading(true);
-      const response = await authService.login(loginData);
+      const response = await api.login(loginData);
       
-      const userData = {
-        isAuthenticated: true,
-        roles: response.user_roles,
-        permissions: response.user_permissions,
-        token: response.access_token
-      };
-      
-      setUser(userData);
-      return response;
+      if (response.access_token) {
+        localStorage.setItem('authToken', response.access_token);
+        
+        // Get user profile after login
+        const userProfile = await api.getUserProfile();
+        setUser(userProfile);
+        
+        return { success: true, user: userProfile };
+      }
     } catch (error) {
-      throw error;
-    } finally {
-      setLoading(false);
+      return { success: false, error: error.message };
     }
   };
 
   const register = async (userData) => {
     try {
-      setLoading(true);
-      const response = await authService.register(userData);
+      const response = await api.register(userData);
       
-      const newUser = {
-        isAuthenticated: true,
-        roles: response.user_roles,
-        permissions: response.user_permissions,
-        token: response.access_token
-      };
-      
-      setUser(newUser);
-      return response;
+      if (response.access_token) {
+        localStorage.setItem('authToken', response.access_token);
+        
+        // Get user profile after registration
+        const userProfile = await api.getUserProfile();
+        setUser(userProfile);
+        
+        return { success: true, user: userProfile };
+      }
     } catch (error) {
-      throw error;
-    } finally {
-      setLoading(false);
+      return { success: false, error: error.message };
     }
   };
 
   const logout = async () => {
     try {
-      setLoading(true);
-      await authService.logout();
-      setUser(null);
+      await api.logout();
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      setLoading(false);
+      localStorage.removeItem('authToken');
+      setUser(null);
     }
   };
 
-  const refreshSettings = async () => {
-    await loadSiteSettings();
+  const updateUser = (userData) => {
+    setUser(prevUser => ({ ...prevUser, ...userData }));
   };
 
   const value = {
     user,
+    loading,
+    siteSettings,
     login,
     register,
     logout,
-    loading,
-    isAuthenticated: !!user?.isAuthenticated,
-    siteSettings,
-    refreshSettings
+    updateUser,
+    isAuthenticated: !!user
   };
 
   return (

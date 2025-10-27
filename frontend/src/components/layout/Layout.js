@@ -4,11 +4,9 @@ import Footer from './Footer';
 
 const Layout = ({ children }) => {
   return (
-    <div className="App">
+    <div className="d-flex flex-column min-vh-100">
       <Header />
-      <main className="main">
-        {/* Flash Messages - we'll implement this later */}
-        <div className="container mt-3" id="flash-messages"></div>
+      <main className="flex-grow-1">
         {children}
       </main>
       <Footer />
