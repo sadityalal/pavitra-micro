@@ -1,5 +1,7 @@
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import JSONResponse
 from shared import config, setup_logging, get_logger, db
 from .routes import router
 
@@ -14,28 +16,47 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With"
+    ],
+    max_age=600,
 )
 
-@app.options("/{rest_of_path:path}")
-async def preflight_handler(rest_of_path: str):
-    return {"method": "OPTIONS"}
-
 @app.middleware("http")
-async def options_middleware(request, call_next):
-    if request.method == "OPTIONS":
-        response = await call_next(request)
-        response.headers["Access-Control-Allow-Origin"] = "http://localhost:3000"
-        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        response.headers["Access-Control-Allow-Credentials"] = "true"
-        return response
+async def secure_cors_headers(request: Request, call_next):
     response = await call_next(request)
+    origin = request.headers.get('origin')
+    if origin and origin in config.cors_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Max-Age'] = '600'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
+    response.headers['X-XSS-Protection'] = '1; mode=block'
+    return response
+
+@app.options("/{path:path}")
+async def secure_options_handler(path: str, request: Request):
+    origin = request.headers.get('origin')
+    response = JSONResponse(content={"method": "OPTIONS"})
+    if origin and origin in config.cors_origins:
+        response.headers['Access-Control-Allow-Origin'] = origin
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Credentials'] = 'true'
+        response.headers['Access-Control-Max-Age'] = '600'
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    response.headers['X-Frame-Options'] = 'DENY'
     return response
 
 @app.middleware("http")

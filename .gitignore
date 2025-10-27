@@ -37,3 +37,8 @@ logs/
 Dockerfile.dev
 docker-compose.override.yml
 
+# DB
+
+mysql_data
+database
+
