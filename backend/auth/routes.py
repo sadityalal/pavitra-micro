@@ -30,14 +30,23 @@ def publish_user_registration_event(user_data: dict):
             'timestamp': datetime.utcnow().isoformat(),
             'data': user_data
         }
-        rabbitmq_client.publish_message(
-            exchange='notification_events',
-            routing_key='user.registered',
-            message=message
-        )
-        logger.info(f"User registration event published for user {user_data['id']}")
+
+        # Ensure RabbitMQ client is connected before publishing
+        if rabbitmq_client.connect():
+            success = rabbitmq_client.publish_message(
+                exchange='notification_events',
+                routing_key='user.registered',
+                message=message
+            )
+            if success:
+                logger.info(f"✅ User registration event published for user {user_data['id']}")
+            else:
+                logger.error(f"❌ Failed to publish user registration event for user {user_data['id']}")
+        else:
+            logger.error("❌ Cannot publish user registration event - RabbitMQ not connected")
+
     except Exception as e:
-        logger.error(f"Failed to publish user registration event: {e}")
+        logger.error(f"❌ Failed to publish user registration event: {e}")
 
 @router.post("/register", response_model=Token)
 async def register_user(
