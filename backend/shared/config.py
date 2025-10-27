@@ -161,6 +161,16 @@ class DatabaseConfig:
                 return value
             except json.JSONDecodeError:
                 return []
+        elif db_type == 'list':
+            # Handle the new 'list' type
+            if isinstance(value, str):
+                try:
+                    return json.loads(value)
+                except json.JSONDecodeError:
+                    if ',' in value:
+                        return [item.strip() for item in value.split(',')]
+                    return [value]
+            return value
         else:  # string type
             return str(value)
 

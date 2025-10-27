@@ -1,3 +1,4 @@
+// frontend/src/services/authService.js
 import { apiService } from './api';
 
 class AuthService {
@@ -16,14 +17,15 @@ class AuthService {
       return response;
     } catch (error) {
       console.error('Login failed:', error);
-      throw error;
+      throw new Error(error.message || 'Login failed. Please check your credentials.');
     }
   }
 
   async register(userData) {
     try {
-      // Convert to FormData for registration endpoint
+      // Convert to FormData for multipart/form-data as required by your backend
       const formData = new FormData();
+
       Object.keys(userData).forEach(key => {
         if (userData[key] !== null && userData[key] !== undefined) {
           formData.append(key, userData[key]);
@@ -31,7 +33,7 @@ class AuthService {
       });
 
       const response = await apiService.postFormData('/api/v1/auth/register', formData);
-      
+
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
         localStorage.setItem('user_data', JSON.stringify({
@@ -39,11 +41,11 @@ class AuthService {
           permissions: response.user_permissions
         }));
       }
-      
+
       return response;
     } catch (error) {
       console.error('Registration failed:', error);
-      throw error;
+      throw new Error(error.message || 'Registration failed. Please try again.');
     }
   }
 
@@ -61,11 +63,9 @@ class AuthService {
   async refreshToken() {
     try {
       const response = await apiService.post('/api/v1/auth/refresh');
-      
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
       }
-      
       return response;
     } catch (error) {
       console.error('Token refresh failed:', error);
@@ -79,7 +79,6 @@ class AuthService {
       return await apiService.get('/api/v1/auth/site-settings');
     } catch (error) {
       console.error('Failed to fetch site settings:', error);
-      // Return default settings if API fails
       return {
         site_name: 'Pavitra Enterprises',
         currency_symbol: '₹',
@@ -92,7 +91,8 @@ class AuthService {
   }
 
   isAuthenticated() {
-    return !!localStorage.getItem('auth_token');
+    const token = localStorage.getItem('auth_token');
+    return !!token;
   }
 
   getToken() {

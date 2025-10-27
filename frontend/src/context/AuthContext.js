@@ -1,3 +1,4 @@
+// frontend/src/context/AuthContext.js
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { authService } from '../services/authService';
 
@@ -30,7 +31,7 @@ export const AuthProvider = ({ children }) => {
           isAuthenticated: true
         });
         
-        // Verify token is still valid
+        // Try to refresh token
         try {
           await authService.refreshToken();
         } catch (error) {
