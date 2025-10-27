@@ -22,13 +22,21 @@ def validate_username(username: str) -> bool:
 
 def publish_user_registration_event(user_data: dict):
     try:
+        # Convert datetime objects to strings for JSON serialization
+        serializable_user_data = {}
+        for key, value in user_data.items():
+            if hasattr(value, 'isoformat'):  # Check if it's a datetime object
+                serializable_user_data[key] = value.isoformat()
+            else:
+                serializable_user_data[key] = value
+
         message = {
             'event_type': 'user_registered',
-            'user_id': user_data['id'],
-            'email': user_data.get('email'),
-            'first_name': user_data.get('first_name'),
-            'timestamp': datetime.utcnow().isoformat(),
-            'data': user_data
+            'user_id': serializable_user_data['id'],
+            'email': serializable_user_data.get('email'),
+            'first_name': serializable_user_data.get('first_name'),
+            'timestamp': datetime.utcnow().isoformat(),  # Already a string
+            'data': serializable_user_data
         }
 
         # Ensure RabbitMQ client is connected before publishing
@@ -39,14 +47,15 @@ def publish_user_registration_event(user_data: dict):
                 message=message
             )
             if success:
-                logger.info(f"✅ User registration event published for user {user_data['id']}")
+                logger.info(f"✅ User registration event published for user {serializable_user_data['id']}")
             else:
-                logger.error(f"❌ Failed to publish user registration event for user {user_data['id']}")
+                logger.error(f"❌ Failed to publish user registration event for user {serializable_user_data['id']}")
         else:
             logger.error("❌ Cannot publish user registration event - RabbitMQ not connected")
 
     except Exception as e:
         logger.error(f"❌ Failed to publish user registration event: {e}")
+
 
 @router.post("/register", response_model=Token)
 async def register_user(
@@ -57,6 +66,9 @@ async def register_user(
         first_name: str = Form(...),
         last_name: str = Form(...),
         country_id: int = Form(1),
+        telegram_username: Optional[str] = Form(None),
+        telegram_phone: Optional[str] = Form(None),
+        whatsapp_phone: Optional[str] = Form(None),
         background_tasks: BackgroundTasks = None
 ):
     try:
@@ -71,7 +83,10 @@ async def register_user(
 
         first_name = sanitize_input(first_name)
         last_name = sanitize_input(last_name)
-        
+        telegram_username = sanitize_input(telegram_username) if telegram_username else None
+        telegram_phone = sanitize_input(telegram_phone) if telegram_phone else None
+        whatsapp_phone = sanitize_input(whatsapp_phone) if whatsapp_phone else None
+
         if not email and not phone and not username:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -139,9 +154,10 @@ async def register_user(
 
             password_hash = get_password_hash(password)
             cursor.execute("""
-                INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (email, phone, username, password_hash, first_name, last_name, country_id))
+                INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id, telegram_username, telegram_phone, whatsapp_phone)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (email, phone, username, password_hash, first_name, last_name, country_id, telegram_username,
+                  telegram_phone, whatsapp_phone))
             user_id = cursor.lastrowid
 
             # Assign customer role by default
@@ -153,6 +169,33 @@ async def register_user(
                     VALUES (%s, %s, %s)
                 """, (user_id, role['id'], user_id))
 
+            # ✅ AUTOMATICALLY ENABLE NOTIFICATION METHODS
+            # Enable Telegram if Telegram username provided
+            if telegram_username:
+                cursor.execute("""
+                    INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
+                    VALUES (%s, 'telegram', TRUE)
+                    ON DUPLICATE KEY UPDATE is_enabled = TRUE
+                """, (user_id,))
+                logger.info(f"✅ Automatically enabled Telegram notifications for user {user_id}")
+
+            # Enable WhatsApp if WhatsApp phone provided
+            if whatsapp_phone:
+                cursor.execute("""
+                    INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
+                    VALUES (%s, 'whatsapp', TRUE)
+                    ON DUPLICATE KEY UPDATE is_enabled = TRUE
+                """, (user_id,))
+                logger.info(f"✅ Automatically enabled WhatsApp notifications for user {user_id}")
+
+            # Always enable email as fallback
+            cursor.execute("""
+                INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
+                VALUES (%s, 'email', TRUE)
+                ON DUPLICATE KEY UPDATE is_enabled = TRUE
+            """, (user_id,))
+            logger.info(f"✅ Enabled email notifications for user {user_id}")
+
             # Get user roles and permissions
             cursor.execute("""
                 SELECT ur.name as role_name, p.name as permission_name
@@ -162,7 +205,7 @@ async def register_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_id,))
-            
+
             roles = set()
             permissions = set()
             for row in cursor.fetchall():

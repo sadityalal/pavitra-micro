@@ -69,13 +69,13 @@ class DatabaseConfig:
     def _get_setting(self, key: str, default: Any = None) -> Any:
         # Always check if settings have been updated
         self._check_settings_version()
-        
+
         current_time = time.time()
         if (key in self._cache and
                 key in self._cache_timestamps and
                 current_time - self._cache_timestamps[key] < self._cache_duration):
             return self._cache[key]
-            
+
         env_key = key.upper()
         if env_key in os.environ:
             value = os.environ[env_key]
@@ -83,28 +83,43 @@ class DatabaseConfig:
             self._cache[key] = value
             self._cache_timestamps[key] = current_time
             return value
-            
+
         db = self._get_db()
         if not db:
             logger.warning(f"Database not available for setting {key}, using default: {default}")
             return default
-            
+
         connection = None
         try:
             connection = db.get_connection()
             cursor = connection.cursor(dictionary=True)
             cursor.execute("SELECT setting_value, setting_type FROM site_settings WHERE setting_key = %s", (key,))
             result = cursor.fetchone()
+
+            # DEBUG: Log what we found in database
+            logger.info(f"🔧 DATABASE DEBUG - Key: {key}, Found: {result is not None}")
+            if result:
+                logger.info(
+                    f"🔧 DATABASE DEBUG - Raw Value: '{result['setting_value']}', Type: {result['setting_type']}")
+
             if result:
                 # Use the setting_type from database to determine conversion
                 db_type = result['setting_type']
                 value = self._convert_value_by_type(result['setting_value'], db_type)
+
+                # DEBUG: Log conversion result
+                logger.info(
+                    f"🔧 CONVERSION DEBUG - Key: {key}, Raw: '{result['setting_value']}', Converted: {value}, Type: {type(value)}")
+
                 self._cache[key] = value
                 self._cache_timestamps[key] = current_time
-                logger.info(f"Loaded setting {key} from database: {value} (db_type: {db_type}, python_type: {type(value)})")
+                logger.info(
+                    f"Loaded setting {key} from database: {value} (db_type: {db_type}, python_type: {type(value)})")
                 return value
+
             logger.warning(f"Setting {key} not found in database, using default: {default}")
             return default
+
         except Exception as e:
             logger.warning(f"Failed to get {key} from database: {e}, using default: {default}")
             return default
@@ -115,21 +130,21 @@ class DatabaseConfig:
     def _convert_value_by_type(self, value: str, db_type: str) -> Any:
         """Convert value based on database setting_type"""
         if db_type == 'boolean':
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                # More comprehensive boolean conversion
-                true_values = ['true', '1', 'yes', 'on', 't', 'y']
-                false_values = ['false', '0', 'no', 'off', 'f', 'n']
-                lower_val = value.lower().strip()
-                if lower_val in true_values:
-                    return True
-                elif lower_val in false_values:
-                    return False
-                else:
-                    logger.warning(f"Unable to convert '{value}' to boolean, using False")
-                    return False
-            return bool(value)
+            # Normalize the input first - convert to string and lowercase
+            normalized_value = str(value).strip().lower()
+
+            # Define truthy and falsy values
+            true_values = ['true', '1', 'yes', 'on', 't', 'y']
+            false_values = ['false', '0', 'no', 'off', 'f', 'n']
+
+            if normalized_value in true_values:
+                return True
+            elif normalized_value in false_values:
+                return False
+            else:
+                logger.warning(f"Unable to convert '{value}' to boolean, using False")
+                return False
+
         elif db_type == 'number':
             try:
                 if '.' in str(value):

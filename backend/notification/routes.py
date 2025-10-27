@@ -797,3 +797,18 @@ async def debug_test():
             "traceback": error_traceback,
             "service": "notification"
         }
+
+
+@router.get("/debug/rabbitmq-config")
+async def debug_rabbitmq_config():
+    """Debug RabbitMQ configuration"""
+    config.refresh_cache()  # Force refresh
+
+    return {
+        "rabbitmq_host": config.rabbitmq_host,
+        "rabbitmq_port": config.rabbitmq_port,
+        "rabbitmq_user": config.rabbitmq_user,
+        "rabbitmq_password": "***" if config.rabbitmq_password else "empty",
+        "rabbitmq_password_length": len(config.rabbitmq_password) if config.rabbitmq_password else 0,
+        "connection_url": f"amqp://{config.rabbitmq_user}:{'*' * len(config.rabbitmq_password) if config.rabbitmq_password else ''}@{config.rabbitmq_host}:{config.rabbitmq_port}/"
+    }
