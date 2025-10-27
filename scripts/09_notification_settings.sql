@@ -12,4 +12,7 @@ ON DUPLICATE KEY UPDATE
 setting_value = VALUES(setting_value),
 setting_type = VALUES(setting_type);
 
+ALTER TABLE notification_logs
+MODIFY COLUMN type ENUM('email','sms','push','telegram','whatsapp') NOT NULL;
+
 SELECT 'Notification settings added successfully!' as status;
