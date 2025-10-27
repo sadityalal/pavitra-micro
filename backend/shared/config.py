@@ -130,10 +130,12 @@ class DatabaseConfig:
     def _convert_value_by_type(self, value: str, db_type: str) -> Any:
         """Convert value based on database setting_type"""
         if db_type == 'boolean':
-            # Normalize the input first - convert to string and lowercase
-            normalized_value = str(value).strip().lower()
+            # Handle case when value comes as string "TRUE"/"FALSE" from database
+            if isinstance(value, str) and value.upper() in ['TRUE', 'FALSE']:
+                return value.upper() == 'TRUE'
 
-            # Define truthy and falsy values
+            # Existing logic for other cases
+            normalized_value = str(value).strip().lower()
             true_values = ['true', '1', 'yes', 'on', 't', 'y']
             false_values = ['false', '0', 'no', 'off', 'f', 'n']
 
@@ -142,7 +144,6 @@ class DatabaseConfig:
             elif normalized_value in false_values:
                 return False
             else:
-                logger.warning(f"Unable to convert '{value}' to boolean, using False")
                 return False
 
         elif db_type == 'number':
@@ -450,5 +451,29 @@ class DatabaseConfig:
             'saturday': '10am-4pm',
             'sunday': 'Closed'
         })
+
+    @property
+    def telegram_notifications(self) -> bool:
+        return self._get_setting('telegram_notifications', False)
+
+    @property
+    def whatsapp_notifications(self) -> bool:
+        return self._get_setting('whatsapp_notifications', False)
+
+    @property
+    def telegram_bot_token(self) -> str:
+        return self._get_setting('telegram_bot_token', '')
+
+    @property
+    def telegram_chat_id(self) -> str:
+        return self._get_setting('telegram_chat_id', '')
+
+    @property
+    def whatsapp_api_url(self) -> str:
+        return self._get_setting('whatsapp_api_url', '')
+
+    @property
+    def whatsapp_api_token(self) -> str:
+        return self._get_setting('whatsapp_api_token', '')
 
 config = DatabaseConfig()

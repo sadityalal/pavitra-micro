@@ -152,12 +152,21 @@ async def register_user(
                         detail="Username already taken"
                     )
 
+            if telegram_username:
+                telegram_username = telegram_username.lstrip('@')
+                cursor.execute("SELECT id FROM users WHERE telegram_username = %s", (telegram_username,))
+                if cursor.fetchone():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Telegram username already taken"
+                    )
+
+
             password_hash = get_password_hash(password)
             cursor.execute("""
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id, telegram_username, telegram_phone, whatsapp_phone)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (email, phone, username, password_hash, first_name, last_name, country_id, telegram_username,
-                  telegram_phone, whatsapp_phone))
+            """, (email, phone, username, password_hash, first_name, last_name, country_id, telegram_username, phone, phone))
             user_id = cursor.lastrowid
 
             # Assign customer role by default

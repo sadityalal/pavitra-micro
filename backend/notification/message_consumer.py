@@ -4,6 +4,7 @@ import logging
 from shared import get_logger, rabbitmq_client, db, config
 from .routes import email_service, sms_service, push_service, telegram_service, whatsapp_service, log_notification
 from .notification_router import notification_router
+from datetime import datetime
 logger = get_logger(__name__)
 
 class BusinessAlertService:
@@ -20,7 +21,7 @@ class BusinessAlertService:
 Order #: {order_data.get('order_number')}
 Customer: {order_data.get('customer_name')}
 Amount: ₹{order_data.get('total_amount')}
-Items: {order_data.get('item_count', 0)}
+Items: {order_data.get('item_count', 0)} 
 Time: {order_data.get('created_at')}
 <a href="https://admin.pavitra-trading.com/orders/{order_data.get('id')}">View Order</a>
             """
@@ -447,11 +448,38 @@ Thank you for your payment!
             user_id = user_data.get('id')
             email = user_data.get('email')
             first_name = user_data.get('first_name')
+            telegram_username = user_data.get('telegram_username')
             if not user_id or not email:
                 return
+
+            logger.info(f"🔄 Processing user registration welcome for user {user_id}")
+
+            # ✅ 1. SEND BUSINESS ALERT TO ADMIN
+            admin_telegram_msg = f"""
+    👤 <b>NEW USER REGISTERED</b>
+
+    User: {first_name}
+    Email: {email}
+    Telegram: {telegram_username or 'Not provided'}
+    User ID: {user_id}
+
+    Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            """
+            telegram_service.send_message(config.telegram_chat_id, admin_telegram_msg)
+            log_notification(
+                notification_type="telegram",
+                recipient=config.telegram_chat_id,
+                message=admin_telegram_msg,
+                template_name="business_alert",
+                status="sent"
+            )
+            logger.info(f"✅ New user alert sent to admin")
+
+            # ✅ 2. SEND WELCOME MESSAGES TO USER VIA THEIR PREFERRED CHANNELS
             channels = notification_router.get_user_notification_channels(user_id, 'welcome_messages')
             for channel in channels:
                 contacts = notification_router.get_notification_contacts(user_id, channel)
+
                 if channel == 'email' and 'email' in contacts:
                     subject = "Welcome to Pavitra Trading!"
                     html_content = f"""
@@ -468,6 +496,37 @@ Thank you for your payment!
                         template_name="welcome_email",
                         status="sent"
                     )
+                    logger.info(f"✅ Welcome email sent to {contacts['email']}")
+
+                elif channel == 'telegram' and ('username' in contacts or 'phone' in contacts):
+                    # ✅ ATTEMPT TO SEND TO USER (may fail but we try)
+                    user_telegram_msg = f"""
+    👋 <b>Welcome to Pavitra Trading, {first_name}!</b>
+
+    Thank you for registering with us. We're excited to have you as a member!
+
+    Start exploring our products and enjoy a seamless shopping experience.
+
+    Happy shopping! 🛍️
+                    """
+                    telegram_contact = contacts.get('username') or contacts.get('phone')
+                    if telegram_contact:
+                        try:
+                            telegram_service.send_message(telegram_contact, user_telegram_msg)
+                            log_notification(
+                                notification_type="telegram",
+                                recipient=telegram_contact,
+                                message=user_telegram_msg,
+                                template_name="welcome_message",
+                                status="sent"
+                            )
+                            logger.info(f"✅ Welcome Telegram sent to user {telegram_contact}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Could not send Telegram to user {telegram_contact}: {e}")
+                            # Fallback: forward to admin
+                            fallback_msg = f"📨 Welcome for {first_name} (failed to send to user)"
+                            telegram_service.send_message(config.telegram_chat_id, fallback_msg)
+
                 elif channel == 'whatsapp' and 'phone' in contacts:
                     whatsapp_msg = f"Welcome to Pavitra Trading, {first_name}! Thank you for registering. Start shopping now!"
                     whatsapp_service.send_message(contacts['phone'], whatsapp_msg)
@@ -478,8 +537,10 @@ Thank you for your payment!
                         template_name="welcome_message",
                         status="sent"
                     )
+                    logger.info(f"✅ Welcome WhatsApp sent to {contacts['phone']}")
+
         except Exception as e:
-            logger.error(f"Error handling user registered notification: {e}")
+            logger.error(f"❌ Error handling user registered notification: {e}")
 
     def handle_password_reset(self, message):
         try:
