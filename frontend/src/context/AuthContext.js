@@ -1,4 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
+import { authService } from '../services/authService';
 
 const AuthContext = createContext();
 
@@ -13,38 +14,116 @@ export const useAuth = () => {
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [siteSettings, setSiteSettings] = useState({});
 
   useEffect(() => {
-    // Check if user is logged in from localStorage
-    const savedUser = localStorage.getItem('pavitra_user');
-    if (savedUser) {
-      setUser(JSON.parse(savedUser));
-    }
-    setLoading(false);
+    initializeAuth();
+    loadSiteSettings();
   }, []);
 
-  const login = (userData) => {
-    setUser(userData);
-    localStorage.setItem('pavitra_user', JSON.stringify(userData));
+  const initializeAuth = async () => {
+    try {
+      if (authService.isAuthenticated()) {
+        const userData = authService.getUserData();
+        setUser({
+          ...userData,
+          isAuthenticated: true
+        });
+        
+        // Verify token is still valid
+        try {
+          await authService.refreshToken();
+        } catch (error) {
+          console.log('Token refresh failed, logging out');
+          await authService.logout();
+          setUser(null);
+        }
+      }
+    } catch (error) {
+      console.error('Auth initialization failed:', error);
+      await authService.logout();
+      setUser(null);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('pavitra_user');
+  const loadSiteSettings = async () => {
+    try {
+      const settings = await authService.getSiteSettings();
+      setSiteSettings(settings);
+    } catch (error) {
+      console.error('Failed to load site settings:', error);
+    }
   };
 
-  const updateUser = (userData) => {
-    setUser(prev => ({ ...prev, ...userData }));
-    localStorage.setItem('pavitra_user', JSON.stringify({ ...user, ...userData }));
+  const login = async (loginData) => {
+    try {
+      setLoading(true);
+      const response = await authService.login(loginData);
+      
+      const userData = {
+        isAuthenticated: true,
+        roles: response.user_roles,
+        permissions: response.user_permissions,
+        token: response.access_token
+      };
+      
+      setUser(userData);
+      return response;
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const register = async (userData) => {
+    try {
+      setLoading(true);
+      const response = await authService.register(userData);
+      
+      const newUser = {
+        isAuthenticated: true,
+        roles: response.user_roles,
+        permissions: response.user_permissions,
+        token: response.access_token
+      };
+      
+      setUser(newUser);
+      return response;
+    } catch (error) {
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const logout = async () => {
+    try {
+      setLoading(true);
+      await authService.logout();
+      setUser(null);
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshSettings = async () => {
+    await loadSiteSettings();
   };
 
   const value = {
     user,
     login,
+    register,
     logout,
-    updateUser,
-    isAuthenticated: !!user,
-    loading
+    loading,
+    isAuthenticated: !!user?.isAuthenticated,
+    siteSettings,
+    refreshSettings
   };
 
   return (
