@@ -118,8 +118,19 @@ async def health():
             timestamp=datetime.utcnow()
         )
 
+
 @router.get("/site-settings")
 async def get_site_settings(current_user: dict = Depends(get_current_user)):
+    """Get all site settings - Admin access required"""
+
+    # Manual role check
+    user_roles = current_user.get('roles', [])
+    if 'admin' not in user_roles and 'super_admin' not in user_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
     try:
         config.refresh_cache()
         settings = {
@@ -169,6 +180,34 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch site settings"
+        )
+
+@router.get("/frontend-settings")
+async def get_frontend_settings():
+    """Public frontend settings - no authentication required"""
+    try:
+        config.refresh_cache()
+        frontend_settings = {
+            'site_name': config.site_name,
+            'currency': config.currency,
+            'currency_symbol': config.currency_symbol,
+            'min_order_amount': config.min_order_amount,
+            'free_shipping_min_amount': config.free_shipping_min_amount,
+            'free_shipping_threshold': config.free_shipping_threshold,
+            'return_period_days': config.return_period_days,
+            'enable_reviews': config.enable_reviews,
+            'enable_wishlist': config.enable_wishlist,
+            'enable_guest_checkout': config.enable_guest_checkout,
+            'site_phone': config.site_phone,
+            'site_email': config.site_email,
+            'business_hours': config.business_hours
+        }
+        return frontend_settings
+    except Exception as e:
+        logger.error(f"Failed to fetch frontend settings: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch frontend settings"
         )
 
 @router.get("/", response_model=ProductListResponse)

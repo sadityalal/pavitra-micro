@@ -4,7 +4,9 @@ import json
 import time
 from typing import Any, Optional, Dict, List
 import secrets
+
 logger = logging.getLogger(__name__)
+
 
 class DatabaseConfig:
     def __init__(self):
@@ -40,12 +42,12 @@ class DatabaseConfig:
         current_time = time.time()
         if current_time - self._last_settings_check < 5:  # Check every 5 seconds max
             return
-            
+
         self._last_settings_check = current_time
         db = self._get_db()
         if not db:
             return
-            
+
         connection = None
         try:
             connection = db.get_connection()
@@ -122,6 +124,46 @@ class DatabaseConfig:
 
         except Exception as e:
             logger.warning(f"Failed to get {key} from database: {e}, using default: {default}")
+            return default
+        finally:
+            if connection and connection.is_connected():
+                connection.close()
+
+    def get_frontend_setting(self, key: str, default: Any = None) -> Any:
+        """Get frontend-specific settings (publicly accessible)"""
+        self._check_settings_version()
+        current_time = time.time()
+
+        cache_key = f"frontend_{key}"
+        if (cache_key in self._cache and
+                cache_key in self._cache_timestamps and
+                current_time - self._cache_timestamps[cache_key] < self._cache_duration):
+            return self._cache[cache_key]
+
+        db = self._get_db()
+        if not db:
+            return default
+
+        connection = None
+        try:
+            connection = db.get_connection()
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT setting_value, setting_type 
+                FROM frontend_settings 
+                WHERE setting_key = %s
+            """, (key,))
+            result = cursor.fetchone()
+
+            if result:
+                value = self._convert_value_by_type(result['setting_value'], result['setting_type'])
+                self._cache[cache_key] = value
+                self._cache_timestamps[cache_key] = current_time
+                return value
+
+            return default
+        except Exception as e:
+            logger.warning(f"Failed to get frontend setting {key}: {e}, using default: {default}")
             return default
         finally:
             if connection and connection.is_connected():
@@ -331,7 +373,7 @@ class DatabaseConfig:
 
     @property
     def enable_guest_checkout(self) -> bool:
-        return self._get_setting('enable_guest_checkout', True)
+        return self.get_frontend_setting('enable_guest_checkout', True)
 
     @property
     def maintenance_mode(self) -> bool:
@@ -348,19 +390,19 @@ class DatabaseConfig:
 
     @property
     def enable_reviews(self) -> bool:
-        return self._get_setting('enable_reviews', True)
+        return self.get_frontend_setting('enable_reviews', True)
 
     @property
     def enable_wishlist(self) -> bool:
-        return self._get_setting('enable_wishlist', True)
+        return self.get_frontend_setting('enable_wishlist', True)
 
     @property
     def min_order_amount(self) -> float:
-        return self._get_setting('min_order_amount', 0.0)
+        return self.get_frontend_setting('min_order_amount', 0.0)
 
     @property
     def free_shipping_min_amount(self) -> float:
-        return self._get_setting('free_shipping_min_amount', 500.0)
+        return self.get_frontend_setting('free_shipping_min_amount', 500.0)
 
     @property
     def log_level(self) -> str:
@@ -440,11 +482,11 @@ class DatabaseConfig:
 
     @property
     def free_shipping_threshold(self) -> float:
-        return self._get_setting('free_shipping_threshold', 999.0)
+        return self.get_frontend_setting('free_shipping_threshold', 999.0)
 
     @property
     def return_period_days(self) -> int:
-        return self._get_setting('return_period_days', 10)
+        return self.get_frontend_setting('return_period_days', 10)
 
     @property
     def site_phone(self) -> str:
@@ -485,5 +527,6 @@ class DatabaseConfig:
     @property
     def whatsapp_api_token(self) -> str:
         return self._get_setting('whatsapp_api_token', '')
+
 
 config = DatabaseConfig()

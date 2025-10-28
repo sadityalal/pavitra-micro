@@ -6,6 +6,7 @@ from shared import (
     create_access_token, verify_token, validate_email,
     validate_phone, sanitize_input, get_logger, rabbitmq_client, redis_client
 )
+from shared.auth_middleware import get_current_user, require_roles  # ADD THIS IMPORT
 from .models import (
     UserCreate, UserLogin, Token, UserResponse,
     RoleResponse, PermissionCheck, HealthResponse
@@ -262,8 +263,19 @@ async def register_user(
             detail="Registration failed"
         )
 
+
 @router.get("/site-settings")
 async def get_site_settings(current_user: dict = Depends(get_current_user)):
+    """Get all site settings - Admin access required"""
+
+    # Manual role check
+    user_roles = current_user.get('roles', [])
+    if 'admin' not in user_roles and 'super_admin' not in user_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
     try:
         config.refresh_cache()
         settings = {
@@ -326,6 +338,33 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch site settings"
+        )
+@router.get("/frontend-settings")
+async def get_frontend_settings():
+    """Public frontend settings - no authentication required"""
+    try:
+        config.refresh_cache()
+        frontend_settings = {
+            'site_name': config.site_name,
+            'currency': config.currency,
+            'currency_symbol': config.currency_symbol,
+            'min_order_amount': config.min_order_amount,
+            'free_shipping_min_amount': config.free_shipping_min_amount,
+            'free_shipping_threshold': config.free_shipping_threshold,
+            'return_period_days': config.return_period_days,
+            'enable_reviews': config.enable_reviews,
+            'enable_wishlist': config.enable_wishlist,
+            'enable_guest_checkout': config.enable_guest_checkout,
+            'site_phone': config.site_phone,
+            'site_email': config.site_email,
+            'business_hours': config.business_hours
+        }
+        return frontend_settings
+    except Exception as e:
+        logger.error(f"Failed to fetch frontend settings: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch frontend settings"
         )
 
 @router.post("/login")
@@ -584,7 +623,6 @@ async def get_roles():
 async def check_permission(permission: str, request: Request):
     """Check if current user has specific permission"""
     try:
-        from shared.auth_middleware import get_current_user
         current_user = await get_current_user(request)
         user_permissions = current_user.get('permissions', [])
         

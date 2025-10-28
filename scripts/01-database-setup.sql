@@ -981,6 +981,25 @@ INSERT INTO `site_settings` (`setting_key`, `setting_value`, `setting_type`) VAL
 
 SELECT 'Database enhancements completed successfully!' as status;
 
+-- =============================================
+-- 11. Normal SEttings Frontend
+-- =============================================
+-- Site settings
+DROP TABLE IF EXISTS `frontend_settings`;
+CREATE TABLE `frontend_settings` (
+  `id` int NOT NULL AUTO_INCREMENT,
+  `setting_key` varchar(255) NOT NULL,
+  `setting_value` text,
+  `setting_type` enum('string','number','boolean','json') DEFAULT 'string',
+  `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `setting_key` (`setting_key`),
+  KEY `idx_setting_key` (`setting_key`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
 
 -- =============================================
 -- FINAL MESSAGE
