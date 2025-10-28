@@ -3,13 +3,15 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import UserMenu from '../common/UserMenu';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 
 const Header = () => {
   const { isAuthenticated, user, siteSettings } = useAuth();
   const { totalItems } = useCart();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const navigate = useNavigate();
 
   useEffect(() => {
     // Initialize AOS and other animations
@@ -33,6 +35,15 @@ const Header = () => {
 
   const toggleSearch = () => {
     setIsSearchOpen(!isSearchOpen);
+  };
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    if (searchQuery.trim()) {
+      navigate(`/search?q=${encodeURIComponent(searchQuery.trim())}`);
+      setSearchQuery('');
+      setIsSearchOpen(false);
+    }
   };
 
   return (
@@ -92,9 +103,15 @@ const Header = () => {
             </Link>
 
             {/* Search Form */}
-            <form className="search-form desktop-search-form d-none d-xl-flex" action="/search" method="GET">
+            <form className="search-form desktop-search-form d-none d-xl-flex" onSubmit={handleSearch}>
               <div className="input-group">
-                <input type="text" className="form-control" name="q" placeholder="Search for products" />
+                <input
+                  type="text"
+                  className="form-control"
+                  placeholder="Search for products"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
                 <button className="btn btn-primary" type="submit">
                   <i className="bi bi-search"></i>
                 </button>
@@ -152,7 +169,7 @@ const Header = () => {
           <nav id="navmenu" className="navmenu">
             <ul className="d-flex flex-column flex-xl-row mb-0">
               <li className="nav-item">
-                <Link to="/" className="nav-link active">Home</Link>
+                <Link to="/" className="nav-link">Home</Link>
               </li>
               <li className="nav-item">
                 <Link to="/about" className="nav-link">About</Link>
@@ -184,9 +201,15 @@ const Header = () => {
       {/* Mobile Search Form */}
       <div className={`collapse ${isSearchOpen ? 'show' : ''}`} id="mobileSearch">
         <div className="container py-2">
-          <form className="search-form" action="/search" method="GET">
+          <form className="search-form" onSubmit={handleSearch}>
             <div className="input-group">
-              <input type="text" className="form-control" name="q" placeholder="Search for products" />
+              <input
+                type="text"
+                className="form-control"
+                placeholder="Search for products"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
               <button className="btn btn-primary" type="submit">
                 <i className="bi bi-search"></i>
               </button>

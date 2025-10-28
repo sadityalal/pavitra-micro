@@ -5,19 +5,16 @@ class ProductService {
   async getProducts(params = {}) {
     try {
       const queryString = new URLSearchParams(params).toString();
-      // Ensure trailing slash to match backend route registration (/api/v1/products/)
-      const base = `/api/v1/products/`;
-      const endpoint = `${base}${queryString ? `?${queryString}` : ''}`;
-      try {
-        return await productApi.get(endpoint);
-      } catch (err) {
-        // Some deployments may accept the path without trailing slash; retry without or with depending on error
-        const msg = (err && err.message) ? err.message : String(err);
-        if (msg.includes('Method Not Allowed') || msg.includes('405')) {
-          const alt = `/api/v1/products${queryString ? `?${queryString}` : ''}`;
-          return await productApi.get(alt);
-        }
-        throw err;
+      const endpoint = `/api/v1/products/${queryString ? `?${queryString}` : ''}`;
+      const response = await productApi.get(endpoint);
+
+      // Handle different response structures
+      if (response.products !== undefined) {
+        return response;
+      } else if (Array.isArray(response)) {
+        return { products: response, total: response.length };
+      } else {
+        return { products: [], total: 0 };
       }
     } catch (error) {
       console.error('Failed to fetch products:', error);
@@ -27,10 +24,10 @@ class ProductService {
 
   async getFeaturedProducts(limit = 8) {
     try {
-      return await this.getProducts({ 
-        featured: true, 
-        limit, 
-        status: 'active' 
+      return await this.getProducts({
+        featured: true,
+        limit,
+        status: 'active'
       });
     } catch (error) {
       console.error('Failed to fetch featured products:', error);
@@ -40,10 +37,10 @@ class ProductService {
 
   async getNewArrivals(limit = 6) {
     try {
-      return await this.getProducts({ 
-        new_arrivals: true, 
-        limit, 
-        status: 'active' 
+      return await this.getProducts({
+        new_arrivals: true,
+        limit,
+        status: 'active'
       });
     } catch (error) {
       console.error('Failed to fetch new arrivals:', error);
@@ -53,10 +50,10 @@ class ProductService {
 
   async getBestSellers(limit = 8) {
     try {
-      return await this.getProducts({ 
-        bestsellers: true, 
-        limit, 
-        status: 'active' 
+      return await this.getProducts({
+        bestseller: true,
+        limit,
+        status: 'active'
       });
     } catch (error) {
       console.error('Failed to fetch best sellers:', error);
@@ -64,29 +61,62 @@ class ProductService {
     }
   }
 
-  async getProduct(slug) {
+  async getProduct(id) {
     try {
-      return await productApi.get(`/api/v1/products/slug/${slug}`);
+      // Try by ID first
+      return await productApi.get(`/api/v1/products/${id}`);
     } catch (error) {
-      console.error('Failed to fetch product:', error);
-      return null;
+      console.error('Failed to fetch product by ID:', error);
+      // If ID fails, try by slug
+      try {
+        return await productApi.get(`/api/v1/products/slug/${id}`);
+      } catch (slugError) {
+        console.error('Failed to fetch product by slug:', slugError);
+        return null;
+      }
     }
   }
 
   async getCategories() {
     try {
-      return await productApi.get('/api/v1/products/categories/all');
+      const response = await productApi.get('/api/v1/products/categories/all');
+
+      // Handle different response structures
+      if (Array.isArray(response)) {
+        return response;
+      } else if (response.categories) {
+        return response.categories;
+      } else {
+        return [];
+      }
     } catch (error) {
       console.error('Failed to fetch categories:', error);
-      return { categories: [] };
+      return [];
+    }
+  }
+
+  async getCategory(id) {
+    try {
+      return await productApi.get(`/api/v1/products/categories/${id}`);
+    } catch (error) {
+      console.error('Failed to fetch category:', error);
+      return null;
+    }
+  }
+
+  async getCategoryBySlug(slug) {
+    try {
+      return await productApi.get(`/api/v1/products/categories/slug/${slug}`);
+    } catch (error) {
+      console.error('Failed to fetch category by slug:', error);
+      return null;
     }
   }
 
   async searchProducts(query, params = {}) {
     try {
       const searchParams = { q: query, ...params };
-      const queryString = new URLSearchParams(searchParams).toString();
-      return await productApi.get(`/api/v1/products/search?${queryString}`);
+      return await this.getProducts(searchParams);
     } catch (error) {
       console.error('Search failed:', error);
       return { products: [], total: 0 };
