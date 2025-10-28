@@ -1,9 +1,9 @@
 // frontend/src/services/api.js
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8001';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
 class ApiService {
-  constructor() {
-    this.baseURL = API_BASE_URL;
+  constructor(baseURL = API_BASE_URL) {
+    this.baseURL = baseURL;
   }
 
   async request(endpoint, options = {}) {
@@ -23,7 +23,7 @@ class ApiService {
 
     try {
       const response = await fetch(url, config);
-      
+
       let data;
       try {
         data = await response.json();
@@ -74,7 +74,6 @@ class ApiService {
       method: 'POST',
       headers: {
         Authorization: token ? `Bearer ${token}` : '',
-        // Don't set Content-Type for FormData - browser will set it with boundary
       },
       body: formData,
     };
@@ -101,4 +100,8 @@ class ApiService {
   }
 }
 
-export const apiService = new ApiService();
+// Create service instances for different backend services with different names
+export const authApi = new ApiService('http://localhost:8001');
+export const productApi = new ApiService('http://localhost:8002');
+export const userApi = new ApiService('http://localhost:8004');
+export const apiService = new ApiService(); // Default instance

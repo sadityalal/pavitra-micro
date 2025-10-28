@@ -310,7 +310,7 @@ async def get_site_settings():
             'smtp_username': config.smtp_username,
             'smtp_password': config.smtp_password,
             'email_from': config.email_from,
-            'free_shipping_threshold': getattr(config, 'free_shipping_threshold', 999),
+            'free_shipping_threshold': getattr(config, 'free_shipping_threshold'),
             'return_period_days': getattr(config, 'return_period_days', 10),
             'site_phone': getattr(config, 'site_phone', '+91-9711317009'),
             'site_email': getattr(config, 'site_email', 'support@pavitraenterprises.com'),

@@ -49,3 +49,6 @@ rabbitmq_data
 redis_data
 
 
+/.repomixignore
+/repomix.config.json
+/repomix-output.xml

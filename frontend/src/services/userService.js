@@ -1,9 +1,10 @@
-import { apiService } from './api';
+// frontend/src/services/userService.js
+import { userApi } from './api';
 
 class UserService {
   async getProfile() {
     try {
-      return await apiService.get('/api/v1/users/profile');
+      return await userApi.get('/api/v1/users/profile');
     } catch (error) {
       console.error('Failed to fetch user profile:', error);
       throw error;
@@ -12,7 +13,7 @@ class UserService {
 
   async updateProfile(profileData) {
     try {
-      return await apiService.put('/api/v1/users/profile', profileData);
+      return await userApi.put('/api/v1/users/profile', profileData);
     } catch (error) {
       console.error('Failed to update profile:', error);
       throw error;
@@ -21,7 +22,7 @@ class UserService {
 
   async getAddresses() {
     try {
-      return await apiService.get('/api/v1/users/addresses');
+      return await userApi.get('/api/v1/users/addresses');
     } catch (error) {
       console.error('Failed to fetch addresses:', error);
       return [];
@@ -30,7 +31,7 @@ class UserService {
 
   async addAddress(addressData) {
     try {
-      return await apiService.post('/api/v1/users/addresses', addressData);
+      return await userApi.post('/api/v1/users/addresses', addressData);
     } catch (error) {
       console.error('Failed to add address:', error);
       throw error;
@@ -39,7 +40,7 @@ class UserService {
 
   async updateAddress(addressId, addressData) {
     try {
-      return await apiService.put(`/api/v1/users/addresses/${addressId}`, addressData);
+      return await userApi.put(`/api/v1/users/addresses/${addressId}`, addressData);
     } catch (error) {
       console.error('Failed to update address:', error);
       throw error;
@@ -48,7 +49,7 @@ class UserService {
 
   async deleteAddress(addressId) {
     try {
-      return await apiService.delete(`/api/v1/users/addresses/${addressId}`);
+      return await userApi.delete(`/api/v1/users/addresses/${addressId}`);
     } catch (error) {
       console.error('Failed to delete address:', error);
       throw error;
@@ -57,7 +58,7 @@ class UserService {
 
   async getWishlist() {
     try {
-      return await apiService.get('/api/v1/users/wishlist');
+      return await userApi.get('/api/v1/users/wishlist');
     } catch (error) {
       console.error('Failed to fetch wishlist:', error);
       return { items: [], total_count: 0 };
@@ -66,7 +67,7 @@ class UserService {
 
   async addToWishlist(productId) {
     try {
-      return await apiService.post(`/api/v1/users/wishlist/${productId}`);
+      return await userApi.post(`/api/v1/users/wishlist/${productId}`);
     } catch (error) {
       console.error('Failed to add to wishlist:', error);
       throw error;
@@ -75,7 +76,7 @@ class UserService {
 
   async removeFromWishlist(productId) {
     try {
-      return await apiService.delete(`/api/v1/users/wishlist/${productId}`);
+      return await userApi.delete(`/api/v1/users/wishlist/${productId}`);
     } catch (error) {
       console.error('Failed to remove from wishlist:', error);
       throw error;
@@ -84,7 +85,7 @@ class UserService {
 
   async getCart() {
     try {
-      return await apiService.get('/api/v1/users/cart');
+      return await userApi.get('/api/v1/users/cart');
     } catch (error) {
       console.error('Failed to fetch cart:', error);
       return { items: [], subtotal: 0, total_items: 0 };
@@ -96,7 +97,7 @@ class UserService {
       const formData = new FormData();
       formData.append('quantity', quantity);
       
-      return await apiService.postFormData(`/api/v1/users/cart/${productId}`, formData);
+      return await userApi.postFormData(`/api/v1/users/cart/${productId}`, formData);
     } catch (error) {
       console.error('Failed to add to cart:', error);
       throw error;
@@ -108,7 +109,7 @@ class UserService {
       const formData = new FormData();
       formData.append('quantity', quantity);
       
-      return await apiService.postFormData(`/api/v1/users/cart/${cartItemId}`, formData);
+      return await userApi.postFormData(`/api/v1/users/cart/${cartItemId}`, formData);
     } catch (error) {
       console.error('Failed to update cart item:', error);
       throw error;
@@ -117,7 +118,7 @@ class UserService {
 
   async removeFromCart(cartItemId) {
     try {
-      return await apiService.delete(`/api/v1/users/cart/${cartItemId}`);
+      return await userApi.delete(`/api/v1/users/cart/${cartItemId}`);
     } catch (error) {
       console.error('Failed to remove from cart:', error);
       throw error;
@@ -126,7 +127,7 @@ class UserService {
 
   async clearCart() {
     try {
-      return await apiService.delete('/api/v1/users/cart');
+      return await userApi.delete('/api/v1/users/cart');
     } catch (error) {
       console.error('Failed to clear cart:', error);
       throw error;
@@ -135,7 +136,7 @@ class UserService {
 
   async getNotificationPreferences() {
     try {
-      return await apiService.get('/api/v1/users/notification-preferences');
+      return await userApi.get('/api/v1/users/notification-preferences');
     } catch (error) {
       console.error('Failed to fetch notification preferences:', error);
       return { notification_methods: [] };
@@ -144,7 +145,7 @@ class UserService {
 
   async updateNotificationPreferences(preferences) {
     try {
-      return await apiService.put('/api/v1/users/notification-preferences', preferences);
+      return await userApi.put('/api/v1/users/notification-preferences', preferences);
     } catch (error) {
       console.error('Failed to update notification preferences:', error);
       throw error;

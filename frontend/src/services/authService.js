@@ -1,11 +1,11 @@
 // frontend/src/services/authService.js
-import { apiService } from './api';
+import { authApi } from './api';
 
 class AuthService {
   async login(loginData) {
     try {
-      const response = await apiService.post('/api/v1/auth/login', loginData);
-      
+      const response = await authApi.post('/api/v1/auth/login', loginData);
+
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
         localStorage.setItem('user_data', JSON.stringify({
@@ -13,7 +13,7 @@ class AuthService {
           permissions: response.user_permissions
         }));
       }
-      
+
       return response;
     } catch (error) {
       console.error('Login failed:', error);
@@ -32,7 +32,7 @@ class AuthService {
         }
       });
 
-      const response = await apiService.postFormData('/api/v1/auth/register', formData);
+      const response = await authApi.postFormData('/api/v1/auth/register', formData);
 
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
@@ -51,7 +51,7 @@ class AuthService {
 
   async logout() {
     try {
-      await apiService.post('/api/v1/auth/logout');
+      await authApi.post('/api/v1/auth/logout');
     } catch (error) {
       console.error('Logout failed:', error);
     } finally {
@@ -62,7 +62,7 @@ class AuthService {
 
   async refreshToken() {
     try {
-      const response = await apiService.post('/api/v1/auth/refresh');
+      const response = await authApi.post('/api/v1/auth/refresh');
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
       }
@@ -76,7 +76,7 @@ class AuthService {
 
   async getSiteSettings() {
     try {
-      return await apiService.get('/api/v1/auth/site-settings');
+      return await authApi.get('/api/v1/auth/site-settings');
     } catch (error) {
       console.error('Failed to fetch site settings:', error);
       return {
