@@ -5,8 +5,20 @@ class ProductService {
   async getProducts(params = {}) {
     try {
       const queryString = new URLSearchParams(params).toString();
-      const endpoint = `/api/v1/products${queryString ? `?${queryString}` : ''}`;
-      return await productApi.get(endpoint);
+      // Ensure trailing slash to match backend route registration (/api/v1/products/)
+      const base = `/api/v1/products/`;
+      const endpoint = `${base}${queryString ? `?${queryString}` : ''}`;
+      try {
+        return await productApi.get(endpoint);
+      } catch (err) {
+        // Some deployments may accept the path without trailing slash; retry without or with depending on error
+        const msg = (err && err.message) ? err.message : String(err);
+        if (msg.includes('Method Not Allowed') || msg.includes('405')) {
+          const alt = `/api/v1/products${queryString ? `?${queryString}` : ''}`;
+          return await productApi.get(alt);
+        }
+        throw err;
+      }
     } catch (error) {
       console.error('Failed to fetch products:', error);
       return { products: [], total: 0 };

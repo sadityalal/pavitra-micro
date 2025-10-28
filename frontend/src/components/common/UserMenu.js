@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 
 const UserMenu = () => {
@@ -12,22 +13,22 @@ const UserMenu = () => {
           <p className="mb-0">Access account & manage orders</p>
         </div>
         <div className="dropdown-body">
-          <a className="dropdown-item d-flex align-items-center" href="/account?tab=orders">
+          <Link className="dropdown-item d-flex align-items-center" to="/account?tab=orders">
             <i className="bi bi-person-circle me-2"></i>
             <span>My Account</span>
-          </a>
-          <a className="dropdown-item d-flex align-items-center" href="/account?tab=orders">
+          </Link>
+          <Link className="dropdown-item d-flex align-items-center" to="/account?tab=orders">
             <i className="bi bi-bag-check me-2"></i>
             <span>My Orders</span>
-          </a>
-          <a className="dropdown-item d-flex align-items-center" href="/account?tab=wishlist">
+          </Link>
+          <Link className="dropdown-item d-flex align-items-center" to="/account?tab=wishlist">
             <i className="bi bi-heart me-2"></i>
             <span>My Wishlist</span>
-          </a>
-          <a className="dropdown-item d-flex align-items-center" href="/account?tab=addresses">
+          </Link>
+          <Link className="dropdown-item d-flex align-items-center" to="/account?tab=addresses">
             <i className="bi bi-geo-alt me-2"></i>
             <span>My Addresses</span>
-          </a>
+          </Link>
         </div>
         <div className="dropdown-footer">
           <button onClick={logout} className="btn btn-outline-primary w-100 btn-sm">
@@ -45,8 +46,8 @@ const UserMenu = () => {
         <p className="mb-0">Access account & manage orders</p>
       </div>
       <div className="dropdown-footer">
-        <a href="/login" className="btn btn-primary w-100 mb-2 btn-sm">Sign In</a>
-        <a href="/register" className="btn btn-outline-primary w-100 btn-sm">Register</a>
+        <Link to="/login" className="btn btn-primary w-100 mb-2 btn-sm">Sign In</Link>
+        <Link to="/register" className="btn btn-outline-primary w-100 btn-sm">Register</Link>
       </div>
     </>
   );
