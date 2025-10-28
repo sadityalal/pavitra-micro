@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { productService } from '../services/productService';
+import { getImageUrl } from '../utils/imageHelper';
 
 const ProductDetails = () => {
   const { id } = useParams();
@@ -25,11 +26,18 @@ const ProductDetails = () => {
   if (loading) return <div className="container py-5 text-center">Loading product...</div>;
   if (!product) return <div className="container py-5 text-center">Product not found</div>;
 
+  const productImageUrl = getImageUrl(product.main_image_url);
+
   return (
     <div className="container py-4">
       <div className="row">
         <div className="col-md-6">
-          <img src={product.main_image_url || '/static/img/product/placeholder.jpg'} alt={product.name} className="img-fluid" />
+          <img
+            src={productImageUrl}
+            alt={product.name}
+            className="img-fluid"
+            onError={(e) => e.currentTarget.src = '/static/img/product/placeholder.jpg'}
+          />
         </div>
         <div className="col-md-6">
           <h2>{product.name}</h2>

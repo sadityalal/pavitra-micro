@@ -1,14 +1,24 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { getImageUrl } from '../../utils/imageHelper';
 
 const ProductCard = ({ product, onAddToCart, onAddToWishlist }) => {
   const formatPrice = (price) => `${product?.currency_symbol || '₹'}${parseFloat(price || 0).toFixed(2)}`;
+
+  const mainImageUrl = getImageUrl(product.main_image_url);
 
   return (
     <div className="product-card">
       <Link to={`/products/${product.slug || product.id}`} className="product-image-link">
         <div className="product-image">
-          <img src={product.main_image_url || '/static/img/product/placeholder.jpg'} alt={product.name} className="img-fluid" onError={(e)=>e.currentTarget.src='/static/img/product/placeholder.jpg'} />
+          <img
+            src={mainImageUrl}
+            alt={product.name}
+            className="img-fluid"
+            onError={(e) => {
+              e.currentTarget.src = '/static/img/product/placeholder.jpg';
+            }}
+          />
           {product.compare_price && product.compare_price > product.base_price && (
             <span className="badge-sale">-{Math.round((1 - product.base_price / product.compare_price) * 100)}%</span>
           )}

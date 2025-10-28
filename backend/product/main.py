@@ -4,6 +4,8 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from shared import config, setup_logging, get_logger, db
 from .routes import router
+from fastapi.staticfiles import StaticFiles
+import os
 
 setup_logging("product-service")
 logger = get_logger(__name__)
@@ -93,6 +95,7 @@ async def startup_event():
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
 
+app.mount("/uploads", StaticFiles(directory="/app/uploads"), name="uploads")
 app.include_router(router, prefix="/api/v1/products")
 
 @app.get("/health")

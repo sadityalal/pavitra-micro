@@ -77,7 +77,7 @@ const ProductDetails = () => {
       <div className="row">
         <div className="col-md-6">
           <img
-            src={product.main_image_url || '/static/img/product/placeholder.jpg'}
+            src={getImageUrl(product.main_image_url)}
             alt={product.name}
             className="img-fluid rounded"
             style={{ maxHeight: '500px', objectFit: 'cover' }}

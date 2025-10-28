@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import { getImageUrl } from '../../utils/imageHelper';
 
 // Small helper to dynamically load a script and return a promise
 const loadScript = (src) => new Promise((resolve, reject) => {
@@ -35,6 +36,11 @@ const Hero = ({ featuredProducts = [], totalItems = 0, siteSettings = {}, isAuth
 
   const formatPrice = (price) => `${siteSettings.currency_symbol || '₹'}${parseFloat(price || 0).toFixed(2)}`;
 
+  // Get image URLs using the helper
+  const firstImageUrl = first ? getImageUrl(first.main_image_url) : '/static/img/product/placeholder.jpg';
+  const secondImageUrl = second ? getImageUrl(second.main_image_url) : '/static/img/product/placeholder.jpg';
+  const thirdImageUrl = third ? getImageUrl(third.main_image_url) : '/static/img/product/placeholder.jpg';
+
   return (
     <section id="hero" className="hero section">
       <div className="hero-container">
@@ -67,7 +73,12 @@ const Hero = ({ featuredProducts = [], totalItems = 0, siteSettings = {}, isAuth
           <div className="product-showcase" data-aos="fade-left" data-aos-delay="200">
             {first ? (
               <div className="product-card featured">
-                <img src={first.main_image_url || '/static/img/product/placeholder.jpg'} alt={first.name} className="img-fluid" onError={(e) => e.currentTarget.src = '/static/img/product/placeholder.jpg'} />
+                <img
+                  src={firstImageUrl}
+                  alt={first.name}
+                  className="img-fluid"
+                  onError={(e) => e.currentTarget.src = '/static/img/product/placeholder.jpg'}
+                />
                 <div className="product-badge">Best Seller</div>
                 <div className="product-info">
                   <h4>{first.name}</h4>
@@ -81,20 +92,30 @@ const Hero = ({ featuredProducts = [], totalItems = 0, siteSettings = {}, isAuth
               </div>
             ) : (
               <div className="product-card featured placeholder">
-                <img src={'/static/img/product/placeholder.jpg'} alt="placeholder" className="img-fluid" />
+                <img src={getImageUrl(null)} alt="placeholder" className="img-fluid" />
               </div>
             )}
 
             <div className="product-grid">
               {second && (
                 <div className="product-mini" data-aos="zoom-in" data-aos-delay="400">
-                  <img src={second.main_image_url || '/static/img/product/placeholder.jpg'} alt={second.name} className="img-fluid" onError={(e) => e.currentTarget.src = '/static/img/product/placeholder.jpg'} />
+                  <img
+                    src={secondImageUrl}
+                    alt={second.name}
+                    className="img-fluid"
+                    onError={(e) => e.currentTarget.src = '/static/img/product/placeholder.jpg'}
+                  />
                   <span className="mini-price">{formatPrice(second.base_price)}</span>
                 </div>
               )}
               {third && (
                 <div className="product-mini" data-aos="zoom-in" data-aos-delay="500">
-                  <img src={third.main_image_url || '/static/img/product/placeholder.jpg'} alt={third.name} className="img-fluid" onError={(e) => e.currentTarget.src = '/static/img/product/placeholder.jpg'} />
+                  <img
+                    src={thirdImageUrl}
+                    alt={third.name}
+                    className="img-fluid"
+                    onError={(e) => e.currentTarget.src = '/static/img/product/placeholder.jpg'}
+                  />
                   <span className="mini-price">{formatPrice(third.base_price)}</span>
                 </div>
               )}

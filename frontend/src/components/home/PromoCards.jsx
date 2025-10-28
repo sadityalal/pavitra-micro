@@ -1,5 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
+import { getCategoryImageUrl } from '../../utils/imageHelper';
 
 const PromoCards = ({ categories = [] }) => {
   return (
@@ -10,7 +11,12 @@ const PromoCards = ({ categories = [] }) => {
             {categories[0] && (
               <div className="category-featured" data-aos="fade-right" data-aos-delay="200">
                 <div className="category-image">
-                  <img src={categories[0].image_url || '/static/img/categories/placeholder.jpg'} alt={categories[0].name} className="img-fluid" onError={(e)=>e.currentTarget.src='/static/img/categories/placeholder.jpg'} />
+                  <img
+                    src={getCategoryImageUrl(categories[0].image_url)}
+                    alt={categories[0].name}
+                    className="img-fluid"
+                    onError={(e) => e.currentTarget.src = '/static/img/categories/placeholder.jpg'}
+                  />
                 </div>
                 <div className="category-content">
                   <span className="category-tag">Trending Now</span>
@@ -28,7 +34,12 @@ const PromoCards = ({ categories = [] }) => {
                 <div className="col-xl-6" key={category.id || index}>
                   <div className={`category-card cat-${category.slug || index}`} data-aos="fade-up" data-aos-delay={300 + index * 100} style={{cursor: 'pointer'}}>
                     <div className="category-image">
-                      <img src={category.image_url || '/static/img/categories/placeholder.jpg'} alt={category.name} className="img-fluid" onError={(e)=>e.currentTarget.src='/static/img/categories/placeholder.jpg'} />
+                      <img
+                        src={getCategoryImageUrl(category.image_url)}
+                        alt={category.name}
+                        className="img-fluid"
+                        onError={(e) => e.currentTarget.src = '/static/img/categories/placeholder.jpg'}
+                      />
                     </div>
                     <div className="category-content">
                       <h4>{category.name}</h4>

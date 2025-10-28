@@ -119,7 +119,7 @@ async def health():
         )
 
 @router.get("/site-settings")
-async def get_site_settings():
+async def get_site_settings(current_user: dict = Depends(get_current_user)):
     try:
         config.refresh_cache()
         settings = {

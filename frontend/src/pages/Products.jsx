@@ -22,7 +22,6 @@ const Products = () => {
   }, []);
 
   const handleAddToCart = (product) => {
-    // delegate to cart context or service later
     console.log('Add to cart', product.id);
   };
 
