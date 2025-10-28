@@ -1,0 +1,365 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Admin Dashboard - Pavitra Enterprises{% endblock %}
+
+{% block page_title %}Dashboard Overview{% endblock %}
+
+{% block breadcrumb %}
+<li class="breadcrumb-item active">Dashboard</li>
+{% endblock %}
+
+{% block content %}
+<!-- Stats Cards Section -->
+<section class="section">
+  <div class="container-fluid">
+    <div class="row gy-4">
+
+      <!-- Total Products Card -->
+      <div class="col-xl-3 col-md-6">
+        <a href="{{ url_for('admin.products') }}" class="text-decoration-none">
+          <div class="stats-card card clickable-card" data-aos="fade-up" data-aos-delay="100">
+            <div class="card-body">
+              <div class="stats-icon">
+                <i class="bi bi-box-seam"></i>
+              </div>
+              <div class="stats-content">
+                <h3>{{ total_products }}</h3>
+                <p>Total Products</p>
+                <span class="stats-trend text-success">
+                  <i class="bi bi-arrow-up"></i> Active catalog
+                </span>
+              </div>
+            </div>
+          </div>
+        </a>
+      </div>
+
+      <!-- Total Orders Card -->
+      <div class="col-xl-3 col-md-6">
+        <a href="{{ url_for('admin.orders') }}" class="text-decoration-none">
+          <div class="stats-card card clickable-card" data-aos="fade-up" data-aos-delay="150">
+            <div class="card-body">
+              <div class="stats-icon">
+                <i class="bi bi-receipt"></i>
+              </div>
+              <div class="stats-content">
+                <h3>{{ total_orders }}</h3>
+                <p>Total Orders</p>
+                <span class="stats-trend text-primary">
+                  <i class="bi bi-graph-up"></i> All time
+                </span>
+              </div>
+            </div>
+          </div>
+        </a>
+      </div>
+
+      <!-- Total Customers Card -->
+      <div class="col-xl-3 col-md-6">
+        <a href="{{ url_for('admin.user_management') }}" class="text-decoration-none">
+          <div class="stats-card card clickable-card" data-aos="fade-up" data-aos-delay="200">
+            <div class="card-body">
+              <div class="stats-icon">
+                <i class="bi bi-people"></i>
+              </div>
+              <div class="stats-content">
+                <h3>{{ total_users }}</h3>
+                <p>Total Customers</p>
+                <span class="stats-trend text-info">
+                  <i class="bi bi-person-plus"></i> Registered users
+                </span>
+              </div>
+            </div>
+          </div>
+        </a>
+      </div>
+
+      <!-- Pending Orders Card -->
+      <div class="col-xl-3 col-md-6">
+        <a href="{{ url_for('admin.orders', status='pending') }}" class="text-decoration-none">
+          <div class="stats-card card clickable-card" data-aos="fade-up" data-aos-delay="250">
+            <div class="card-body">
+              <div class="stats-icon">
+                <i class="bi bi-clock"></i>
+              </div>
+              <div class="stats-content">
+                <h3>{{ pending_orders }}</h3>
+                <p>Pending Orders</p>
+                <span class="stats-trend text-warning">
+                  <i class="bi bi-exclamation-triangle"></i> Needs attention
+                </span>
+              </div>
+            </div>
+          </div>
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Revenue & Performance Section -->
+<section class="section">
+  <div class="container-fluid">
+    <div class="row gy-4">
+      <!-- Revenue Card -->
+      <div class="col-xl-6 col-md-6">
+        <a href="{{ url_for('admin.orders', date_filter='month') }}" class="text-decoration-none">
+          <div class="stats-card card clickable-card" data-aos="fade-up" data-aos-delay="300">
+            <div class="card-body">
+              <div class="stats-icon">
+                <i class="bi bi-currency-rupee"></i>
+              </div>
+              <div class="stats-content">
+                <h3>₹{{ "%.2f"|format(total_revenue) if total_revenue else "0.00" }}</h3>
+                <p>30-Day Revenue</p>
+                <span class="stats-trend text-success">
+                  <i class="bi bi-graph-up-arrow"></i> Last 30 days
+                </span>
+              </div>
+            </div>
+          </div>
+        </a>
+      </div>
+
+      <!-- Today's Performance Card -->
+      <div class="col-xl-6 col-md-6">
+        <a href="{{ url_for('admin.orders', date_filter='today') }}" class="text-decoration-none">
+          <div class="stats-card card clickable-card" data-aos="fade-up" data-aos-delay="350">
+            <div class="card-body">
+              <div class="stats-icon">
+                <i class="bi bi-graph-up"></i>
+              </div>
+              <div class="stats-content">
+                <h3>{{ today_orders }} Orders</h3>
+                <p>Today's Performance</p>
+                <span class="stats-trend text-primary">
+                  ₹{{ "%.2f"|format(today_revenue) if today_revenue else "0.00" }} revenue
+                </span>
+              </div>
+            </div>
+          </div>
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Recent Activity Section -->
+<section class="section">
+  <div class="container-fluid">
+    <div class="row gy-4">
+      <!-- Recent Orders -->
+      <div class="col-xl-8">
+        <div class="card" data-aos="fade-up" data-aos-delay="400">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">
+              <i class="bi bi-receipt me-2"></i>Recent Orders
+            </h5>
+            <a href="{{ url_for('admin.orders') }}" class="btn btn-sm btn-outline-primary">View All</a>
+          </div>
+          <div class="card-body">
+            {% if recent_orders %}
+            <div class="table-responsive">
+              <table class="table table-hover">
+                <thead>
+                  <tr>
+                    <th>Order #</th>
+                    <th>Customer</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for order in recent_orders %}
+                  <tr>
+                    <td>
+                      <strong class="text-primary">{{ order.order_number }}</strong>
+                    </td>
+                    <td>
+                      {% if order.user %}
+                      {{ order.user.first_name }} {{ order.user.last_name }}
+                      {% else %}
+                      <span class="text-muted">Guest</span>
+                      {% endif %}
+                    </td>
+                    <td class="fw-bold">₹{{ "%.2f"|format(order.total_amount) }}</td>
+                    <td>
+                      <span class="badge
+                        {% if order.status == 'pending' %}bg-warning
+                        {% elif order.status == 'confirmed' %}bg-info
+                        {% elif order.status == 'processing' %}bg-primary
+                        {% elif order.status == 'shipped' %}bg-secondary
+                        {% elif order.status == 'delivered' %}bg-success
+                        {% else %}bg-danger{% endif %}">
+                        {{ order.status|title }}
+                      </span>
+                    </td>
+                    <td>{{ order.created_at.strftime('%d %b %Y') }}</td>
+                    <td>
+                      <a href="{{ url_for('admin.order_detail', order_id=order.id) }}"
+                         class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-eye"></i>
+                      </a>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+              <i class="bi bi-receipt display-4 text-muted"></i>
+              <p class="text-muted mt-3">No orders found</p>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Stats & Actions -->
+      <div class="col-xl-4">
+        <!-- Low Stock Alerts -->
+        <div class="card mb-4" data-aos="fade-up" data-aos-delay="450">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="card-title mb-0">
+              <i class="bi bi-exclamation-triangle me-2 text-warning"></i>Low Stock Alerts
+            </h5>
+            <a href="{{ url_for('admin.stock_management') }}" class="badge bg-warning text-decoration-none">
+              {{ low_stock_products|length }}
+            </a>
+          </div>
+          <div class="card-body">
+            {% if low_stock_products %}
+            <div class="list-group list-group-flush">
+              {% for product in low_stock_products %}
+              <a href="{{ url_for('admin.edit_product', product_id=product.id) }}" class="list-group-item d-flex justify-content-between align-items-center px-0 border-0 text-decoration-none">
+                <div class="d-flex align-items-center">
+                  <img src="{{ product.main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                       alt="{{ product.name }}" class="rounded me-3" width="40" height="40">
+                  <div>
+                    <h6 class="mb-1 text-dark">{{ product.name|truncate(20) }}</h6>
+                    <small class="text-muted">SKU: {{ product.sku }}</small>
+                  </div>
+                </div>
+                <div class="text-end">
+                  <span class="badge bg-danger me-2">{{ product.stock_quantity }}</span>
+                  <span class="btn btn-sm btn-outline-warning">
+                    <i class="bi bi-pencil"></i>
+                  </span>
+                </div>
+              </a>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-3">
+              <i class="bi bi-check-circle display-4 text-success"></i>
+              <p class="text-muted mt-2">All products are well stocked</p>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="card" data-aos="fade-up" data-aos-delay="500">
+          <div class="card-header">
+            <h5 class="card-title mb-0">
+              <i class="bi bi-lightning me-2"></i>Quick Actions
+            </h5>
+          </div>
+          <div class="card-body">
+            <div class="d-grid gap-2">
+              <a href="{{ url_for('admin.new_product') }}" class="btn btn-primary">
+                <i class="bi bi-plus-circle me-2"></i>Add New Product
+              </a>
+              <a href="{{ url_for('admin.user_management') }}" class="btn btn-info">
+                <i class="bi bi-people me-2"></i>Manage Users
+              </a>
+              <a href="{{ url_for('admin.orders', status='pending') }}" class="btn btn-warning">
+                <i class="bi bi-clock me-2"></i>Process Pending Orders
+              </a>
+              <a href="{{ url_for('admin.stock_management') }}" class="btn btn-secondary">
+                <i class="bi bi-clipboard-data me-2"></i>Stock Management
+              </a>
+              <a href="{{ url_for('admin.reviews', status='pending') }}" class="btn btn-success">
+                <i class="bi bi-star me-2"></i>Review Moderation
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Additional Metrics Section -->
+<section class="section">
+  <div class="container-fluid">
+    <div class="row gy-4">
+      <div class="col-md-3">
+        <a href="{{ url_for('admin.reviews', status='pending') }}" class="text-decoration-none">
+          <div class="card text-center clickable-card" data-aos="zoom-in" data-aos-delay="550">
+            <div class="card-body">
+              <i class="bi bi-star text-warning display-4"></i>
+              <h4 class="mt-3">{{ pending_reviews }} Reviews</h4>
+              <p class="text-muted">Awaiting moderation</p>
+              <span class="btn btn-outline-warning">
+                Moderate Reviews
+              </span>
+            </div>
+          </div>
+        </a>
+      </div>
+
+      <div class="col-md-3">
+        <a href="{{ url_for('admin.categories') }}" class="text-decoration-none">
+          <div class="card text-center clickable-card" data-aos="zoom-in" data-aos-delay="600">
+            <div class="card-body">
+              <i class="bi bi-tags text-success display-4"></i>
+              <h4 class="mt-3">{{ categories|length if categories else 0 }} Categories</h4>
+              <p class="text-muted">Product categories</p>
+              <span class="btn btn-outline-success">
+                Manage Categories
+              </span>
+            </div>
+          </div>
+        </a>
+      </div>
+
+      <div class="col-md-3">
+        <a href="{{ url_for('admin.products') }}" class="text-decoration-none">
+          <div class="card text-center clickable-card" data-aos="zoom-in" data-aos-delay="650">
+            <div class="card-body">
+              <i class="bi bi-shop text-primary display-4"></i>
+              <h4 class="mt-3">{{ brands|length if brands else 0 }} Brands</h4>
+              <p class="text-muted">Registered brands</p>
+              <span class="btn btn-outline-primary">
+                View Products
+              </span>
+            </div>
+          </div>
+        </a>
+      </div>
+
+      <div class="col-md-3">
+        <a href="{{ url_for('admin.user_management') }}" class="text-decoration-none">
+          <div class="card text-center clickable-card" data-aos="zoom-in" data-aos-delay="700">
+            <div class="card-body">
+              <i class="bi bi-people-fill text-info display-4"></i>
+              <h4 class="mt-3">{{ total_users }} Users</h4>
+              <p class="text-muted">Registered customers</p>
+              <span class="btn btn-outline-info">
+                Manage Users
+              </span>
+            </div>
+          </div>
+        </a>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+{% endblock %}

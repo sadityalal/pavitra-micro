@@ -1,0 +1,372 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Performance & AI Insights - Pavitra Enterprises{% endblock %}
+
+{% block page_title %}Performance & AI Insights{% endblock %}
+
+{% block breadcrumb %}
+<li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
+<li class="breadcrumb-item active">Performance & AI</li>
+{% endblock %}
+
+{% block content %}
+<!-- Performance & AI Insights Section -->
+<section class="section">
+  <div class="container-fluid">
+
+    <!-- Header with Stats and Actions -->
+    <div class="row mb-4">
+      <div class="col-md-8">
+        <h5 class="text-heading-color mb-3">
+          <i class="bi bi-graph-up-arrow me-2"></i>E-commerce Performance Dashboard
+        </h5>
+        <p class="text-muted mb-0">Real-time sales analytics, inventory insights, and AI-powered recommendations.</p>
+      </div>
+      <div class="col-md-4 text-end">
+        <button class="btn btn-primary me-2" id="refreshAllData">
+          <i class="bi bi-arrow-clockwise me-2"></i>Refresh Data
+        </button>
+        <button class="btn btn-success" id="generateReport">
+          <i class="bi bi-download me-2"></i>Export Report
+        </button>
+      </div>
+    </div>
+
+    <!-- AI Insights Alert -->
+    <div class="card mb-4 bg-gradient-primary text-white">
+      <div class="card-body">
+        <div class="row align-items-center">
+          <div class="col-md-8">
+            <h6 class="card-title mb-2">
+              <i class="bi bi-robot me-2"></i>AI Business Insights
+            </h6>
+            <p class="mb-0" id="aiBusinessInsight">Analyzing your store performance and identifying optimization opportunities...</p>
+          </div>
+          <div class="col-md-4 text-end">
+            <button class="btn btn-light btn-sm" id="refreshInsights">
+              <i class="bi bi-arrow-clockwise"></i> New Insights
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Real Business Metrics -->
+    <div class="row mb-4">
+      <div class="col-md-3">
+        <div class="card bg-performance text-white">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h6 class="card-title mb-2">Revenue Health</h6>
+                <h4 id="revenueHealth">94%</h4>
+                <p class="small mb-0">Sales Performance</p>
+              </div>
+              <i class="bi bi-currency-rupee display-6 opacity-50"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card bg-predictive text-white">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h6 class="card-title mb-2">Inventory Risk</h6>
+                <h4 id="inventoryRisk">12%</h4>
+                <p class="small mb-0">Low Stock Items</p>
+              </div>
+              <i class="bi bi-box-seam display-6 opacity-50"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card bg-insight text-white">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h6 class="card-title mb-2">AI Recommendations</h6>
+                <h4 id="aiRecommendations">5</h4>
+                <p class="small mb-0">Active suggestions</p>
+              </div>
+              <i class="bi bi-lightbulb display-6 opacity-50"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-3">
+        <div class="card bg-optimization text-white">
+          <div class="card-body">
+            <div class="d-flex justify-content-between align-items-start">
+              <div>
+                <h6 class="card-title mb-2">Customer Satisfaction</h6>
+                <h4 id="customerSatisfaction">4.3/5</h4>
+                <p class="small mb-0">Average Rating</p>
+              </div>
+              <i class="bi bi-star display-6 opacity-50"></i>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Performance Dashboard -->
+    <div class="row mb-4">
+      <div class="col-md-8">
+        <!-- Key Business Metrics -->
+        <div class="card mb-4">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-bar-chart me-2"></i>Business Performance Indicators
+            </h6>
+          </div>
+          <div class="card-body">
+            <div class="row text-center">
+              <div class="col-md-3 mb-3">
+                <div class="metric-card">
+                  <div class="metric-value text-primary" id="totalRevenue">₹0</div>
+                  <div class="metric-label">Total Revenue</div>
+                  <div class="metric-trend text-success">
+                    <i class="bi bi-arrow-up"></i> <span id="revenueTrend">0%</span> growth
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-3 mb-3">
+                <div class="metric-card">
+                  <div class="metric-value text-success" id="totalOrders">0</div>
+                  <div class="metric-label">Total Orders</div>
+                  <div class="metric-trend text-success">
+                    <i class="bi bi-arrow-up"></i> <span id="ordersTrend">0%</span> vs last month
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-3 mb-3">
+                <div class="metric-card">
+                  <div class="metric-value text-info" id="avgOrderValue">₹0</div>
+                  <div class="metric-label">Avg Order Value</div>
+                  <div class="metric-trend text-warning">
+                    <i class="bi bi-dash"></i> <span id="aovTrend">0%</span> change
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-3 mb-3">
+                <div class="metric-card">
+                  <div class="metric-value text-warning" id="lowStockItems">0</div>
+                  <div class="metric-label">Low Stock Items</div>
+                  <div class="metric-trend text-danger">
+                    <i class="bi bi-exclamation-triangle"></i> Needs attention
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- AI Recommendations -->
+        <div class="card">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-robot me-2"></i>AI Business Recommendations
+            </h6>
+          </div>
+          <div class="card-body">
+            <div id="aiRecommendationsList">
+              <!-- AI recommendations will be loaded here -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-4">
+        <!-- Real-time Business Activity -->
+        <div class="card mb-4">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-activity me-2"></i>Business Activity
+              <span class="badge bg-primary ms-2" id="liveEventsCount">0</span>
+            </h6>
+          </div>
+          <div class="card-body">
+            <div id="businessActivity" class="activity-feed">
+              <div class="activity-item">
+                <div class="activity-avatar">
+                  <i class="bi bi-graph-up"></i>
+                </div>
+                <div class="activity-content">
+                  <strong>System</strong> Performance analysis started
+                  <small class="text-muted">Just now</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Top Performing Products -->
+        <div class="card mb-4">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-trophy me-2"></i>Top Products
+            </h6>
+          </div>
+          <div class="card-body">
+            <div id="topProductsList">
+              <!-- Top products will be loaded here -->
+            </div>
+          </div>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="card">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-lightning me-2"></i>Quick Actions
+            </h6>
+          </div>
+          <div class="card-body">
+            <div class="d-grid gap-2">
+              <button class="btn btn-outline-primary" id="optimizeInventory">
+                <i class="bi bi-clipboard-data me-2"></i>Inventory Optimization
+              </button>
+              <button class="btn btn-outline-success" id="analyzeSales">
+                <i class="bi bi-graph-up me-2"></i>Sales Analysis
+              </button>
+              <button class="btn btn-outline-warning" id="customerAnalytics">
+                <i class="bi bi-people me-2"></i>Customer Analytics
+              </button>
+              <button class="btn btn-outline-info" id="productPerformance">
+                <i class="bi bi-box me-2"></i>Product Performance
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Inventory & Sales Analytics -->
+    <div class="row mb-4">
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-box-seam me-2"></i>Inventory Health
+            </h6>
+          </div>
+          <div class="card-body">
+            <div class="inventory-stats">
+              <div class="inventory-item">
+                <span class="inventory-label">Total Products</span>
+                <span class="inventory-value text-primary" id="totalProducts">0</span>
+              </div>
+              <div class="inventory-item">
+                <span class="inventory-label">Out of Stock</span>
+                <span class="inventory-value text-danger" id="outOfStock">0</span>
+              </div>
+              <div class="inventory-item">
+                <span class="inventory-label">Low Stock</span>
+                <span class="inventory-value text-warning" id="lowStockCount">0</span>
+              </div>
+              <div class="inventory-item">
+                <span class="inventory-label">In Stock</span>
+                <span class="inventory-value text-success" id="inStock">0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="col-md-6">
+        <div class="card">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-cart me-2"></i>Sales Overview
+            </h6>
+          </div>
+          <div class="card-body">
+            <div class="sales-stats">
+              <div class="sales-item">
+                <span class="sales-label">Today's Orders</span>
+                <span class="sales-value text-primary" id="todayOrders">0</span>
+              </div>
+              <div class="sales-item">
+                <span class="sales-label">Pending Orders</span>
+                <span class="sales-value text-warning" id="pendingOrders">0</span>
+              </div>
+              <div class="sales-item">
+                <span class="sales-label">Completed Orders</span>
+                <span class="sales-value text-success" id="completedOrders">0</span>
+              </div>
+              <div class="sales-item">
+                <span class="sales-label">Cancelled Orders</span>
+                <span class="sales-value text-danger" id="cancelledOrders">0</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Category Performance -->
+    <div class="row">
+      <div class="col-12">
+        <div class="card">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-tags me-2"></i>Category Performance
+            </h6>
+          </div>
+          <div class="card-body">
+            <div id="categoryPerformance">
+              <!-- Category performance will be loaded here -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- AI Recommendation Modal -->
+<div class="modal fade" id="aiRecommendationModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="bi bi-robot me-2"></i>AI Recommendation Details
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="aiRecommendationContent">
+        <!-- Content loaded dynamically -->
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="button" class="btn btn-primary" id="implementRecommendation">Implement</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Performance Report Modal -->
+<div class="modal fade" id="performanceReportModal" tabindex="-1">
+  <div class="modal-dialog modal-xl">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="bi bi-graph-up me-2"></i>Performance Analysis Report
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="performanceReportContent">
+        <!-- Content loaded dynamically -->
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<!-- Performance & AI Insights JavaScript -->
+<script src="{{ url_for('static', filename='js/admin_performance.js') }}"></script>
+{% endblock %}

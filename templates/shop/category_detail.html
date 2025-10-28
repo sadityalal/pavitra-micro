@@ -1,0 +1,217 @@
+{% extends "base.html" %}
+
+{% block title %}{{ category.name }} - Pavitra Enterprises{% endblock %}
+{% block description %}{{ category.description or 'Browse our ' + category.name + ' collection. Find quality products at great prices with fast shipping across India.' }}{% endblock %}
+{% block keywords %}{{ category.name }}, {{ category.name }} products, buy {{ category.name }} online, pavitra enterprises{% endblock %}
+
+{% block content %}
+<!-- Breadcrumb -->
+<nav aria-label="breadcrumb" class="bg-light py-2">
+  <div class="container">
+    <ol class="breadcrumb mb-0">
+      <li class="breadcrumb-item"><a href="{{ url_for('shop.index') }}" class="text-decoration-none">Home</a></li>
+      <li class="breadcrumb-item"><a href="{{ url_for('shop.products') }}" class="text-decoration-none">Products</a></li>
+      <li class="breadcrumb-item active" aria-current="page">{{ category.name }}</li>
+    </ol>
+  </div>
+</nav>
+
+<!-- Category Header -->
+<section class="category-header section py-4 bg-dark text-white">
+  <div class="container">
+    <div class="row align-items-center">
+      <div class="col-md-8">
+        <h1 class="display-5 fw-bold mb-3">{{ category.name }}</h1>
+        {% if category.description %}
+        <p class="lead mb-0">{{ category.description }}</p>
+        {% endif %}
+        {% if category.name_hindi %}
+        <p class="h4 mb-0 mt-2">{{ category.name_hindi }}</p>
+        {% endif %}
+      </div>
+      <div class="col-md-4 text-md-end">
+        <div class="category-meta">
+          <span class="badge bg-light text-dark fs-6">{{ products|length }} products</span>
+          {% if category.gst_slab %}
+          <span class="badge bg-warning text-dark fs-6 ms-2">GST: {{ category.gst_slab }}%</span>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Products Grid -->
+<section class="products-section section pt-4">
+  <div class="container">
+    {% if products %}
+    <div class="row">
+      <div class="col-12 mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+          <h3 class="mb-0">Products in {{ category.name }}</h3>
+          <span class="text-muted">Showing {{ products|length }} products</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="row g-4">
+      {% for product in products %}
+      <div class="col-xl-3 col-lg-4 col-md-6">
+        <div class="card h-100 shadow-sm border-0 product-card" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.product_detail', slug=product.slug) }}'">
+          <div class="position-relative overflow-hidden">
+            <img src="{{ product.main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                 alt="{{ product.name }}"
+                 class="card-img-top"
+                 style="height: 250px; object-fit: cover;">
+
+            <!-- Product Badges -->
+            <div class="position-absolute top-0 start-0 p-2">
+              {% if product.compare_price and product.compare_price > product.base_price %}
+              <span class="badge bg-danger border-0">-{{ ((product.compare_price - product.base_price) / product.compare_price * 100)|round|int }}%</span>
+              {% endif %}
+              {% if product.is_featured %}
+              <span class="badge bg-dark text-white border-0">Featured</span>
+              {% endif %}
+              {% if product.stock_status == 'low_stock' %}
+              <span class="badge bg-warning text-dark border-0">Low Stock</span>
+              {% endif %}
+            </div>
+
+            <!-- Product Actions -->
+            <div class="position-absolute top-0 end-0 p-2" onclick="event.stopPropagation()">
+              <div class="btn-group-vertical">
+                {% if current_user.is_authenticated %}
+                <button class="btn btn-light btn-sm rounded-circle mb-1 border-0" onclick="event.stopPropagation(); addToWishlist({{ product.id }}, this)" title="Add to Wishlist">
+                  <i class="bi bi-heart"></i>
+                </button>
+                {% endif %}
+                <a href="{{ url_for('shop.product_detail', slug=product.slug) }}" class="btn btn-light btn-sm rounded-circle border-0" title="View Details">
+                  <i class="bi bi-eye"></i>
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div class="card-body d-flex flex-column p-3">
+            <!-- Category & Brand -->
+            <div class="small text-muted mb-1">
+              {{ product.category.name if product.category else 'Uncategorized' }}
+              {% if product.brand %}
+              • {{ product.brand.name }}
+              {% if product.brand.is_indian_brand %}
+              <span class="badge bg-success ms-1 border-0">IN</span>
+              {% endif %}
+              {% endif %}
+            </div>
+
+            <!-- Product Name -->
+            <h5 class="card-title flex-grow-1 mb-1">
+              <a href="{{ url_for('shop.product_detail', slug=product.slug) }}" class="text-decoration-none text-dark" onclick="event.stopPropagation()">{{ product.name }}</a>
+            </h5>
+
+            <!-- Rating -->
+            <div class="d-flex align-items-center mb-2">
+              <div class="text-warning me-2">
+                {% set avg_rating = product.get_average_rating() or 0 %}
+                {% for i in range(5) %}
+                  {% if i < avg_rating %}
+                    <i class="bi bi-star-fill"></i>
+                  {% else %}
+                    <i class="bi bi-star"></i>
+                  {% endif %}
+                {% endfor %}
+              </div>
+              <small class="text-muted">({{ product.get_review_count() or 0 }})</small>
+            </div>
+
+            <!-- Price -->
+            <div class="d-flex align-items-center mb-2">
+              {% if product.compare_price and product.compare_price > product.base_price %}
+              <span class="text-muted text-decoration-line-through me-2">{{ currency_symbol }}{{ "%.2f"|format(product.compare_price) }}</span>
+              {% endif %}
+              <span class="h5 text-dark mb-0 fw-bold">{{ currency_symbol }}{{ "%.2f"|format(product.base_price) }}</span>
+            </div>
+
+            <!-- Add to Cart Button -->
+            <div class="d-grid mt-auto">
+              {% if product.stock_quantity and product.stock_quantity > 0 %}
+              <button class="btn btn-dark border-0" onclick="event.stopPropagation(); addToCart({{ product.id }}, this)">
+                <i class="bi bi-cart-plus me-2"></i>Add to Cart
+              </button>
+              {% else %}
+              <button class="btn btn-secondary border-0" disabled>
+                <i class="bi bi-x-circle me-2"></i>Out of Stock
+              </button>
+              {% endif %}
+            </div>
+
+            <!-- Stock & GST Info -->
+            <div class="small text-muted mt-2">
+              {% if product.stock_quantity and product.stock_quantity <= product.low_stock_threshold %}
+              <div class="text-warning mb-1">
+                <i class="bi bi-exclamation-triangle"></i> Only {{ product.stock_quantity }} left!
+              </div>
+              {% endif %}
+              <div>
+                <i class="bi bi-receipt"></i> GST: {{ product.gst_rate }}% inclusive
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <!-- Empty State -->
+    <div class="col-12">
+      <div class="text-center py-5">
+        <div class="mb-3">
+          <i class="bi bi-inbox display-1 text-muted"></i>
+        </div>
+        <h3 class="text-muted">No Products Found</h3>
+        <p class="text-muted mb-3">There are no products available in this category at the moment.</p>
+        <div class="d-flex justify-content-center gap-2">
+          <a href="{{ url_for('shop.products') }}" class="btn btn-dark">Browse All Products</a>
+          <a href="{{ url_for('shop.index') }}" class="btn btn-outline-dark">Go Home</a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</section>
+
+<!-- Subcategories Section (if any) -->
+{% if category.children %}
+<section class="subcategories-section section bg-light py-5">
+  <div class="container">
+    <h3 class="section-title mb-4">Subcategories</h3>
+    <div class="row g-4">
+      {% for subcategory in category.children %}
+      {% if subcategory.is_active %}
+      <div class="col-lg-3 col-md-4 col-sm-6">
+        <div class="card border-0 shadow-sm h-100" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.category', slug=subcategory.slug) }}'">
+          <div class="card-body text-center p-4">
+            {% if subcategory.image_url %}
+            <img src="{{ subcategory.image_url }}" alt="{{ subcategory.name }}" class="img-fluid mb-3" style="height: 80px; object-fit: contain;">
+            {% else %}
+            <div class="bg-secondary rounded-circle d-inline-flex align-items-center justify-content-center mb-3" style="width: 80px; height: 80px;">
+              <i class="bi bi-folder text-white fs-2"></i>
+            </div>
+            {% endif %}
+            <h5 class="card-title">{{ subcategory.name }}</h5>
+            <p class="card-text text-muted small">{{ subcategory.products|length if subcategory.products else 0 }} products</p>
+            <a href="{{ url_for('shop.category', slug=subcategory.slug) }}" class="btn btn-sm btn-outline-dark">Explore</a>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/category_details.js') }}"></script>
+{% endblock %}

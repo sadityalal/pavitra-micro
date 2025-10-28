@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}FAQ - NiceShop Bootstrap Template{% endblock %}
+
+{% block content %}
+  <!-- Page Title -->
+  <div class="page-title light-background">
+    <div class="container d-lg-flex justify-content-between align-items-center">
+      <h1 class="mb-2 mb-lg-0">FAQ</h1>
+      <nav class="breadcrumbs">
+        <ol>
+          <li><a href="{{ url_for('shop.index') }}">Home</a></li>
+          <li class="current">FAQ</li>
+        </ol>
+      </nav>
+    </div>
+  </div><!-- End Page Title -->
+
+  <!-- Faq Section -->
+  <section id="faq" class="faq section">
+
+    <div class="container" data-aos="fade-up" data-aos-delay="100">
+
+      <div class="row gy-4 justify-content-between">
+        <div class="col-lg-8">
+
+          <div class="faq-list">
+            <div class="faq-item faq-active" data-aos="fade-up" data-aos-delay="100">
+              <h3>Vivamus suscipit tortor eget felis porttitor volutpat?</h3>
+              <div class="faq-content">
+                <p>
+                  Nulla quis lorem ut libero malesuada feugiat. Vestibulum ac diam sit amet quam vehicula elementum sed sit amet dui. Curabitur aliquet quam id dui posuere blandit. Nulla porttitor accumsan tincidunt.
+                </p>
+              </div>
+              <i class="bi bi-plus faq-toggle"></i>
+            </div><!-- End FAQ Item-->
+
+            <div class="faq-item" data-aos="fade-up" data-aos-delay="200">
+              <h3>Curabitur aliquet quam id dui posuere blandit?</h3>
+              <div class="faq-content">
+                <p>
+                  Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Donec velit neque, auctor sit amet aliquam vel, ullamcorper sit amet ligula. Proin eget tortor risus. Mauris blandit aliquet elit, eget tincidunt nibh pulvinar.
+                </p>
+              </div>
+              <i class="bi bi-plus faq-toggle"></i>
+            </div><!-- End FAQ Item-->
+
+            <div class="faq-item" data-aos="fade-up" data-aos-delay="300">
+              <h3>Sed porttitor lectus nibh ullamcorper sit amet?</h3>
+              <div class="faq-content">
+                <p>
+                  Curabitur non nulla sit amet nisl tempus convallis quis ac lectus. Praesent sapien massa, convallis a pellentesque nec, egestas non nisi. Donec sollicitudin molestie malesuada. Vestibulum ac diam sit amet quam vehicula elementum.
+                </p>
+              </div>
+              <i class="bi bi-plus faq-toggle"></i>
+            </div><!-- End FAQ Item-->
+
+            <div class="faq-item" data-aos="fade-up" data-aos-delay="400">
+              <h3>Nulla quis lorem ut libero malesuada feugiat?</h3>
+              <div class="faq-content">
+                <p>
+                  Donec sollicitudin molestie malesuada. Quisque velit nisi, pretium ut lacinia in, elementum id enim. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Donec velit neque, auctor sit amet aliquam vel.
+                </p>
+              </div>
+              <i class="bi bi-plus faq-toggle"></i>
+            </div><!-- End FAQ Item-->
+
+            <div class="faq-item" data-aos="fade-up" data-aos-delay="500">
+              <h3>Vestibulum ac diam sit amet quam vehicula elementum?</h3>
+              <div class="faq-content">
+                <p>
+                  Praesent sapien massa, convallis a pellentesque nec, egestas non nisi. Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Donec velit neque, auctor sit amet aliquam vel, ullamcorper sit amet ligula.
+                </p>
+              </div>
+              <i class="bi bi-plus faq-toggle"></i>
+            </div><!-- End FAQ Item-->
+
+          </div>
+
+        </div>
+
+        <div class="col-lg-4" data-aos="fade-up" data-aos-delay="200">
+          <div class="faq-card">
+            <i class="bi bi-chat-dots-fill"></i>
+            <h3>Can't find answer to your question?</h3>
+            <p>Vestibulum ante ipsum primis in faucibus orci luctus et ultrices posuere cubilia Curae; Donec velit neque, auctor sit amet aliquam vel, ullamcorper sit amet ligula. Vestibulum ac diam sit amet quam vehicula elementum sed sit amet dui. Curabitur aliquet quam id dui posuere blandit. Nulla quis lorem ut libero malesuada feugiat.</p>
+            <a href="{{ url_for('shop.contact') }}" class="btn btn-primary">Contact Us</a>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </section><!-- /Faq Section -->
+{% endblock %}
+
+{% block scripts %}
+<!-- Additional FAQ-specific scripts can go here -->
+<script>
+// FAQ toggle functionality
+document.addEventListener('DOMContentLoaded', function() {
+  const faqItems = document.querySelectorAll('.faq-item');
+  
+  faqItems.forEach(item => {
+    const toggle = item.querySelector('.faq-toggle');
+    const content = item.querySelector('.faq-content');
+    
+    toggle.addEventListener('click', function() {
+      // Toggle active class on the item
+      item.classList.toggle('faq-active');
+      
+      // Toggle icon
+      if (item.classList.contains('faq-active')) {
+        toggle.classList.remove('bi-plus');
+        toggle.classList.add('bi-dash');
+      } else {
+        toggle.classList.remove('bi-dash');
+        toggle.classList.add('bi-plus');
+      }
+    });
+  });
+});
+</script>
+{% endblock %}

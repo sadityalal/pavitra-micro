@@ -1,0 +1,687 @@
+{% extends "base.html" %}
+
+{% block title %}Home - Pavitra Enterprises{% endblock %}
+{% block description %}Discover amazing products at Pavitra Enterprises. Shop electronics, clothing, home goods and more with fast shipping and great prices.{% endblock %}
+{% block keywords %}shopping, ecommerce, electronics, clothing, home goods, pavitra enterprises, best sellers, featured products{% endblock %}
+
+{% block content %}
+<!-- Hero Section -->
+<section id="hero" class="hero section">
+  <div class="hero-container">
+    <div class="hero-content">
+      <div class="content-wrapper" data-aos="fade-up" data-aos-delay="100">
+        <h1 class="hero-title">Welcome to Pavitra Enterprises</h1>
+        <p class="hero-description">Discover our curated collection of premium products designed to enhance your lifestyle. From electronics to fashion, find everything you need with exclusive deals and fast shipping.</p>
+        <div class="hero-actions" data-aos="fade-up" data-aos-delay="200">
+          <a href="{{ url_for('shop.products') }}" class="btn-primary">Shop Now</a>
+          <a href="{{ url_for('shop.products') }}?featured=true" class="btn-secondary">Featured Products</a>
+        </div>
+        <div class="features-list" data-aos="fade-up" data-aos-delay="300">
+          <div class="feature-item">
+            <i class="bi bi-truck"></i>
+            <span>Free Shipping Over {{ currency_symbol }}{{ site_settings.free_shipping_threshold|default('999') }}</span>
+          </div>
+          <div class="feature-item">
+            <i class="bi bi-arrow-clockwise"></i>
+            <span>{{ site_settings.return_period_days|default('10') }}-Day Returns</span>
+          </div>
+          <div class="feature-item">
+            <i class="bi bi-shield-check"></i>
+            <span>Secure Payment</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="hero-visuals">
+      <div class="product-showcase" data-aos="fade-left" data-aos-delay="200">
+        {% if featured_products and featured_products[0] %}
+        <div class="product-card featured" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.product_detail', slug=featured_products[0].slug) }}'">
+          <img src="{{ featured_products[0].main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+               alt="{{ featured_products[0].name }}" class="img-fluid">
+          <div class="product-badge">Best Seller</div>
+          <div class="product-info">
+            <h4>
+              <a href="{{ url_for('shop.product_detail', slug=featured_products[0].slug) }}" onclick="event.stopPropagation()">{{ featured_products[0].name }}</a>
+            </h4>
+            <div class="price">
+              <span class="sale-price">{{ currency_symbol }}{{ "%.2f"|format(featured_products[0].base_price|float) }}</span>
+              {% if featured_products[0].compare_price and featured_products[0].compare_price > featured_products[0].base_price %}
+              <span class="original-price">{{ currency_symbol }}{{ "%.2f"|format(featured_products[0].compare_price|float) }}</span>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <!-- Fallback when no featured products -->
+        <div class="product-card featured" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+          <img src="{{ url_for('static', filename='img/product/placeholder.jpg') }}"
+               alt="Featured Product" class="img-fluid">
+          <div class="product-badge">Coming Soon</div>
+          <div class="product-info">
+            <h4>
+              <a href="{{ url_for('shop.products') }}" onclick="event.stopPropagation()">New Arrivals Coming Soon</a>
+            </h4>
+            <div class="price">
+              <span class="sale-price">{{ currency_symbol }}0.00</span>
+            </div>
+          </div>
+        </div>
+        {% endif %}
+
+        <div class="product-grid">
+          {% if featured_products and featured_products[1] %}
+          <div class="product-mini" data-aos="zoom-in" data-aos-delay="400" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.product_detail', slug=featured_products[1].slug) }}'">
+            <img src="{{ featured_products[1].main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                 alt="{{ featured_products[1].name }}" class="img-fluid">
+            <span class="mini-price">{{ currency_symbol }}{{ "%.2f"|format(featured_products[1].base_price|float) }}</span>
+          </div>
+          {% else %}
+          <div class="product-mini" data-aos="zoom-in" data-aos-delay="400" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+            <img src="{{ url_for('static', filename='img/product/placeholder.jpg') }}"
+                 alt="Product" class="img-fluid">
+            <span class="mini-price">{{ currency_symbol }}0.00</span>
+          </div>
+          {% endif %}
+
+          {% if featured_products and featured_products[2] %}
+          <div class="product-mini" data-aos="zoom-in" data-aos-delay="500" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.product_detail', slug=featured_products[2].slug) }}'">
+            <img src="{{ featured_products[2].main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                 alt="{{ featured_products[2].name }}" class="img-fluid">
+            <span class="mini-price">{{ currency_symbol }}{{ "%.2f"|format(featured_products[2].base_price|float) }}</span>
+          </div>
+          {% else %}
+          <div class="product-mini" data-aos="zoom-in" data-aos-delay="500" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+            <img src="{{ url_for('static', filename='img/product/placeholder.jpg') }}"
+                 alt="Product" class="img-fluid">
+            <span class="mini-price">{{ currency_symbol }}0.00</span>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="floating-elements">
+          <!-- Floating Cart Icon -->
+          <div class="floating-icon cart" data-aos="fade-up" data-aos-delay="600" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.cart') }}'">
+            <i class="bi bi-cart3"></i>
+            <span class="notification-dot">{{ cart_count|default(0) }}</span>
+          </div>
+
+          <!-- Floating Wishlist Icon -->
+          <div class="floating-icon wishlist" data-aos="fade-up" data-aos-delay="700" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.account', tab='wishlist') if current_user.is_authenticated else url_for('auth.login') }}'">
+            <i class="bi bi-heart"></i>
+          </div>
+
+          <!-- Floating Search Icon -->
+          <div class="floating-icon search" data-aos="fade-up" data-aos-delay="800" style="cursor: pointer;" onclick="toggleSearch()">
+            <i class="bi bi-search"></i>
+          </div>
+        </div>
+    </div>
+  </div>
+</section><!-- /Hero Section -->
+
+<!-- Promo Cards Section -->
+<section id="promo-cards" class="promo-cards section">
+  <div class="container" data-aos="fade-up" data-aos-delay="100">
+    <div class="row gy-4">
+
+      <div class="col-lg-6">
+        <div class="category-featured" data-aos="fade-right" data-aos-delay="200">
+          {% if categories and categories[0] %}
+          <div class="category-image" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.category', slug=categories[0].slug) }}'">
+            <img src="{{ categories[0].image_url or url_for('static', filename='img/categories/placeholder.jpg') }}"
+                 alt="{{ categories[0].name }}" class="img-fluid">
+          </div>
+          <div class="category-content">
+            <span class="category-tag">Trending Now</span>
+            <h2>{{ categories[0].name }} Collection</h2>
+            <p>{{ categories[0].description|default('Discover our latest arrivals designed for the modern lifestyle.', true) }}</p>
+            <a href="{{ url_for('shop.category', slug=categories[0].slug) }}" class="btn-shop">
+              Explore Collection <i class="bi bi-arrow-right"></i>
+            </a>
+          </div>
+          {% else %}
+          <!-- Fallback when no categories -->
+          <div class="category-image" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+            <img src="{{ url_for('static', filename='img/categories/placeholder.jpg') }}"
+                 alt="Categories" class="img-fluid">
+          </div>
+          <div class="category-content">
+            <span class="category-tag">Coming Soon</span>
+            <h2>New Collections</h2>
+            <p>Exciting new categories coming soon to Pavitra Enterprises.</p>
+            <a href="{{ url_for('shop.products') }}" class="btn-shop">
+              Browse Products <i class="bi bi-arrow-right"></i>
+            </a>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+
+      <div class="col-lg-6">
+        <div class="row gy-4">
+          {% for category in categories[1:5] if categories and categories|length > 1 %}
+          <div class="col-xl-6">
+            <div class="category-card cat-{{ category.slug }}" data-aos="fade-up" data-aos-delay="{{ 300 + loop.index0 * 100 }}" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.category', slug=category.slug) }}'">
+              <div class="category-image">
+                <img src="{{ category.image_url or url_for('static', filename='img/categories/placeholder.jpg') }}"
+                     alt="{{ category.name }}" class="img-fluid">
+              </div>
+              <div class="category-content">
+                <h4>{{ category.name }}</h4>
+                <p>{{ category.products|length if category.products else 0 }} products</p>
+                <a href="{{ url_for('shop.category', slug=category.slug) }}" class="card-link" onclick="event.stopPropagation()">
+                  Shop Now <i class="bi bi-arrow-right"></i>
+                </a>
+              </div>
+            </div>
+          </div>
+          {% else %}
+          <!-- Fallback when no additional categories -->
+          {% for i in range(4) %}
+          <div class="col-xl-6">
+            <div class="category-card" data-aos="fade-up" data-aos-delay="{{ 300 + loop.index0 * 100 }}" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+              <div class="category-image">
+                <img src="{{ url_for('static', filename='img/categories/placeholder.jpg') }}"
+                     alt="Category {{ loop.index }}" class="img-fluid">
+              </div>
+              <div class="category-content">
+                <h4>Category {{ loop.index + 1 }}</h4>
+                <p>0 products</p>
+                <a href="{{ url_for('shop.products') }}" class="card-link" onclick="event.stopPropagation()">
+                  Coming Soon <i class="bi bi-arrow-right"></i>
+                </a>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+          {% endfor %}
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section><!-- /Promo Cards Section -->
+
+<!-- Best Sellers Section -->
+<section id="best-sellers" class="best-sellers section">
+  <!-- Section Title -->
+  <div class="container section-title" data-aos="fade-up">
+    <h2>Best Sellers</h2>
+    <p>Our most popular products loved by customers</p>
+  </div><!-- End Section Title -->
+
+  <div class="container" data-aos="fade-up" data-aos-delay="100">
+    <div class="row g-5">
+      {% for product in featured_products[:4] if featured_products %}
+      <div class="col-lg-3 col-md-6">
+        <div class="product-item" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.product_detail', slug=product.slug) }}'">
+          <div class="product-image">
+            {% if product.compare_price and product.compare_price > product.base_price %}
+            <div class="product-badge sale-badge">{{ ((1 - product.base_price / product.compare_price) * 100)|round|int }}% Off</div>
+            {% elif product.is_featured %}
+            <div class="product-badge">Featured</div>
+            {% endif %}
+
+            <img src="{{ product.main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                 alt="{{ product.name }}" class="img-fluid" loading="lazy">
+
+            <div class="product-actions" onclick="event.stopPropagation()">
+              {% if current_user.is_authenticated %}
+              <button class="action-btn wishlist-btn" onclick="ProductInteractions.addToWishlist({{ product.id }}, this)">
+                <i class="bi bi-heart"></i>
+              </button>
+              {% else %}
+              <button class="action-btn wishlist-btn" onclick="ProductInteractions.showLoginAlert(event)">
+                <i class="bi bi-heart"></i>
+              </button>
+              {% endif %}
+              <a href="{{ url_for('shop.product_detail', slug=product.slug) }}" class="action-btn quickview-btn">
+                <i class="bi bi-eye"></i>
+              </a>
+            </div>
+
+            {% if product.stock_quantity and product.stock_quantity > 0 %}
+            <button class="cart-btn" onclick="event.stopPropagation(); ProductInteractions.addToCart({{ product.id }}, this)">Add to Cart</button>
+            {% else %}
+            <button class="cart-btn" disabled>Out of Stock</button>
+            {% endif %}
+          </div>
+
+          <div class="product-info">
+            <div class="product-category">{{ product.category.name if product.category else 'Uncategorized' }}</div>
+            <h4 class="product-name">
+              <a href="{{ url_for('shop.product_detail', slug=product.slug) }}" onclick="event.stopPropagation()">{{ product.name }}</a>
+            </h4>
+
+            <div class="product-rating">
+              <div class="stars">
+                {% set avg_rating = product.get_average_rating() or 0 %}
+                {% for i in range(5) %}
+                  {% if i < avg_rating|int %}
+                    <i class="bi bi-star-fill"></i>
+                  {% else %}
+                    <i class="bi bi-star"></i>
+                  {% endif %}
+                {% endfor %}
+              </div>
+              <span class="rating-count">({{ product.get_review_count() or 0 }})</span>
+            </div>
+
+            <div class="product-price">
+              {% if product.compare_price and product.compare_price > product.base_price %}
+              <span class="old-price">{{ currency_symbol }}{{ "%.2f"|format(product.compare_price|float) }}</span>
+              {% endif %}
+              <span class="current-price">{{ currency_symbol }}{{ "%.2f"|format(product.base_price|float) }}</span>
+            </div>
+
+            {% if product.stock_quantity and product.stock_quantity <= product.low_stock_threshold %}
+            <div class="stock-info">
+              <small class="text-warning">Only {{ product.stock_quantity }} left!</small>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% else %}
+      <!-- Fallback when no best sellers -->
+      {% for i in range(4) %}
+      <div class="col-lg-3 col-md-6">
+        <div class="product-item" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+          <div class="product-image">
+            <img src="{{ url_for('static', filename='img/product/placeholder.jpg') }}"
+                 alt="Product {{ loop.index }}" class="img-fluid" loading="lazy">
+            <div class="product-actions" onclick="event.stopPropagation()">
+              <a href="{{ url_for('shop.products') }}" class="action-btn quickview-btn">
+                <i class="bi bi-eye"></i>
+              </a>
+            </div>
+            <button class="cart-btn" onclick="event.stopPropagation(); window.location.href='{{ url_for('shop.products') }}'">View Products</button>
+          </div>
+          <div class="product-info">
+            <div class="product-category">Coming Soon</div>
+            <h4 class="product-name">
+              <a href="{{ url_for('shop.products') }}" onclick="event.stopPropagation()">Product {{ loop.index }}</a>
+            </h4>
+            <div class="product-rating">
+              <div class="stars">
+                {% for i in range(5) %}
+                  <i class="bi bi-star"></i>
+                {% endfor %}
+              </div>
+              <span class="rating-count">(0)</span>
+            </div>
+            <div class="product-price">
+              <span class="current-price">{{ currency_symbol }}0.00</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      {% endfor %}
+    </div>
+
+    <div class="text-center mt-5" data-aos="fade-up" data-aos-delay="200">
+      <a href="{{ url_for('shop.products') }}" class="btn btn-outline-primary">View All Products</a>
+    </div>
+  </div>
+</section><!-- /Best Sellers Section -->
+
+<!-- Cards Section -->
+<section id="cards" class="cards section">
+  <div class="container" data-aos="fade-up" data-aos-delay="100">
+    <div class="row gy-4">
+
+      <!-- Featured Items -->
+      <div class="col-lg-4 col-md-6 mb-5 mb-md-0" data-aos="fade-up" data-aos-delay="200">
+        <div class="product-category">
+          <h3 class="category-title">
+            <i class="bi bi-star"></i> Featured Items
+          </h3>
+          <div class="product-list">
+            {% for product in featured_products[:3] if featured_products %}
+            <div class="product-card" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.product_detail', slug=product.slug) }}'">
+              <div class="product-image">
+                <img src="{{ product.main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                     alt="{{ product.name }}" class="img-fluid">
+                {% if product.is_featured %}
+                <div class="product-badges">
+                  <span class="badge-featured">Featured</span>
+                </div>
+                {% endif %}
+              </div>
+              <div class="product-info">
+                <h4 class="product-name">
+                  <a href="{{ url_for('shop.product_detail', slug=product.slug) }}" onclick="event.stopPropagation()">{{ product.name }}</a>
+                </h4>
+                <div class="product-rating">
+                  <div class="stars">
+                    {% set avg_rating = product.get_average_rating() or 0 %}
+                    {% for i in range(5) %}
+                      {% if i < avg_rating|int %}
+                        <i class="bi bi-star-fill"></i>
+                      {% else %}
+                        <i class="bi bi-star"></i>
+                      {% endif %}
+                    {% endfor %}
+                  </div>
+                  <span>({{ product.get_review_count() or 0 }})</span>
+                </div>
+                <div class="product-price">
+                  <span class="current-price">{{ currency_symbol }}{{ "%.2f"|format(product.base_price|float) }}</span>
+                </div>
+              </div>
+            </div>
+            {% else %}
+            {% for i in range(3) %}
+            <div class="product-card" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+              <div class="product-image">
+                <img src="{{ url_for('static', filename='img/product/placeholder.jpg') }}"
+                     alt="Product {{ loop.index }}" class="img-fluid">
+              </div>
+              <div class="product-info">
+                <h4 class="product-name">
+                  <a href="{{ url_for('shop.products') }}" onclick="event.stopPropagation()">Featured Product {{ loop.index }}</a>
+                </h4>
+                <div class="product-rating">
+                  <div class="stars">
+                    {% for i in range(5) %}
+                      <i class="bi bi-star"></i>
+                    {% endfor %}
+                  </div>
+                  <span>(0)</span>
+                </div>
+                <div class="product-price">
+                  <span class="current-price">{{ currency_symbol }}0.00</span>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Trending Now -->
+      <div class="col-lg-4 col-md-6 mb-5 mb-md-0" data-aos="fade-up" data-aos-delay="300">
+        <div class="product-category">
+          <h3 class="category-title">
+            <i class="bi bi-fire"></i> Trending Now
+          </h3>
+          <div class="product-list">
+            {% for product in new_arrivals[:3] if new_arrivals %}
+            <div class="product-card" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.product_detail', slug=product.slug) }}'">
+              <div class="product-image">
+                <img src="{{ product.main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                     alt="{{ product.name }}" class="img-fluid">
+                <div class="product-badges">
+                  <span class="badge-new">New</span>
+                </div>
+              </div>
+              <div class="product-info">
+                <h4 class="product-name">
+                  <a href="{{ url_for('shop.product_detail', slug=product.slug) }}" onclick="event.stopPropagation()">{{ product.name }}</a>
+                </h4>
+                <div class="product-rating">
+                  <div class="stars">
+                    {% set avg_rating = product.get_average_rating() or 0 %}
+                    {% for i in range(5) %}
+                      {% if i < avg_rating|int %}
+                        <i class="bi bi-star-fill"></i>
+                      {% else %}
+                        <i class="bi bi-star"></i>
+                      {% endif %}
+                    {% endfor %}
+                  </div>
+                  <span>({{ product.get_review_count() or 0 }})</span>
+                </div>
+                <div class="product-price">
+                  <span class="current-price">{{ currency_symbol }}{{ "%.2f"|format(product.base_price|float) }}</span>
+                </div>
+              </div>
+            </div>
+            {% else %}
+            {% for i in range(3) %}
+            <div class="product-card" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+              <div class="product-image">
+                <img src="{{ url_for('static', filename='img/product/placeholder.jpg') }}"
+                     alt="Product {{ loop.index }}" class="img-fluid">
+                <div class="product-badges">
+                  <span class="badge-new">New</span>
+                </div>
+              </div>
+              <div class="product-info">
+                <h4 class="product-name">
+                  <a href="{{ url_for('shop.products') }}" onclick="event.stopPropagation()">New Arrival {{ loop.index }}</a>
+                </h4>
+                <div class="product-rating">
+                  <div class="stars">
+                    {% for i in range(5) %}
+                      <i class="bi bi-star"></i>
+                    {% endfor %}
+                  </div>
+                  <span>(0)</span>
+                </div>
+                <div class="product-price">
+                  <span class="current-price">{{ currency_symbol }}0.00</span>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Best Sellers -->
+      <div class="col-lg-4 col-md-6 mb-5 mb-md-0" data-aos="fade-up" data-aos-delay="400">
+        <div class="product-category">
+          <h3 class="category-title">
+            <i class="bi bi-award"></i> Best Sellers
+          </h3>
+          <div class="product-list">
+            {% for product in featured_products[4:7] if featured_products and featured_products|length > 4 %}
+            <div class="product-card" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.product_detail', slug=product.slug) }}'">
+              <div class="product-image">
+                <img src="{{ product.main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                     alt="{{ product.name }}" class="img-fluid">
+                {% if product.compare_price and product.compare_price > product.base_price %}
+                <div class="product-badges">
+                  <span class="badge-sale">-{{ ((1 - product.base_price / product.compare_price) * 100)|round|int }}%</span>
+                </div>
+                {% endif %}
+              </div>
+              <div class="product-info">
+                <h4 class="product-name">
+                  <a href="{{ url_for('shop.product_detail', slug=product.slug) }}" onclick="event.stopPropagation()">{{ product.name }}</a>
+                </h4>
+                <div class="product-rating">
+                  <div class="stars">
+                    {% set avg_rating = product.get_average_rating() or 0 %}
+                    {% for i in range(5) %}
+                      {% if i < avg_rating|int %}
+                        <i class="bi bi-star-fill"></i>
+                      {% else %}
+                        <i class="bi bi-star"></i>
+                      {% endif %}
+                    {% endfor %}
+                  </div>
+                  <span>({{ product.get_review_count() or 0 }})</span>
+                </div>
+                <div class="product-price">
+                  {% if product.compare_price and product.compare_price > product.base_price %}
+                  <span class="current-price">{{ currency_symbol }}{{ "%.2f"|format(product.base_price|float) }}</span>
+                  <span class="old-price">{{ currency_symbol }}{{ "%.2f"|format(product.compare_price|float) }}</span>
+                  {% else %}
+                  <span class="current-price">{{ currency_symbol }}{{ "%.2f"|format(product.base_price|float) }}</span>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+            {% else %}
+            {% for i in range(3) %}
+            <div class="product-card" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+              <div class="product-image">
+                <img src="{{ url_for('static', filename='img/product/placeholder.jpg') }}"
+                     alt="Product {{ loop.index }}" class="img-fluid">
+              </div>
+              <div class="product-info">
+                <h4 class="product-name">
+                  <a href="{{ url_for('shop.products') }}" onclick="event.stopPropagation()">Best Seller {{ loop.index }}</a>
+                </h4>
+                <div class="product-rating">
+                  <div class="stars">
+                    {% for i in range(5) %}
+                      <i class="bi bi-star"></i>
+                    {% endfor %}
+                  </div>
+                  <span>(0)</span>
+                </div>
+                <div class="product-price">
+                  <span class="current-price">{{ currency_symbol }}0.00</span>
+                </div>
+              </div>
+            </div>
+            {% endfor %}
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</section><!-- /Cards Section -->
+
+<!-- Call To Action Section -->
+<section id="call-to-action" class="call-to-action section">
+  <div class="container" data-aos="fade-up" data-aos-delay="100">
+    <div class="row">
+      <div class="col-lg-8 mx-auto">
+        <div class="main-content text-center" data-aos="zoom-in" data-aos-delay="200">
+          <div class="offer-badge" data-aos="fade-down" data-aos-delay="250">
+            <span class="limited-time">Limited Time</span>
+            <span class="offer-text">50% OFF</span>
+          </div>
+
+          <h2 data-aos="fade-up" data-aos-delay="300">Exclusive Flash Sale</h2>
+
+          <p class="subtitle" data-aos="fade-up" data-aos-delay="350">Don't miss out on our biggest sale of the year. Premium quality products at unbeatable prices for the next 48 hours only.</p>
+
+          <div class="action-buttons" data-aos="fade-up" data-aos-delay="450">
+            <a href="{{ url_for('shop.products') }}" class="btn-shop-now">Shop Now</a>
+            <a href="{{ url_for('shop.products') }}" class="btn-view-deals">View All Deals</a>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="row featured-products-row" data-aos="fade-up" data-aos-delay="500">
+      {% for product in featured_products[3:7] if featured_products and featured_products|length > 3 %}
+      <div class="col-lg-3 col-md-6" data-aos="zoom-in" data-aos-delay="{{ 100 + loop.index0 * 50 }}">
+        <div class="product-showcase" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.product_detail', slug=product.slug) }}'">
+          <div class="product-image">
+            <img src="{{ product.main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                 alt="{{ product.name }}" class="img-fluid">
+            {% if product.compare_price and product.compare_price > product.base_price %}
+            <div class="discount-badge">-{{ ((1 - product.base_price / product.compare_price) * 100)|round|int }}%</div>
+            {% endif %}
+          </div>
+          <div class="product-details">
+            <h6>
+              <a href="{{ url_for('shop.product_detail', slug=product.slug) }}" onclick="event.stopPropagation()">{{ product.name }}</a>
+            </h6>
+            <div class="price-section">
+              {% if product.compare_price and product.compare_price > product.base_price %}
+              <span class="original-price">{{ currency_symbol }}{{ "%.2f"|format(product.compare_price|float) }}</span>
+              {% endif %}
+              <span class="sale-price">{{ currency_symbol }}{{ "%.2f"|format(product.base_price|float) }}</span>
+            </div>
+            <div class="rating-stars">
+              <div class="stars">
+                {% set avg_rating = product.get_average_rating() or 0 %}
+                {% for i in range(5) %}
+                  {% if i < avg_rating|int %}
+                    <i class="bi bi-star-fill"></i>
+                  {% else %}
+                    <i class="bi bi-star"></i>
+                  {% endif %}
+                {% endfor %}
+              </div>
+              <span class="rating-count">({{ product.get_review_count() or 0 }})</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% else %}
+      {% for i in range(4) %}
+      <div class="col-lg-3 col-md-6" data-aos="zoom-in" data-aos-delay="{{ 100 + loop.index0 * 50 }}">
+        <div class="product-showcase" style="cursor: pointer;" onclick="window.location.href='{{ url_for('shop.products') }}'">
+          <div class="product-image">
+            <img src="{{ url_for('static', filename='img/product/placeholder.jpg') }}"
+                 alt="Product {{ loop.index }}" class="img-fluid">
+          </div>
+          <div class="product-details">
+            <h6>
+              <a href="{{ url_for('shop.products') }}" onclick="event.stopPropagation()">Featured Product {{ loop.index }}</a>
+            </h6>
+            <div class="price-section">
+              <span class="sale-price">{{ currency_symbol }}0.00</span>
+            </div>
+            <div class="rating-stars">
+              <div class="stars">
+                {% for i in range(5) %}
+                  <i class="bi bi-star"></i>
+                {% endfor %}
+              </div>
+              <span class="rating-count">(0)</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+      {% endfor %}
+    </div>
+  </div>
+</section><!-- /Call To Action Section -->
+
+<!-- Features Section -->
+<section id="features" class="cards section">
+  <div class="container" data-aos="fade-up" data-aos-delay="100">
+    <div class="row g-4">
+      <div class="col-lg-3 col-md-6 text-center">
+        <div class="feature-icon mb-3">
+          <i class="bi bi-truck display-6 text-primary"></i>
+        </div>
+        <h4>Free Shipping</h4>
+        <p class="text-muted">Free shipping on orders over {{ currency_symbol }}{{ site_settings.free_shipping_threshold|default('999') }}</p>
+      </div>
+      <div class="col-lg-3 col-md-6 text-center">
+        <div class="feature-icon mb-3">
+          <i class="bi bi-arrow-clockwise display-6 text-primary"></i>
+        </div>
+        <h4>Easy Returns</h4>
+        <p class="text-muted">{{ site_settings.return_period_days|default('10') }}-day return policy</p>
+      </div>
+      <div class="col-lg-3 col-md-6 text-center">
+        <div class="feature-icon mb-3">
+          <i class="bi bi-shield-check display-6 text-primary"></i>
+        </div>
+        <h4>Secure Payment</h4>
+        <p class="text-muted">Your payment information is safe with us</p>
+      </div>
+      <div class="col-lg-3 col-md-6 text-center">
+        <div class="feature-icon mb-3">
+          <i class="bi bi-headset display-6 text-primary"></i>
+        </div>
+        <h4>24/7 Support</h4>
+        <p class="text-muted">Round-the-clock customer support</p>
+      </div>
+    </div>
+  </div>
+</section><!-- /Features Section -->
+{% endblock %}
+
+{% block scripts %}
+<!-- Only page-specific scripts, initialization is handled by init.js -->
+<script src="{{ url_for('static', filename='js/mainindex.js') }}"></script>
+{% endblock %}

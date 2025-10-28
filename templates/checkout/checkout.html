@@ -1,0 +1,402 @@
+{% extends "base.html" %}
+
+{% block title %}Checkout - Pavitra Enterprises{% endblock %}
+
+{% block content %}
+<!-- Page Title -->
+<div class="page-title light-background">
+  <div class="container d-lg-flex justify-content-between align-items-center py-3">
+    <h1 class="mb-2 mb-lg-0">Checkout</h1>
+    <nav class="breadcrumbs">
+      <ol>
+        <li><a href="{{ url_for('shop.index') }}">Home</a></li>
+        <li class="current">Checkout</li>
+      </ol>
+    </nav>
+  </div>
+</div><!-- End Page Title -->
+
+<!-- Checkout Section -->
+<section id="checkout" class="checkout section">
+  <div class="container" data-aos="fade-up" data-aos-delay="100">
+    {% if cart_items %}
+    <div class="row">
+      <div class="col-lg-7">
+        <!-- Checkout Form -->
+        <div class="checkout-container" data-aos="fade-up">
+          <form class="checkout-form" action="{{ url_for('shop.process_checkout') }}" method="post" id="checkoutForm">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+            <!-- Address Selection -->
+            <div class="checkout-section" id="address-selection">
+              <div class="section-header">
+                <div class="section-number">1</div>
+                <h3>Select Address</h3>
+              </div>
+              <div class="section-content">
+                {% if user_addresses %}
+                <div class="address-options">
+                  {% for address in user_addresses %}
+                  <div class="form-check mb-3">
+                    <input class="form-check-input" type="radio" name="shipping_address_id"
+                           id="address-{{ address.id }}" value="{{ address.id }}"
+                           {% if address.is_default or (default_address and address.id == default_address.id) %}checked{% endif %}
+                           required data-address-type="shipping">
+                    <label class="form-check-label w-100" for="address-{{ address.id }}">
+                      <div class="address-card p-3 border rounded">
+                        <h6 class="mb-1">{{ address.full_name }}</h6>
+                        <p class="mb-1 small">{{ address.address_line1 }}</p>
+                        {% if address.address_line2 %}
+                        <p class="mb-1 small">{{ address.address_line2 }}</p>
+                        {% endif %}
+                        {% if address.landmark %}
+                        <p class="mb-1 small">Landmark: {{ address.landmark }}</p>
+                        {% endif %}
+                        <p class="mb-1 small">{{ address.city }}, {{ address.state }} - {{ address.postal_code }}</p>
+                        <p class="mb-1 small">{{ address.country }}</p>
+                        <p class="mb-0 small">Phone: {{ address.country_code }} {{ address.phone }}</p>
+                        {% if address.is_default %}
+                        <span class="badge bg-primary mt-1">Default</span>
+                        {% endif %}
+                      </div>
+                    </label>
+                  </div>
+                  {% endfor %}
+                </div>
+
+                <!-- Billing Address Toggle -->
+                <div class="form-check mb-3">
+                  <input class="form-check-input" type="checkbox" id="billing-same" name="billing_same" checked>
+                  <label class="form-check-label" for="billing-same">
+                    Billing address same as shipping
+                  </label>
+                </div>
+
+                <!-- Billing Address Selection (Hidden by default) -->
+                <div class="billing-address-section d-none mt-3">
+                  <h6 class="mb-3">Select Billing Address</h6>
+                  <div class="address-options">
+                    {% for address in user_addresses %}
+                    <div class="form-check mb-3">
+                      <input class="form-check-input" type="radio" name="billing_address_id"
+                             id="billing-address-{{ address.id }}" value="{{ address.id }}"
+                             {% if address.is_default %}checked{% endif %} data-address-type="billing">
+                      <label class="form-check-label w-100" for="billing-address-{{ address.id }}">
+                        <div class="address-card p-3 border rounded">
+                          <h6 class="mb-1">{{ address.full_name }}</h6>
+                          <p class="mb-1 small">{{ address.address_line1 }}</p>
+                          {% if address.address_line2 %}
+                          <p class="mb-1 small">{{ address.address_line2 }}</p>
+                          {% endif %}
+                          <p class="mb-1 small">{{ address.city }}, {{ address.state }} - {{ address.postal_code }}</p>
+                          <p class="mb-1 small">{{ address.country }}</p>
+                          <p class="mb-0 small">Phone: {{ address.country_code }} {{ address.phone }}</p>
+                          {% if address.is_default %}
+                          <span class="badge bg-primary mt-1">Default</span>
+                          {% endif %}
+                        </div>
+                      </label>
+                    </div>
+                    {% endfor %}
+                  </div>
+                </div>
+
+                {% else %}
+                <div class="alert alert-warning">
+                  <p>No addresses found. Please add an address to continue.</p>
+                  <a href="{{ url_for('shop.account', tab='addresses') }}" class="btn btn-primary btn-sm">Add Address</a>
+                </div>
+                {% endif %}
+              </div>
+            </div>
+
+            <!-- Payment Method -->
+            <div class="checkout-section" id="payment-method">
+              <div class="section-header">
+                <div class="section-number">2</div>
+                <h3>Payment Method</h3>
+              </div>
+              <div class="section-content">
+                <div class="payment-options">
+                  <div class="form-check payment-option mb-3">
+                    <input class="form-check-input" type="radio" name="payment_method" id="cash_on_delivery" value="cash_on_delivery" checked required>
+                    <label class="form-check-label w-100" for="cash_on_delivery">
+                      <div class="d-flex align-items-center p-3 border rounded">
+                        <span class="payment-icon me-3"><i class="bi bi-cash fs-4"></i></span>
+                        <div>
+                          <span class="payment-label fw-bold">Cash on Delivery</span>
+                          <small class="d-block text-muted">Pay when you receive your order</small>
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div class="form-check payment-option mb-3">
+                    <input class="form-check-input" type="radio" name="payment_method" id="upi" value="upi">
+                    <label class="form-check-label w-100" for="upi">
+                      <div class="d-flex align-items-center p-3 border rounded">
+                        <span class="payment-icon me-3"><i class="bi bi-phone fs-4"></i></span>
+                        <div>
+                          <span class="payment-label fw-bold">UPI Payment</span>
+                          <small class="d-block text-muted">Pay using UPI apps</small>
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div class="form-check payment-option mb-3">
+                    <input class="form-check-input" type="radio" name="payment_method" id="credit_card" value="credit_card">
+                    <label class="form-check-label w-100" for="credit_card">
+                      <div class="d-flex align-items-center p-3 border rounded">
+                        <span class="payment-icon me-3"><i class="bi bi-credit-card fs-4"></i></span>
+                        <div>
+                          <span class="payment-label fw-bold">Credit/Debit Card</span>
+                          <small class="d-block text-muted">Pay using your card</small>
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div class="form-check payment-option mb-3">
+                    <input class="form-check-input" type="radio" name="payment_method" id="netbanking" value="netbanking">
+                    <label class="form-check-label w-100" for="netbanking">
+                      <div class="d-flex align-items-center p-3 border rounded">
+                        <span class="payment-icon me-3"><i class="bi bi-bank fs-4"></i></span>
+                        <div>
+                          <span class="payment-label fw-bold">Net Banking</span>
+                          <small class="d-block text-muted">Pay using net banking</small>
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Payment Details Sections -->
+                <!-- UPI Payment Details -->
+                <div class="payment-details mt-3 d-none" id="upi-details">
+                  <div class="card">
+                    <div class="card-body">
+                      <h6 class="card-title">UPI Payment Details</h6>
+                      <div class="mb-3">
+                        <label for="upi_id" class="form-label">UPI ID</label>
+                        <input type="text" class="form-control" name="upi_id" id="upi_id" placeholder="yourname@upi">
+                        <div class="form-text">Enter your UPI ID to receive payment request</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Card Payment Details -->
+                <div class="payment-details mt-3 d-none" id="credit_card-details">
+                  <div class="card">
+                    <div class="card-body">
+                      <h6 class="card-title">Card Details</h6>
+                      <div class="mb-3">
+                        <label for="card-number" class="form-label">Card Number</label>
+                        <input type="text" class="form-control" name="card_number" id="card-number" placeholder="1234 5678 9012 3456" maxlength="19">
+                      </div>
+                      <div class="row">
+                        <div class="col-md-6 mb-3">
+                          <label for="expiry" class="form-label">Expiration Date</label>
+                          <input type="text" class="form-control" name="expiry" id="expiry" placeholder="MM/YY" maxlength="5">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                          <label for="cvv" class="form-label">Security Code (CVV)</label>
+                          <input type="text" class="form-control" name="cvv" id="cvv" placeholder="123" maxlength="4">
+                        </div>
+                      </div>
+                      <div class="mb-3">
+                        <label for="card-name" class="form-label">Name on Card</label>
+                        <input type="text" class="form-control" name="card_name" id="card-name" placeholder="John Doe">
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Net Banking Details -->
+                <div class="payment-details mt-3 d-none" id="netbanking-details">
+                  <div class="card">
+                    <div class="card-body">
+                      <h6 class="card-title">Net Banking</h6>
+                      <div class="mb-3">
+                        <label for="bank" class="form-label">Select Bank</label>
+                        <select class="form-select" name="bank" id="bank">
+                          <option value="">Select your bank</option>
+                          <option value="sbi">State Bank of India</option>
+                          <option value="hdfc">HDFC Bank</option>
+                          <option value="icici">ICICI Bank</option>
+                          <option value="axis">Axis Bank</option>
+                          <option value="kotak">Kotak Mahindra Bank</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Customer Notes -->
+            <div class="checkout-section" id="customer-notes">
+              <div class="section-header">
+                <div class="section-number">3</div>
+                <h3>Additional Information</h3>
+              </div>
+              <div class="section-content">
+                <div class="mb-3">
+                  <label for="customer_note" class="form-label">Order Notes (Optional)</label>
+                  <textarea class="form-control" name="customer_note" id="customer_note" rows="3"
+                            placeholder="Any special instructions for delivery..."></textarea>
+                </div>
+              </div>
+            </div>
+
+            <!-- Order Review -->
+            <div class="checkout-section" id="order-review">
+              <div class="section-header">
+                <div class="section-number">4</div>
+                <h3>Review & Place Order</h3>
+              </div>
+              <div class="section-content">
+                <div class="form-check mb-4">
+                  <input class="form-check-input" type="checkbox" id="terms" name="terms" required>
+                  <label class="form-check-label" for="terms">
+                    I agree to the <a href="{{ url_for('shop.tos') }}" target="_blank">Terms and Conditions</a>
+                    and <a href="{{ url_for('shop.privacy') }}" target="_blank">Privacy Policy</a>
+                  </label>
+                </div>
+
+                <div class="place-order-container">
+                  <button type="submit" class="btn btn-primary place-order-btn w-100 py-3" id="placeOrderBtn" disabled>
+                    <span class="btn-text">Place Order</span>
+                    <span class="btn-price">{{ currency_symbol }}{{ "%.2f"|format(subtotal + tax_amount + (0 if subtotal >= 999 else 50)) }}</span>
+                  </button>
+                  <div class="text-center mt-2">
+                    <small class="text-muted">By placing your order, you agree to our terms and conditions</small>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div class="col-lg-5">
+        <!-- Order Summary -->
+        <div class="order-summary" data-aos="fade-left" data-aos-delay="200">
+          <div class="order-summary-header">
+            <h3>Order Summary</h3>
+            <span class="item-count">{{ total_items }} Item{% if total_items != 1 %}s{% endif %}</span>
+          </div>
+
+          <div class="order-summary-content">
+            <div class="order-items">
+              {% for item in cart_items %}
+              <div class="order-item mb-3 pb-3 border-bottom">
+                <div class="d-flex">
+                  <div class="order-item-image me-3">
+                    <img src="{{ item.product.main_image_url if item.product.main_image_url else url_for('static', filename='img/product/placeholder.jpg') }}"
+                         alt="{{ item.product.name }}" class="img-fluid rounded" style="width: 60px; height: 60px; object-fit: cover;">
+                  </div>
+                  <div class="order-item-details flex-grow-1">
+                    <h6 class="mb-1">{{ item.product.name }}</h6>
+                    <p class="order-item-variant text-muted small mb-1">Qty: {{ item.quantity }}</p>
+                    <div class="order-item-price">
+                      <span class="quantity">{{ item.quantity }} ×</span>
+                      <span class="price fw-bold">{{ currency_symbol }}{{ "%.2f"|format(item.product.base_price|float) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+
+            <div class="order-totals mt-4">
+              {% set shipping_cost = 0 if subtotal >= 999 else 50 %}
+              {% set total_amount = subtotal + tax_amount + shipping_cost - discount_amount %}
+
+              <div class="order-subtotal d-flex justify-content-between mb-2">
+                <span>Subtotal</span>
+                <span>{{ currency_symbol }}{{ "%.2f"|format(subtotal|float) }}</span>
+              </div>
+
+              <div class="order-shipping d-flex justify-content-between mb-2">
+                <span>Shipping</span>
+                <span>
+                  {% if shipping_cost == 0 %}
+                  <span class="text-success">FREE</span>
+                  {% else %}
+                  {{ currency_symbol }}{{ "%.2f"|format(shipping_cost) }}
+                  {% endif %}
+                </span>
+              </div>
+
+              <div class="order-tax d-flex justify-content-between mb-2">
+                <span>GST</span>
+                <span>{{ currency_symbol }}{{ "%.2f"|format(tax_amount|float) }}</span>
+              </div>
+
+              {% if discount_amount > 0 %}
+              <div class="order-discount d-flex justify-content-between mb-2 text-success">
+                <span>Discount</span>
+                <span>-{{ currency_symbol }}{{ "%.2f"|format(discount_amount|float) }}</span>
+              </div>
+              {% endif %}
+
+              <hr>
+              <div class="order-total d-flex justify-content-between mb-3">
+                <span class="fw-bold">Total Amount</span>
+                <span class="fw-bold text-success fs-5">{{ currency_symbol }}{{ "%.2f"|format(total_amount|float) }}</span>
+              </div>
+            </div>
+
+            {% if subtotal < 999 %}
+            <div class="free-shipping-alert alert alert-info">
+              <small>
+                <i class="bi bi-info-circle me-1"></i>
+                Add {{ currency_symbol }}{{ "%.2f"|format(999 - subtotal) }} more for <strong>FREE shipping</strong>!
+              </small>
+            </div>
+            {% endif %}
+
+            <div class="secure-checkout mt-4 pt-3 border-top">
+              <div class="secure-checkout-header d-flex align-items-center mb-2">
+                <i class="bi bi-shield-check text-success me-2"></i>
+                <span class="fw-bold">Secure Checkout</span>
+              </div>
+              <div class="payment-icons d-flex justify-content-center gap-3">
+                <i class="bi bi-credit-card fs-4 text-muted" title="Credit Cards"></i>
+                <i class="bi bi-phone fs-4 text-muted" title="UPI"></i>
+                <i class="bi bi-wallet2 fs-4 text-muted" title="Digital Wallets"></i>
+                <i class="bi bi-bank fs-4 text-muted" title="Net Banking"></i>
+                <i class="bi bi-cash fs-4 text-muted" title="Cash on Delivery"></i>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <!-- Empty Cart State -->
+    <div class="row">
+      <div class="col-12">
+        <div class="empty-cart text-center py-5" data-aos="fade-up">
+          <div class="empty-icon mb-4">
+            <i class="bi bi-cart-x display-1 text-muted"></i>
+          </div>
+          <h3 class="mb-3">Your Cart is Empty</h3>
+          <p class="text-muted mb-4">Please add some items to your cart before proceeding to checkout.</p>
+          <a href="{{ url_for('shop.products') }}" class="btn btn-primary btn-lg">
+            <i class="bi bi-bag me-2"></i>Continue Shopping
+          </a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</section><!-- /Checkout Section -->
+{% endblock %}
+
+{% block scripts %}
+<!-- Checkout-specific JavaScript -->
+<script src="{{ url_for('static', filename='js/checkout.js') }}"></script>
+{% endblock %}

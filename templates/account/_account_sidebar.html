@@ -1,0 +1,67 @@
+<!-- Account Sidebar Partial -->
+<div class="profile-menu collapse d-lg-block" id="profileMenu">
+    <!-- User Info -->
+    <div class="user-info" data-aos="fade-right">
+        <div class="user-avatar">
+            <img src="{{ url_for('static', filename='img/person/person-f-1.webp') }}" alt="Profile" loading="lazy">
+            <span class="status-badge"><i class="bi bi-shield-check"></i></span>
+        </div>
+        <h4>{{ current_user.first_name }} {{ current_user.last_name }}</h4>
+        <div class="user-status">
+            <i class="bi bi-award"></i>
+            <span>Premium Member</span>
+        </div>
+    </div>
+
+    <!-- Navigation Menu -->
+    <nav class="menu-nav">
+        <ul class="nav flex-column">
+            <li class="nav-item">
+                <a class="nav-link {% if active_tab == 'orders' %}active{% endif %}"
+                   href="{{ url_for('shop.account', tab='orders') }}">
+                    <i class="bi bi-box-seam"></i>
+                    <span>My Orders</span>
+                    <span class="badge">{{ user_orders|length if user_orders else 0 }}</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if active_tab == 'wishlist' %}active{% endif %}"
+                   href="{{ url_for('shop.account', tab='wishlist') }}">
+                    <i class="bi bi-heart"></i>
+                    <span>Wishlist</span>
+                    <span class="badge">{{ user_wishlist_count }}</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if active_tab == 'addresses' %}active{% endif %}"
+                   href="{{ url_for('shop.account', tab='addresses') }}">
+                    <i class="bi bi-geo-alt"></i>
+                    <span>Addresses</span>
+                    <span class="badge">{{ user_addresses|length if user_addresses else 0 }}</span>
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link {% if active_tab == 'settings' %}active{% endif %}"
+                   href="{{ url_for('shop.account', tab='settings') }}">
+                    <i class="bi bi-gear"></i>
+                    <span>Account Settings</span>
+                </a>
+            </li>
+        </ul>
+    </nav>
+
+    <!-- Footer Section -->
+    <div class="menu-footer">
+        <a href="{{ url_for('shop.contact') }}" class="help-link">
+            <i class="bi bi-question-circle"></i>
+            <span>Help Center</span>
+        </a>
+        <a href="{{ url_for('auth.logout') }}" class="logout-link">
+            <i class="bi bi-box-arrow-right"></i>
+            <span>Log Out</span>
+        </a>
+    </div>
+</div>
+
+<!-- Include the separate CSS file -->
+<link rel="stylesheet" href="{{ url_for('static', filename='css/account_sidebar.css') }}">

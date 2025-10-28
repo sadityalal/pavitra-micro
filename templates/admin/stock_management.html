@@ -1,0 +1,510 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Stock Management - Pavitra Enterprises{% endblock %}
+
+{% block page_title %}Stock Management & Inventory{% endblock %}
+
+{% block breadcrumb %}
+<li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
+<li class="breadcrumb-item active">Stock Management</li>
+{% endblock %}
+
+{% block content %}
+<!-- Stock Management Section -->
+<section class="section">
+  <div class="container-fluid">
+
+    <!-- Header with Stats and Actions -->
+    <div class="row mb-4">
+      <div class="col-md-8">
+        <h5 class="text-heading-color mb-3">
+          <i class="bi bi-clipboard-data me-2"></i>Inventory Overview
+        </h5>
+        <p class="text-muted mb-0">Monitor stock levels, track inventory movements, and manage product availability.</p>
+      </div>
+      <div class="col-md-4 text-end">
+        <div class="btn-group">
+          <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#bulkStockUpdateModal">
+            <i class="bi bi-arrow-up-down me-2"></i>Bulk Update
+          </button>
+          <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addStockModal">
+            <i class="bi bi-plus-circle me-2"></i>Add Stock
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stock Statistics -->
+    <div class="row mb-4">
+      <div class="col-xl-3 col-md-6">
+        <div class="stats-card card" data-aos="fade-up">
+          <div class="card-body">
+            <div class="stats-icon text-primary">
+              <i class="bi bi-box-seam"></i>
+            </div>
+            <div class="stats-content">
+              <h3>{{ total_products }}</h3>
+              <p>Total Products</p>
+              <span class="stats-trend text-success">
+                <i class="bi bi-check-circle"></i> In catalog
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-xl-3 col-md-6">
+        <div class="stats-card card" data-aos="fade-up" data-aos-delay="100">
+          <div class="card-body">
+            <div class="stats-icon text-warning">
+              <i class="bi bi-exclamation-triangle"></i>
+            </div>
+            <div class="stats-content">
+              <h3>{{ low_stock_products|length }}</h3>
+              <p>Low Stock</p>
+              <span class="stats-trend text-warning">
+                <i class="bi bi-arrow-down"></i> Needs attention
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-xl-3 col-md-6">
+        <div class="stats-card card" data-aos="fade-up" data-aos-delay="200">
+          <div class="card-body">
+            <div class="stats-icon text-danger">
+              <i class="bi bi-x-circle"></i>
+            </div>
+            <div class="stats-content">
+              <h3>{{ out_of_stock_products|length }}</h3>
+              <p>Out of Stock</p>
+              <span class="stats-trend text-danger">
+                <i class="bi bi-dash-circle"></i> Restock needed
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-xl-3 col-md-6">
+        <div class="stats-card card" data-aos="fade-up" data-aos-delay="300">
+          <div class="card-body">
+            <div class="stats-icon text-success">
+              <i class="bi bi-graph-up"></i>
+            </div>
+            <div class="stats-content">
+              <h3>{{ total_value }}</h3>
+              <p>Inventory Value</p>
+              <span class="stats-trend text-success">
+                <i class="bi bi-currency-rupee"></i> Total worth
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stock Alerts Section -->
+    <div class="row mb-4">
+      <!-- Low Stock Alerts -->
+      <div class="col-lg-6">
+        <div class="card border-warning" data-aos="fade-up">
+          <div class="card-header bg-warning bg-opacity-10 border-warning">
+            <h6 class="card-title mb-0 text-warning">
+              <i class="bi bi-exclamation-triangle me-2"></i>Low Stock Alerts
+              <span class="badge bg-warning ms-2">{{ low_stock_products|length }}</span>
+            </h6>
+          </div>
+          <div class="card-body">
+            {% if low_stock_products %}
+            <div class="list-group list-group-flush">
+              {% for product in low_stock_products %}
+              <div class="list-group-item d-flex justify-content-between align-items-center px-0 border-0">
+                <div class="d-flex align-items-center">
+                  <img src="{{ product.main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                       alt="{{ product.name }}" class="rounded me-3" width="40" height="40" style="object-fit: cover;">
+                  <div>
+                    <h6 class="mb-1">{{ product.name|truncate(25) }}</h6>
+                    <small class="text-muted">SKU: {{ product.sku }}</small>
+                  </div>
+                </div>
+                <div class="text-end">
+                  <span class="badge bg-warning me-2">{{ product.stock_quantity }}</span>
+                  <button class="btn btn-sm btn-outline-warning restock-product"
+                          data-product-id="{{ product.id }}"
+                          data-product-name="{{ product.name }}"
+                          title="Restock Product">
+                    <i class="bi bi-plus-circle"></i>
+                  </button>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-3">
+              <i class="bi bi-check-circle display-4 text-success"></i>
+              <p class="text-muted mt-2">All products are well stocked</p>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Out of Stock Alerts -->
+      <div class="col-lg-6">
+        <div class="card border-danger" data-aos="fade-up" data-aos-delay="100">
+          <div class="card-header bg-danger bg-opacity-10 border-danger">
+            <h6 class="card-title mb-0 text-danger">
+              <i class="bi bi-x-circle me-2"></i>Out of Stock
+              <span class="badge bg-danger ms-2">{{ out_of_stock_products|length }}</span>
+            </h6>
+          </div>
+          <div class="card-body">
+            {% if out_of_stock_products %}
+            <div class="list-group list-group-flush">
+              {% for product in out_of_stock_products %}
+              <div class="list-group-item d-flex justify-content-between align-items-center px-0 border-0">
+                <div class="d-flex align-items-center">
+                  <img src="{{ product.main_image_url or url_for('static', filename='img/product/placeholder.jpg') }}"
+                       alt="{{ product.name }}" class="rounded me-3" width="40" height="40" style="object-fit: cover;">
+                  <div>
+                    <h6 class="mb-1">{{ product.name|truncate(25) }}</h6>
+                    <small class="text-muted">SKU: {{ product.sku }}</small>
+                  </div>
+                </div>
+                <div class="text-end">
+                  <span class="badge bg-danger me-2">0</span>
+                  <button class="btn btn-sm btn-outline-danger restock-product"
+                          data-product-id="{{ product.id }}"
+                          data-product-name="{{ product.name }}"
+                          title="Restock Product">
+                    <i class="bi bi-plus-circle"></i>
+                  </button>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+            {% else %}
+            <div class="text-center py-3">
+              <i class="bi bi-check-circle display-4 text-success"></i>
+              <p class="text-muted mt-2">No out of stock products</p>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stock Movements & Management -->
+    <div class="row">
+      <!-- Recent Stock Movements -->
+      <div class="col-lg-8">
+        <div class="card" data-aos="fade-up">
+          <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-clock-history me-2"></i>Recent Stock Movements
+            </h6>
+            <div class="d-flex gap-2">
+              <select class="form-select form-select-sm" id="movementFilter" style="width: auto;">
+                <option value="all">All Movements</option>
+                <option value="purchase">Purchases</option>
+                <option value="sale">Sales</option>
+                <option value="adjustment">Adjustments</option>
+                <option value="return">Returns</option>
+              </select>
+              <button class="btn btn-sm btn-outline-secondary" id="refreshMovements">
+                <i class="bi bi-arrow-clockwise"></i>
+              </button>
+            </div>
+          </div>
+          <div class="card-body">
+            {% if recent_movements %}
+            <div class="table-responsive">
+              <table class="table table-hover" id="movementsTable">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Type</th>
+                    <th>Quantity</th>
+                    <th>Before</th>
+                    <th>After</th>
+                    <th>Reason</th>
+                    <th>Date</th>
+                    <th>By</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for movement in recent_movements %}
+                  <tr class="movement-row" data-movement-type="{{ movement.movement_type }}">
+                    <td>
+                      <div class="d-flex align-items-center">
+                        {% if movement.product.main_image_url %}
+                        <img src="{{ movement.product.main_image_url }}"
+                             alt="{{ movement.product.name }}"
+                             class="rounded me-2" width="30" height="30" style="object-fit: cover;">
+                        {% endif %}
+                        <span>{{ movement.product.name|truncate(20) }}</span>
+                      </div>
+                    </td>
+                    <td>
+                      <span class="badge
+                        {% if movement.movement_type == 'purchase' %}bg-success
+                        {% elif movement.movement_type == 'sale' %}bg-primary
+                        {% elif movement.movement_type == 'return' %}bg-info
+                        {% else %}bg-warning{% endif %}">
+                        {{ movement.movement_type|title }}
+                      </span>
+                    </td>
+                    <td>
+                      <span class="{% if movement.quantity > 0 %}text-success{% else %}text-danger{% endif %} fw-bold">
+                        {{ movement.quantity }}
+                      </span>
+                    </td>
+                    <td>{{ movement.stock_before }}</td>
+                    <td>{{ movement.stock_after }}</td>
+                    <td>
+                      <small class="text-muted" title="{{ movement.reason }}">
+                        {{ movement.reason|truncate(15) }}
+                      </small>
+                    </td>
+                    <td>
+                      <small class="text-muted">
+                        {{ movement.performed_at.strftime('%d %b %H:%M') }}
+                      </small>
+                    </td>
+                    <td>
+                      <small class="text-muted">
+                        {% if movement.performer %}
+                        {{ movement.performer.first_name }}
+                        {% else %}
+                        System
+                        {% endif %}
+                      </small>
+                    </td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+            {% else %}
+            <div class="text-center py-5">
+              <i class="bi bi-clipboard-data display-4 text-muted"></i>
+              <p class="text-muted mt-3">No stock movements recorded</p>
+              <p class="text-muted">Stock movements will appear here when you manage inventory.</p>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+
+      <!-- Quick Stock Actions -->
+      <div class="col-lg-4">
+        <!-- Quick Stock Update -->
+        <div class="card mb-4" data-aos="fade-left">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-lightning me-2"></i>Quick Stock Update
+            </h6>
+          </div>
+          <div class="card-body">
+            <form id="quickStockForm">
+              <div class="mb-3">
+                <label for="quickProduct" class="form-label">Select Product</label>
+                <select class="form-select" id="quickProduct" required>
+                  <option value="">Choose product...</option>
+                  {% for product in all_products %}
+                  <option value="{{ product.id }}" data-current-stock="{{ product.stock_quantity }}">
+                    {{ product.name }} (Current: {{ product.stock_quantity }})
+                  </option>
+                  {% endfor %}
+                </select>
+              </div>
+              <div class="mb-3">
+                <label for="quickAction" class="form-label">Action</label>
+                <select class="form-select" id="quickAction" required>
+                  <option value="add">Add Stock</option>
+                  <option value="remove">Remove Stock</option>
+                  <option value="set">Set Stock Level</option>
+                </select>
+              </div>
+              <div class="mb-3">
+                <label for="quickQuantity" class="form-label">Quantity</label>
+                <input type="number" class="form-control" id="quickQuantity" min="1" required>
+              </div>
+              <div class="mb-3">
+                <label for="quickReason" class="form-label">Reason</label>
+                <input type="text" class="form-control" id="quickReason" placeholder="e.g., New shipment, Damage, etc.">
+              </div>
+              <button type="submit" class="btn btn-primary w-100">
+                <i class="bi bi-check-lg me-2"></i>Update Stock
+              </button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Stock Summary -->
+        <div class="card" data-aos="fade-left" data-aos-delay="100">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-pie-chart me-2"></i>Stock Summary
+            </h6>
+          </div>
+          <div class="card-body">
+            <div class="list-group list-group-flush">
+              <div class="list-group-item d-flex justify-content-between align-items-center px-0 border-0">
+                <span class="text-success">
+                  <i class="bi bi-check-circle me-2"></i>In Stock
+                </span>
+                <span class="badge bg-success">{{ in_stock_count }}</span>
+              </div>
+              <div class="list-group-item d-flex justify-content-between align-items-center px-0 border-0">
+                <span class="text-warning">
+                  <i class="bi bi-exclamation-triangle me-2"></i>Low Stock
+                </span>
+                <span class="badge bg-warning">{{ low_stock_products|length }}</span>
+              </div>
+              <div class="list-group-item d-flex justify-content-between align-items-center px-0 border-0">
+                <span class="text-danger">
+                  <i class="bi bi-x-circle me-2"></i>Out of Stock
+                </span>
+                <span class="badge bg-danger">{{ out_of_stock_products|length }}</span>
+              </div>
+              <div class="list-group-item d-flex justify-content-between align-items-center px-0 border-0">
+                <span class="text-info">
+                  <i class="bi bi-arrow-repeat me-2"></i>On Backorder
+                </span>
+                <span class="badge bg-info">{{ on_backorder_count }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- Add Stock Modal -->
+<div class="modal fade" id="addStockModal" tabindex="-1" aria-labelledby="addStockModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="addStockModalLabel">
+          <i class="bi bi-plus-circle me-2"></i>Add Stock
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <form id="addStockForm">
+        <div class="modal-body">
+          <div class="mb-3">
+            <label for="stockProduct" class="form-label">Select Product *</label>
+            <select class="form-select" id="stockProduct" required>
+              <option value="">Choose product...</option>
+              {% for product in all_products %}
+              <option value="{{ product.id }}" data-current-stock="{{ product.stock_quantity }}">
+                {{ product.name }} (Current: {{ product.stock_quantity }})
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="stockQuantity" class="form-label">Quantity to Add *</label>
+            <input type="number" class="form-control" id="stockQuantity" min="1" required>
+          </div>
+          <div class="mb-3">
+            <label for="stockReason" class="form-label">Reason *</label>
+            <select class="form-select" id="stockReason" required>
+              <option value="">Select reason...</option>
+              <option value="purchase">New Purchase</option>
+              <option value="return">Customer Return</option>
+              <option value="adjustment">Stock Adjustment</option>
+              <option value="transfer">Warehouse Transfer</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label for="stockNotes" class="form-label">Notes</label>
+            <textarea class="form-control" id="stockNotes" rows="2" placeholder="Additional notes..."></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">
+            <i class="bi bi-check-lg me-2"></i>Add Stock
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Stock Update Modal -->
+<div class="modal fade" id="bulkStockUpdateModal" tabindex="-1" aria-labelledby="bulkStockUpdateModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="bulkStockUpdateModalLabel">
+          <i class="bi bi-arrow-up-down me-2"></i>Bulk Stock Update
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-info">
+          <i class="bi bi-info-circle me-2"></i>
+          Upload a CSV file with Product SKU and New Quantity columns to update multiple products at once.
+        </div>
+
+        <div class="mb-3">
+          <label for="bulkCsvFile" class="form-label">Upload CSV File</label>
+          <input type="file" class="form-control" id="bulkCsvFile" accept=".csv">
+          <div class="form-text">
+            <a href="#" id="downloadTemplate">Download CSV template</a>
+          </div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label">Or enter manually:</label>
+          <div class="table-responsive">
+            <table class="table table-sm" id="bulkStockTable">
+              <thead>
+                <tr>
+                  <th>Product SKU</th>
+                  <th>New Quantity</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><input type="text" class="form-control form-control-sm" placeholder="SKU"></td>
+                  <td><input type="number" class="form-control form-control-sm" placeholder="Quantity"></td>
+                  <td>
+                    <button type="button" class="btn btn-sm btn-outline-danger remove-row">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <button type="button" class="btn btn-sm btn-outline-primary" id="addBulkRow">
+            <i class="bi bi-plus"></i> Add Row
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-primary" id="processBulkUpdate">
+          <i class="bi bi-arrow-up-down me-2"></i>Process Bulk Update
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<!-- Stock Management JavaScript -->
+<script src="{{ url_for('static', filename='js/admin_stock_management.js') }}"></script>
+{% endblock %}

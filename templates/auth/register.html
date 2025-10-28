@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+
+{% block title %}Register - Pavitra Enterprises{% endblock %}
+
+{% block description %}Create your Pavitra Enterprises account to enjoy personalized shopping, order tracking, wishlist, and exclusive deals.{% endblock %}
+
+{% block content %}
+<!-- Page Title -->
+<div class="page-title light-background">
+  <div class="container d-lg-flex justify-content-between align-items-center">
+    <h1 class="mb-2 mb-lg-0">Register</h1>
+    <nav class="breadcrumbs">
+      <ol>
+        <li><a href="{{ url_for('shop.index') }}">Home</a></li>
+        <li class="current">Register</li>
+      </ol>
+    </nav>
+  </div>
+</div><!-- End Page Title -->
+
+<!-- Register Section -->
+<section id="register" class="register section">
+  <div class="container" data-aos="fade-up" data-aos-delay="100">
+    <div class="row justify-content-center">
+      <div class="col-lg-8 col-md-10">
+        <div class="auth-container" data-aos="fade-in" data-aos-delay="200">
+
+          <!-- Registration Form -->
+          <div class="auth-form register-form">
+            <div class="form-header text-center mb-4">
+              <h3>Create Your Account</h3>
+              <p class="text-muted">Join Pavitra Enterprises and start your shopping journey</p>
+            </div>
+
+            <!-- Flash Messages -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+              {% if messages %}
+                {% for category, message in messages %}
+                  <div class="alert alert-{{ 'danger' if category == 'error' else category }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+                  </div>
+                {% endfor %}
+              {% endif %}
+            {% endwith %}
+
+            <form class="auth-form-content" action="{{ url_for('auth.register') }}" method="post" id="registerForm">
+              <!-- CSRF Token -->
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
+              <!-- Add hidden next field for redirect -->
+              <input type="hidden" name="next" value="{{ next_page or '' }}">
+
+              <div class="row">
+                <div class="col-md-6 mb-3">
+                  <label for="first_name" class="form-label">First Name *</label>
+                  <div class="input-group">
+                    <span class="input-group-text">
+                      <i class="bi bi-person"></i>
+                    </span>
+                    <input type="text" class="form-control" id="first_name" name="first_name"
+                           placeholder="First name" required autocomplete="given-name"
+                           value="{{ form_data.first_name if form_data else (request.form.first_name if request.form) }}">
+                  </div>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                  <label for="last_name" class="form-label">Last Name *</label>
+                  <div class="input-group">
+                    <span class="input-group-text">
+                      <i class="bi bi-person"></i>
+                    </span>
+                    <input type="text" class="form-control" id="last_name" name="last_name"
+                           placeholder="Last name" required autocomplete="family-name"
+                           value="{{ form_data.last_name if form_data else (request.form.last_name if request.form) }}">
+                  </div>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label for="email" class="form-label">Email Address *</label>
+                <div class="input-group">
+                  <span class="input-group-text">
+                    <i class="bi bi-envelope"></i>
+                  </span>
+                  <input type="email" class="form-control" id="email" name="email"
+                         placeholder="Enter your email" required autocomplete="email"
+                         value="{{ form_data.email if form_data else (request.form.email if request.form) }}">
+                </div>
+              </div>
+
+              <div class="row">
+                <div class="col-md-6 mb-3">
+                  <label class="form-label">Date of Birth</label>
+
+                  <!-- Custom Date Selector -->
+                  <div class="custom-date-selector mb-2">
+                    <div class="row g-2">
+                      <div class="col-4">
+                        <select class="form-select" id="birth_year" onchange="updateCustomDate()">
+                          <option value="">Year</option>
+                          {% set current_year = today.split('-')[0] | int %}
+                          {% for year in range(current_year - 100, current_year - 12) | reverse %}
+                          <option value="{{ year }}">{{ year }}</option>
+                          {% endfor %}
+                        </select>
+                      </div>
+                      <div class="col-4">
+                        <select class="form-select" id="birth_month" onchange="updateCustomDate()">
+                          <option value="">Month</option>
+                          <option value="01">January</option>
+                          <option value="02">February</option>
+                          <option value="03">March</option>
+                          <option value="04">April</option>
+                          <option value="05">May</option>
+                          <option value="06">June</option>
+                          <option value="07">July</option>
+                          <option value="08">August</option>
+                          <option value="09">September</option>
+                          <option value="10">October</option>
+                          <option value="11">November</option>
+                          <option value="12">December</option>
+                        </select>
+                      </div>
+                      <div class="col-4">
+                        <select class="form-select" id="birth_day" onchange="updateCustomDate()">
+                          <option value="">Day</option>
+                          {% for day in range(1, 32) %}
+                          <option value="{{ '%02d' % day }}">{{ day }}</option>
+                          {% endfor %}
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- Hidden actual date field -->
+                  <input type="hidden" id="date_of_birth" name="date_of_birth"
+                         value="{{ form_data.date_of_birth if form_data else (request.form.date_of_birth if request.form) }}">
+
+                  <div class="form-text">
+                    Optional - Select year, month, and day separately
+                  </div>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                  <label class="form-label">Gender</label>
+                  <div class="input-group">
+                    <span class="input-group-text">
+                      <i class="bi bi-gender-ambiguous"></i>
+                    </span>
+                    <select class="form-select" id="gender" name="gender">
+                      <option value="">Select Gender (Optional)</option>
+                      <option value="male" {{ 'selected' if (form_data and form_data.gender == 'male') or (request.form and request.form.gender == 'male') }}>Male</option>
+                      <option value="female" {{ 'selected' if (form_data and form_data.gender == 'female') or (request.form and request.form.gender == 'female') }}>Female</option>
+                      <option value="other" {{ 'selected' if (form_data and form_data.gender == 'other') or (request.form and request.form.gender == 'other') }}>Other</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label for="phone" class="form-label">Phone Number</label>
+                <div class="input-group">
+                  <!-- Country Code Dropdown -->
+                  <button class="btn btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" id="countryCodeBtn" style="min-width: 140px;">
+                    <span id="selectedCountryFlag">🇮🇳</span>
+                    <span id="selectedCountryCode">+91</span>
+                  </button>
+                  <ul class="dropdown-menu" id="countryCodeDropdown" style="max-height: 300px; overflow-y: auto;">
+                    <!-- Popular Indian numbers first -->
+                    <li><a class="dropdown-item country-option active" data-code="+91" data-flag="🇮🇳" data-maxlength="10" data-country="India">🇮🇳 India (+91)</a></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <!-- Other countries -->
+                    <li><a class="dropdown-item country-option" data-code="+1" data-flag="🇺🇸" data-maxlength="10" data-country="USA">🇺🇸 USA (+1)</a></li>
+                    <li><a class="dropdown-item country-option" data-code="+44" data-flag="🇬🇧" data-maxlength="10" data-country="UK">🇬🇧 UK (+44)</a></li>
+                    <li><a class="dropdown-item country-option" data-code="+61" data-flag="🇦🇺" data-maxlength="9" data-country="Australia">🇦🇺 Australia (+61)</a></li>
+                    <li><a class="dropdown-item country-option" data-code="+65" data-flag="🇸🇬" data-maxlength="8" data-country="Singapore">🇸🇬 Singapore (+65)</a></li>
+                    <li><a class="dropdown-item country-option" data-code="+971" data-flag="🇦🇪" data-maxlength="9" data-country="UAE">🇦🇪 UAE (+971)</a></li>
+                    <li><a class="dropdown-item country-option" data-code="+86" data-flag="🇨🇳" data-maxlength="11" data-country="China">🇨🇳 China (+86)</a></li>
+                    <li><a class="dropdown-item country-option" data-code="+81" data-flag="🇯🇵" data-maxlength="10" data-country="Japan">🇯🇵 Japan (+81)</a></li>
+                    <li><a class="dropdown-item country-option" data-code="+49" data-flag="🇩🇪" data-maxlength="11" data-country="Germany">🇩🇪 Germany (+49)</a></li>
+                    <li><a class="dropdown-item country-option" data-code="+33" data-flag="🇫🇷" data-maxlength="9" data-country="France">🇫🇷 France (+33)</a></li>
+                    <li><a class="dropdown-item country-option" data-code="+7" data-flag="🇷🇺" data-maxlength="10" data-country="Russia">🇷🇺 Russia (+7)</a></li>
+                  </ul>
+
+                  <!-- Hidden inputs for country data -->
+                  <input type="hidden" id="country_code" name="country_code" value="{{ form_data.country_code if form_data else '+91' }}">
+                  <input type="hidden" id="country_name" name="country_name" value="{{ form_data.country_name if form_data else 'India' }}">
+
+                  <!-- Phone number input -->
+                  <input type="tel" class="form-control" id="phone" name="phone"
+                         placeholder="Enter phone number"
+                         autocomplete="tel"
+                         maxlength="10"
+                         data-default-pattern="[0-9]{10}"
+                         value="{{ form_data.phone if form_data else (request.form.phone if request.form) }}">
+                </div>
+                <div class="form-text">
+                  Optional - for order updates and faster checkout
+                </div>
+                <div id="phone-format-hint" class="form-text text-info">
+                  Format: 9876543210 (10 digits)
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label for="password" class="form-label">Password *</label>
+                <div class="input-group">
+                  <span class="input-group-text">
+                    <i class="bi bi-lock"></i>
+                  </span>
+                  <input type="password" class="form-control" id="password" name="password" placeholder="Create a password (min. 6 characters)" required minlength="6" autocomplete="new-password">
+                  <button class="btn btn-outline-secondary password-toggle" type="button">
+                    <i class="bi bi-eye"></i>
+                  </button>
+                </div>
+                <div class="form-text">
+                  Password must be at least 6 characters long
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label for="confirm_password" class="form-label">Confirm Password *</label>
+                <div class="input-group">
+                  <span class="input-group-text">
+                    <i class="bi bi-lock-fill"></i>
+                  </span>
+                  <input type="password" class="form-control" id="confirm_password" name="confirm_password" placeholder="Confirm your password" required autocomplete="new-password">
+                  <button class="btn btn-outline-secondary password-toggle" type="button">
+                    <i class="bi bi-eye"></i>
+                  </button>
+                </div>
+                <div id="password-match-feedback" class="form-text"></div>
+              </div>
+
+              <div class="form-check mb-4">
+                <input class="form-check-input" type="checkbox" id="termsCheck" name="termsCheck" required>
+                <label class="form-check-label" for="termsCheck">
+                  I agree to the <a href="{{ url_for('shop.tos') }}" target="_blank" class="text-decoration-none">Terms of Service</a> and <a href="{{ url_for('shop.privacy') }}" target="_blank" class="text-decoration-none">Privacy Policy</a>
+                </label>
+              </div>
+
+              <button type="submit" class="btn btn-dark w-100 mb-3 py-2">
+                Create Account
+                <i class="bi bi-person-plus ms-2"></i>
+              </button>
+
+              <div class="text-center">
+                <span class="text-muted">Already have an account?</span>
+                <a href="{{ url_for('auth.login', next=next_page or request.url) }}" class="text-decoration-none fw-bold ms-1">Sign in</a>
+              </div>
+            </form>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+</section><!-- /Register Section -->
+{% endblock %}
+
+{% block scripts %}
+<!-- Registration-specific JavaScript -->
+<script src="{{ url_for('static', filename='js/registration.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+
+{% block title %}My Orders - Pavitra Enterprises{% endblock %}
+
+{% block content %}
+<!-- Page Title -->
+<div class="page-title light-background">
+  <div class="container d-lg-flex justify-content-between align-items-center">
+    <h1 class="mb-2 mb-lg-0">My Orders</h1>
+    <nav class="breadcrumbs">
+      <ol>
+        <li><a href="{{ url_for('shop.index') }}">Home</a></li>
+        <li><a href="{{ url_for('shop.account') }}">Account</a></li>
+        <li class="current">My Orders</li>
+      </ol>
+    </nav>
+  </div>
+</div><!-- End Page Title -->
+
+<section class="account-section section">
+  <div class="container" data-aos="fade-up" data-aos-delay="100">
+
+    <!-- Mobile Menu Toggle -->
+    <div class="mobile-menu d-lg-none mb-4">
+      <button class="mobile-menu-toggle" type="button" data-bs-toggle="collapse" data-bs-target="#profileMenu">
+        <i class="bi bi-grid"></i>
+        <span>Menu</span>
+      </button>
+    </div>
+
+    <div class="row g-4">
+      <!-- Profile Menu Sidebar -->
+      <div class="col-lg-3">
+        {% set active_tab = 'orders' %}
+        {% include 'account/_account_sidebar.html' %}
+      </div>
+
+      <!-- Orders Content -->
+      <div class="col-lg-9">
+        <div class="account-content p-4 bg-white rounded-3 shadow-sm">
+          <div class="d-flex justify-content-between align-items-center mb-4">
+            <h4 class="fw-bold mb-0">My Orders</h4>
+            <div class="search-bar">
+              <input type="text" class="form-control" placeholder="Search orders...">
+            </div>
+          </div>
+
+          {% if user_orders %}
+          {% for order in user_orders %}
+          <div class="order-card border rounded-3 p-4 mb-4">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+              <div>
+                <small class="text-muted">Order ID:</small>
+                <strong class="ms-2">{{ order.order_number }}</strong>
+              </div>
+              <small class="text-muted">{{ order.created_at.strftime('%b %d, %Y') }}</small>
+            </div>
+
+            <div class="d-flex flex-wrap align-items-center">
+              <div class="order-image me-3">
+                {% set item = order.items[0] if order.items else None %}
+                {% if item %}
+                  <img src="{{ item.product_image or url_for('static', filename='img/product/placeholder.jpg') }}" alt="{{ item.product_name }}" width="80" height="80" class="rounded-2">
+                {% endif %}
+              </div>
+              <div class="flex-grow-1">
+                <div class="d-flex justify-content-between align-items-center flex-wrap">
+                  <div>
+                    <div><small class="text-muted">Status</small></div>
+                    <span class="badge {% if order.status == 'cancelled' %}bg-danger-subtle text-danger{% elif order.status == 'delivered' %}bg-success-subtle text-success{% else %}bg-warning-subtle text-dark{% endif %}">
+                      {{ order.status|title }}
+                    </span>
+                  </div>
+                  <div>
+                    <div><small class="text-muted">Items</small></div>
+                    <strong>{{ order.items|length }}</strong>
+                  </div>
+                  <div>
+                    <div><small class="text-muted">Total</small></div>
+                    <strong>{{ currency_symbol }}{{ "%.2f"|format(order.total_amount) }}</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="text-end mt-3">
+              <a href="{{ url_for('shop.order_detail', order_number=order.order_number) }}" class="btn btn-outline-dark btn-sm">View Details</a>
+              {% if order.can_be_cancelled() %}
+              <button type="button" class="btn btn-outline-danger btn-sm" onclick="cancelOrder('{{ order.order_number }}')">Cancel Order</button>
+              {% endif %}
+            </div>
+          </div>
+          {% endfor %}
+          {% else %}
+          <div class="text-center py-5">
+            <i class="bi bi-box-seam display-4 text-muted mb-3"></i>
+            <h5>No Orders Yet</h5>
+            <p class="text-muted">You haven't placed any orders yet.</p>
+            <a href="{{ url_for('shop.products') }}" class="btn btn-dark">Start Shopping</a>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/orders.js') }}"></script>
+{% endblock %}

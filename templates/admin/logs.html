@@ -1,0 +1,136 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Log Management - Pavitra Admin{% endblock %}
+
+{% block page_title %}Log Management{% endblock %}
+
+{% block breadcrumb %}
+<li class="breadcrumb-item active">Logs</li>
+{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <!-- Log Levels Configuration -->
+    <div class="card shadow mb-4">
+        <div class="card-header py-3">
+            <h6 class="m-0 font-weight-bold text-primary">Log Levels Configuration</h6>
+        </div>
+        <div class="card-body">
+            <div class="row" id="logLevelsCards">
+                <!-- Will be populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Log Files -->
+    <div class="card shadow mb-4">
+        <div class="card-header py-3 d-flex justify-content-between align-items-center">
+            <h6 class="m-0 font-weight-bold text-primary">Log Files</h6>
+            <div class="form-inline">
+                <select class="form-control mr-2" id="linesSelect">
+                    <option value="50">Last 50 lines</option>
+                    <option value="100" selected>Last 100 lines</option>
+                    <option value="200">Last 200 lines</option>
+                    <option value="500">Last 500 lines</option>
+                </select>
+                <button class="btn btn-primary btn-sm" onclick="logManager.refreshLogs()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Service</th>
+                            <th>Filename</th>
+                            <th>Description</th>
+                            <th>Size</th>
+                            <th>Current Level</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log_file in log_files %}
+                        <tr>
+                            <td><span class="badge badge-primary">{{ log_file.service }}</span></td>
+                            <td><code>{{ log_file.filename }}</code></td>
+                            <td>{{ log_file.description }}</td>
+                            <td>{{ log_file.size_human }}</td>
+                            <td>
+                                <span class="badge badge-{{ 'success' if log_file.level == 'INFO' else 'warning' if log_file.level == 'WARNING' else 'danger' if log_file.level == 'ERROR' else 'info' if log_file.level == 'DEBUG' else 'secondary' }}">
+                                    {{ log_file.level }}
+                                </span>
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm" role="group">
+                                    <button type="button" class="btn btn-outline-primary"
+                                            onclick="logManager.viewLogFile('{{ log_file.filename }}')"
+                                            title="View Log">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                    <button type="button" class="btn btn-outline-warning"
+                                            onclick="logManager.clearLogFile('{{ log_file.filename }}')"
+                                            title="Clear Log">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Log Content Display -->
+    <div class="card shadow mb-4" id="logContentCard" style="display: none;">
+        <div class="card-header py-3 d-flex justify-content-between align-items-center">
+            <h6 class="m-0 font-weight-bold text-primary" id="logContentTitle">Log Content</h6>
+            <div>
+                <button class="btn btn-secondary btn-sm me-2" onclick="logManager.copyLogContent()" title="Copy to Clipboard">
+                    <i class="bi bi-clipboard"></i>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="logManager.closeLogView()" title="Close">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+        </div>
+        <div class="card-body">
+            <pre class="log-content" id="logContent" style="max-height: 600px; overflow-y: auto; background-color: #f8f9fa; padding: 15px; border-radius: 5px; font-size: 12px; line-height: 1.4;">
+            </pre>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+.log-content {
+    font-family: 'Courier New', monospace;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+.table th {
+    border-top: none;
+    font-weight: 600;
+}
+.btn-group-sm > .btn {
+    padding: 0.25rem 0.5rem;
+}
+.log-level-card {
+    transition: all 0.3s ease;
+    border: 1px solid #e3e6f0;
+}
+.log-level-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+</style>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+{% endblock %}

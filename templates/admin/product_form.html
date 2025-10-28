@@ -1,0 +1,467 @@
+{% extends "admin/base.html" %}
+
+{% block title %}{% if product %}Edit {{ product.name }}{% else %}Add New Product{% endif %} - Pavitra Enterprises{% endblock %}
+
+{% block page_title %}{% if product %}Edit Product{% else %}Add New Product{% endif %}{% endblock %}
+
+{% block breadcrumb %}
+<li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
+<li class="breadcrumb-item"><a href="{{ url_for('admin.products') }}">Products</a></li>
+<li class="breadcrumb-item active">{% if product %}Edit{% else %}Add{% endif %}</li>
+{% endblock %}
+
+{% block content %}
+<!-- Product Form Section -->
+<section class="section">
+  <div class="container-fluid">
+    <div class="row">
+      <div class="col-lg-8">
+        <div class="card" data-aos="fade-up">
+          <div class="card-header">
+            <h5 class="card-title mb-0">
+              <i class="bi bi-{% if product %}pencil{% else %}plus-circle{% endif %} me-2"></i>
+              {% if product %}Edit Product{% else %}Create New Product{% endif %}
+            </h5>
+          </div>
+          <div class="card-body">
+            <form method="POST" enctype="multipart/form-data" id="product-form">
+              <!-- Basic Information -->
+              <div class="row mb-4">
+                <div class="col-12">
+                  <h6 class="border-bottom pb-2 mb-3">
+                    <i class="bi bi-info-circle me-2 text-primary"></i>Basic Information
+                  </h6>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                  <label for="name" class="form-label fw-semibold">Product Name *</label>
+                  <input type="text" class="form-control" id="name" name="name"
+                         value="{{ product.name if product }}" required>
+                  <div class="form-text">Enter the full product name as it should appear to customers.</div>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                  <label for="sku" class="form-label fw-semibold">SKU *</label>
+                  <input type="text" class="form-control" id="sku" name="sku"
+                         value="{{ product.sku if product }}" required>
+                  <div class="form-text">Unique stock keeping unit identifier.</div>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                  <label for="slug" class="form-label fw-semibold">URL Slug</label>
+                  <input type="text" class="form-control" id="slug" name="slug"
+                         value="{{ product.slug if product }}">
+                  <div class="form-text">URL-friendly version of the name (auto-generated if empty).</div>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                  <label for="category_id" class="form-label fw-semibold">Category *</label>
+                  <select class="form-select" id="category_id" name="category_id" required>
+                    <option value="">Select Category</option>
+                    {% for category in categories %}
+                    <option value="{{ category.id }}"
+                            data-gst-rate="{{ category.gst_slab or '18.00' }}"
+                            data-hsn-code="{{ category.hsn_code or '' }}"
+                            {% if product and product.category_id == category.id %}selected{% endif %}>
+                      {{ category.name }} (GST: {{ category.gst_slab or '18.00' }}%)
+                    </option>
+                    {% endfor %}
+                  </select>
+                </div>
+
+                <div class="col-md-6 mb-3">
+                  <label for="brand_id" class="form-label fw-semibold">Brand</label>
+                  <select class="form-select" id="brand_id" name="brand_id">
+                    <option value="">No Brand</option>
+                    {% for brand in brands %}
+                    <option value="{{ brand.id }}"
+                            {% if product and product.brand_id == brand.id %}selected{% endif %}>
+                      {{ brand.name }}
+                    </option>
+                    {% endfor %}
+                  </select>
+                </div>
+              </div>
+
+              <!-- Pricing Information -->
+              <div class="row mb-4">
+                <div class="col-12">
+                  <h6 class="border-bottom pb-2 mb-3">
+                    <i class="bi bi-currency-rupee me-2 text-success"></i>Pricing & Inventory
+                  </h6>
+                </div>
+
+                <div class="col-md-4 mb-3">
+                  <label for="base_price" class="form-label fw-semibold">Base Price (₹) *</label>
+                  <input type="number" step="0.01" class="form-control" id="base_price" name="base_price"
+                         value="{{ "%.2f"|format(product.base_price) if product else '0.00' }}" required>
+                  <div class="form-text">Selling price in Indian Rupees.</div>
+                </div>
+
+                <div class="col-md-4 mb-3">
+                  <label for="compare_price" class="form-label fw-semibold">Compare Price (₹)</label>
+                  <input type="number" step="0.01" class="form-control" id="compare_price" name="compare_price"
+                         value="{{ "%.2f"|format(product.compare_price) if product and product.compare_price }}">
+                  <div class="form-text">Original price to show discount (optional).</div>
+                </div>
+
+                <div class="col-md-4 mb-3">
+                  <label for="cost_price" class="form-label fw-semibold">Cost Price (₹)</label>
+                  <input type="number" step="0.01" class="form-control" id="cost_price" name="cost_price"
+                         value="{{ "%.2f"|format(product.cost_price) if product and product.cost_price }}">
+                  <div class="form-text">Your cost for this product (internal use).</div>
+                </div>
+
+                <div class="col-md-4 mb-3">
+                  <label for="stock_quantity" class="form-label fw-semibold">Stock Quantity</label>
+                  <input type="number" class="form-control" id="stock_quantity" name="stock_quantity"
+                         value="{{ product.stock_quantity if product else '0' }}">
+                </div>
+
+                <div class="col-md-4 mb-3">
+                  <label for="low_stock_threshold" class="form-label fw-semibold">Low Stock Alert</label>
+                  <input type="number" class="form-control" id="low_stock_threshold" name="low_stock_threshold"
+                         value="{{ product.low_stock_threshold if product else '5' }}">
+                  <div class="form-text">Get alert when stock reaches this level.</div>
+                </div>
+
+                <!-- GST Calculation Preview -->
+                <div class="col-12 mt-3">
+                  <div class="gst-preview card border-info">
+                    <div class="card-body py-2">
+                      <div class="row align-items-center">
+                        <div class="col-md-6">
+                          <small class="text-muted">GST Calculation Preview:</small>
+                          <div id="gst-calculation-preview" class="fw-semibold text-info">
+                            Select category to see GST details
+                          </div>
+                        </div>
+                        <div class="col-md-6 text-end">
+                          <small class="text-muted" id="gst-inclusive-status">
+                            {% if product and product.is_gst_inclusive %}
+                            ✅ Price includes GST
+                            {% else %}
+                            ℹ️ GST will be calculated separately
+                            {% endif %}
+                          </small>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Indian Tax Information -->
+              <div class="row mb-4">
+                <div class="col-12">
+                  <h6 class="border-bottom pb-2 mb-3">
+                    <i class="bi bi-receipt me-2 text-warning"></i>Tax & Compliance (India)
+                  </h6>
+                </div>
+
+                <!-- Category GST Info Display -->
+                <div class="col-12 mb-3">
+                  <div class="alert alert-info" id="category-gst-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    <span id="gst-info-text">Select a category to see GST information</span>
+                  </div>
+                </div>
+
+                <div class="col-md-4 mb-3">
+                  <label for="gst_rate" class="form-label fw-semibold">GST Rate (%) *</label>
+                  <input type="number" step="0.01" class="form-control" id="gst_rate" name="gst_rate"
+                         value="{{ product.gst_rate if product else '18.00' }}" required>
+                  <div class="form-text">Applicable GST percentage.</div>
+                </div>
+
+                <div class="col-md-4 mb-3">
+                  <label for="hsn_code" class="form-label fw-semibold">HSN Code *</label>
+                  <input type="text" class="form-control" id="hsn_code" name="hsn_code"
+                         value="{{ product.hsn_code if product }}" required>
+                  <div class="form-text">Harmonized System of Nomenclature code.</div>
+                </div>
+
+                <div class="col-md-4 mb-3">
+                  <label for="is_gst_inclusive" class="form-label fw-semibold">GST Inclusive</label>
+                  <select class="form-select" id="is_gst_inclusive" name="is_gst_inclusive">
+                    <option value="1" {% if not product or product.is_gst_inclusive %}selected{% endif %}>
+                      Yes (Price includes GST)
+                    </option>
+                    <option value="0" {% if product and not product.is_gst_inclusive %}selected{% endif %}>
+                      No (GST will be added)
+                    </option>
+                  </select>
+                  <div class="form-text">Whether the base price includes GST.</div>
+                </div>
+
+                <!-- GST Calculation Examples -->
+                <div class="col-12 mt-3">
+                  <div class="card border-secondary">
+                    <div class="card-header py-2">
+                      <h6 class="mb-0"><i class="bi bi-calculator me-2"></i>GST Calculation Examples</h6>
+                    </div>
+                    <div class="card-body">
+                      <div class="row">
+                        <div class="col-md-6">
+                          <small class="text-success">✅ GST Inclusive (Recommended):</small>
+                          <div class="small text-muted">
+                            Price: ₹1,000 (includes ₹152.54 GST @18%)<br>
+                            Customer pays: ₹1,000
+                          </div>
+                        </div>
+                        <div class="col-md-6">
+                          <small class="text-warning">⚠️ GST Exclusive:</small>
+                          <div class="small text-muted">
+                            Price: ₹1,000 + ₹180 GST = ₹1,180<br>
+                            Customer pays: ₹1,180
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Product Details -->
+              <div class="row mb-4">
+                <div class="col-12">
+                  <h6 class="border-bottom pb-2 mb-3">
+                    <i class="bi bi-file-text me-2 text-info"></i>Product Details
+                  </h6>
+                </div>
+
+                <div class="col-12 mb-3">
+                  <label for="short_description" class="form-label fw-semibold">Short Description</label>
+                  <textarea class="form-control" id="short_description" name="short_description" rows="3">{{ product.short_description if product }}</textarea>
+                  <div class="form-text">Brief description shown in product listings.</div>
+                </div>
+
+                <div class="col-12 mb-3">
+                  <label for="description" class="form-label fw-semibold">Full Description</label>
+                  <textarea class="form-control" id="description" name="description" rows="6">{{ product.description if product }}</textarea>
+                  <div class="form-text">Detailed product description with features and benefits.</div>
+                </div>
+              </div>
+
+              <!-- Shipping & Physical Attributes -->
+              <div class="row mb-4">
+                <div class="col-12">
+                  <h6 class="border-bottom pb-2 mb-3">
+                    <i class="bi bi-truck me-2 text-secondary"></i>Shipping & Physical Attributes
+                  </h6>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                  <label for="weight_grams" class="form-label fw-semibold">Weight (grams)</label>
+                  <input type="number" step="0.01" class="form-control" id="weight_grams" name="weight_grams"
+                         value="{{ product.weight_grams if product }}">
+                  <div class="form-text">Weight in grams for shipping calculation.</div>
+                </div>
+
+                <div class="col-md-3 mb-3">
+                  <label for="length_cm" class="form-label fw-semibold">Length (cm)</label>
+                  <input type="number" step="0.01" class="form-control" id="length_cm" name="length_cm"
+                         value="{{ product.length_cm if product }}">
+                </div>
+
+                <div class="col-md-3 mb-3">
+                  <label for="width_cm" class="form-label fw-semibold">Width (cm)</label>
+                  <input type="number" step="0.01" class="form-control" id="width_cm" name="width_cm"
+                         value="{{ product.width_cm if product }}">
+                </div>
+
+                <div class="col-md-3 mb-3">
+                  <label for="height_cm" class="form-label fw-semibold">Height (cm)</label>
+                  <input type="number" step="0.01" class="form-control" id="height_cm" name="height_cm"
+                         value="{{ product.height_cm if product }}">
+                </div>
+              </div>
+
+              <!-- Status & Settings -->
+              <div class="row mb-4">
+                <div class="col-12">
+                  <h6 class="border-bottom pb-2 mb-3">
+                    <i class="bi bi-gear me-2 text-dark"></i>Status & Settings
+                  </h6>
+                </div>
+
+                <div class="col-md-6">
+                  <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="is_active" name="is_active"
+                           {% if not product or product.status == 'active' %}checked{% endif %}>
+                    <label class="form-check-label fw-semibold" for="is_active">Active Product</label>
+                    <div class="form-text">Make this product visible to customers.</div>
+                  </div>
+
+                  <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="is_featured" name="is_featured"
+                           {% if product and product.is_featured %}checked{% endif %}>
+                    <label class="form-check-label fw-semibold" for="is_featured">Featured Product</label>
+                    <div class="form-text">Show this product in featured sections.</div>
+                  </div>
+
+                  <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="track_inventory" name="track_inventory"
+                           {% if not product or product.track_inventory %}checked{% endif %}>
+                    <label class="form-check-label fw-semibold" for="track_inventory">Track Inventory</label>
+                    <div class="form-text">Enable stock quantity tracking.</div>
+                  </div>
+                </div>
+
+                <div class="col-md-6">
+                  <div class="form-check form-switch mb-3">
+                    <input class="form-check-input" type="checkbox" id="is_returnable" name="is_returnable"
+                           {% if not product or product.is_returnable %}checked{% endif %}>
+                    <label class="form-check-label fw-semibold" for="is_returnable">Returnable</label>
+                    <div class="form-text">Allow returns for this product.</div>
+                  </div>
+
+                  <div class="mb-3">
+                    <label for="return_period_days" class="form-label fw-semibold">Return Period (Days)</label>
+                    <input type="number" class="form-control" id="return_period_days" name="return_period_days"
+                           value="{{ product.return_period_days if product else '10' }}">
+                    <div class="form-text">Number of days for product returns.</div>
+                  </div>
+
+                  <div class="mb-3">
+                    <label for="warranty_period_months" class="form-label fw-semibold">Warranty (Months)</label>
+                    <input type="number" class="form-control" id="warranty_period_months" name="warranty_period_months"
+                           value="{{ product.warranty_period_months if product else '0' }}">
+                    <div class="form-text">Product warranty period in months.</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Form Actions -->
+              <div class="row">
+                <div class="col-12">
+                  <div class="d-flex gap-2 justify-content-end">
+                    <a href="{{ url_for('admin.products') }}" class="btn btn-secondary">
+                      <i class="bi bi-arrow-left me-2"></i>Cancel
+                    </a>
+                    <button type="submit" class="btn btn-primary">
+                      <i class="bi bi-{% if product %}check-lg{% else %}plus-circle{% endif %} me-2"></i>
+                      {% if product %}Update Product{% else %}Create Product{% endif %}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sidebar - Help & Tips -->
+      <div class="col-lg-4">
+        <div class="card" data-aos="fade-left" data-aos-delay="200">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-lightbulb me-2 text-warning"></i>GST & Tax Tips
+            </h6>
+          </div>
+          <div class="card-body">
+            <div class="alert alert-info">
+              <h6 class="alert-heading">
+                <i class="bi bi-shield-check me-2"></i>GST Compliance
+              </h6>
+              <ul class="mb-0 ps-3 small">
+                <li>Use correct HSN codes for product categories</li>
+                <li>Set appropriate GST rates (5%, 12%, 18%, 28%)</li>
+                <li>Mark prices as GST inclusive for better customer experience</li>
+                <li>Keep GST rates updated as per government notifications</li>
+              </ul>
+            </div>
+
+            <div class="alert alert-warning mt-3">
+              <h6 class="alert-heading">
+                <i class="bi bi-calculator me-2"></i>GST Calculation
+              </h6>
+              <ul class="mb-0 ps-3 small">
+                <li><strong>GST Inclusive:</strong> Price shown includes GST</li>
+                <li><strong>GST Exclusive:</strong> GST will be added at checkout</li>
+                <li>Recommended: Use GST inclusive pricing</li>
+              </ul>
+            </div>
+
+            <div class="alert alert-success mt-3">
+              <h6 class="alert-heading">
+                <i class="bi bi-file-text me-2"></i>Documentation
+              </h6>
+              <ul class="mb-0 ps-3 small">
+                <li>Maintain proper HSN code records</li>
+                <li>Keep GST invoices for 6+ years</li>
+                <li>Update GST rates during budget changes</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- Product Status -->
+        <div class="card mt-4" data-aos="fade-left" data-aos-delay="300">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-speedometer2 me-2 text-primary"></i>Product Status
+            </h6>
+          </div>
+          <div class="card-body">
+            {% if product %}
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">Created:</span>
+              <strong>{{ product.created_at.strftime('%d %b %Y') }}</strong>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">Last Updated:</span>
+              <strong>{{ product.updated_at.strftime('%d %b %Y') }}</strong>
+            </div>
+            <div class="d-flex justify-content-between mb-2">
+              <span class="text-muted">Views:</span>
+              <strong>{{ product.view_count or 0 }}</strong>
+            </div>
+            <div class="d-flex justify-content-between">
+              <span class="text-muted">Total Sold:</span>
+              <strong>{{ product.total_sold or 0 }}</strong>
+            </div>
+            {% else %}
+            <p class="text-muted mb-0">Product statistics will appear here after creation.</p>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Quick GST Reference -->
+        <div class="card mt-4" data-aos="fade-left" data-aos-delay="400">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-list-check me-2 text-success"></i>Common GST Rates
+            </h6>
+          </div>
+          <div class="card-body">
+            <div class="small">
+              <div class="d-flex justify-content-between mb-1">
+                <span>Essential Goods:</span>
+                <strong>0% - 5%</strong>
+              </div>
+              <div class="d-flex justify-content-between mb-1">
+                <span>Processed Foods:</span>
+                <strong>12%</strong>
+              </div>
+              <div class="d-flex justify-content-between mb-1">
+                <span>Electronics, Restaurants:</span>
+                <strong>18%</strong>
+              </div>
+              <div class="d-flex justify-content-between">
+                <span>Luxury Items, Autos:</span>
+                <strong>28%</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<!-- Admin Product Form JS -->
+<script src="{{ url_for('static', filename='js/admin_product_form.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{% block title %}Cart - Pavitra Enterprises{% endblock %}
+
+{% block content %}
+<div class="page-title light-background">
+  <div class="container d-lg-flex justify-content-between align-items-center py-3">
+    <h1 class="mb-2 mb-lg-0">Shopping Cart</h1>
+    <nav class="breadcrumbs">
+      <ol>
+        <li><a href="{{ url_for('shop.index') }}">Home</a></li>
+        <li class="current">Cart</li>
+      </ol>
+    </nav>
+  </div>
+</div>
+
+<section id="cart" class="cart section">
+  <div class="container" data-aos="fade-up">
+    {% if cart_items %}
+    <div class="row">
+      <div class="col-lg-8">
+        <div class="cart-items">
+          <div class="cart-header d-none d-lg-block">
+            <div class="row align-items-center">
+              <div class="col-lg-5"><h5>Product</h5></div>
+              <div class="col-lg-2 text-center"><h5>Price</h5></div>
+              <div class="col-lg-2 text-center"><h5>Quantity</h5></div>
+              <div class="col-lg-2 text-center"><h5>Total</h5></div>
+              <div class="col-lg-1 text-center"><h5>Action</h5></div>
+            </div>
+          </div>
+
+          {% for item in cart_items %}
+          <div class="cart-item border rounded p-3 mb-3" data-item-id="{{ item.id }}">
+            <div class="row align-items-center">
+              <div class="col-lg-5 col-12">
+                <div class="product-info d-flex align-items-center">
+                  <div class="product-image me-3">
+                    <img src="{{ item.product_image or url_for('static', filename='img/product/placeholder.jpg') }}"
+                         alt="{{ item.product_name }}"
+                         class="img-fluid rounded"
+                         style="width: 80px; height: 80px; object-fit: cover;">
+                  </div>
+                  <div class="product-details">
+                    <h6 class="product-title mb-1">{{ item.product_name }}</h6>
+                    <p class="product-sku text-muted small mb-1">SKU: {{ item.product_sku }}</p>
+                    {% if item.product and item.product.gst_rate %}
+                    <small class="text-muted">GST: {{ item.product.gst_rate }}%</small>
+                    {% endif %}
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-2 col-12 mt-2 mt-lg-0 text-center">
+                <span class="current-price fw-bold">{{ currency_symbol }}{{ "%.2f"|format(item.unit_price) }}</span>
+                {% if item.product and item.product.compare_price and item.product.compare_price > item.product.base_price %}
+                <br>
+                <small class="text-muted text-decoration-line-through">{{ currency_symbol }}{{ "%.2f"|format(item.product.compare_price) }}</small>
+                {% endif %}
+              </div>
+              <div class="col-lg-2 col-12 mt-2 mt-lg-0 text-center">
+                <div class="quantity-selector d-inline-flex align-items-center">
+                  <div class="d-flex quantity-form" data-item-id="{{ item.id }}">
+                    <button type="button" class="btn btn-outline-secondary btn-sm quantity-btn" data-action="decrease">
+                      <i class="bi bi-dash"></i>
+                    </button>
+                    <span class="quantity-display mx-2 fw-bold">{{ item.quantity }}</span>
+                    <button type="button" class="btn btn-outline-secondary btn-sm quantity-btn" data-action="increase">
+                      <i class="bi bi-plus"></i>
+                    </button>
+                  </div>
+                </div>
+                {% if item.product and item.product.max_cart_quantity %}
+                <small class="text-muted d-block mt-1">Max: {{ item.product.max_cart_quantity }}</small>
+                {% endif %}
+              </div>
+              <div class="col-lg-2 col-12 mt-2 mt-lg-0 text-center">
+                <div class="item-total">
+                  <span class="fw-bold text-success">{{ currency_symbol }}{{ "%.2f"|format(item.total_price) }}</span>
+                </div>
+              </div>
+              <div class="col-lg-1 col-12 mt-2 mt-lg-0 text-center">
+                <button type="button" class="btn btn-outline-danger btn-sm remove-item-btn" data-item-id="{{ item.id }}">
+                  <i class="bi bi-trash"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+
+          <!-- Coupon Section -->
+          <div class="coupon-section mt-4">
+            <div class="card">
+              <div class="card-body">
+                {% if applied_coupon %}
+                <div class="applied-coupon alert alert-success">
+                  <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                      <strong><i class="bi bi-tag-fill me-2"></i>{{ applied_coupon.name }}</strong>
+                      <small class="d-block text-muted">Code: {{ applied_coupon.code }}</small>
+                      <small class="d-block">
+                        Discount:
+                        {% if applied_coupon.discount_type == 'percentage' %}
+                          {{ applied_coupon.discount_amount|float }}%
+                        {% else %}
+                          ₹{{ "%.2f"|format(applied_coupon.discount_amount) }}
+                        {% endif %}
+                      </small>
+                    </div>
+                    <button type="button" class="btn btn-outline-danger btn-sm" id="removeCouponBtn">
+                      <i class="bi bi-x-circle"></i> Remove
+                    </button>
+                  </div>
+                </div>
+                {% else %}
+                <div class="coupon-form">
+                  <h6 class="mb-3"><i class="bi bi-tag me-2"></i>Apply Coupon</h6>
+                  <div class="input-group">
+                    <input type="text" class="form-control" id="couponCode" placeholder="Enter coupon code" maxlength="20">
+                    <button class="btn btn-primary" type="button" id="applyCouponBtn">
+                      <i class="bi bi-check-circle me-2"></i>Apply
+                    </button>
+                  </div>
+                  <div id="couponMessage" class="mt-2"></div>
+                </div>
+                {% endif %}
+              </div>
+            </div>
+          </div>
+
+          <div class="cart-actions mt-4">
+            <div class="row">
+              <div class="col-lg-6 mb-3 mb-lg-0">
+                <a href="{{ url_for('shop.products') }}" class="btn btn-outline-secondary">
+                  <i class="bi bi-arrow-left me-2"></i>Continue Shopping
+                </a>
+              </div>
+              <div class="col-lg-6 text-lg-end">
+                <button type="button" class="btn btn-outline-danger" id="clearCartBtn">
+                  <i class="bi bi-trash me-2"></i>Clear Cart
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-lg-4 mt-4 mt-lg-0">
+        <div class="cart-summary border rounded p-4">
+          <h4 class="summary-title mb-4">Order Summary</h4>
+
+          <div class="summary-item d-flex justify-content-between mb-2">
+            <span class="summary-label">Subtotal ({{ total_items }} items)</span>
+            <span class="summary-value">{{ currency_symbol }}{{ "%.2f"|format(subtotal) }}</span>
+          </div>
+
+          <div class="summary-item d-flex justify-content-between mb-2">
+            <span class="summary-label">Shipping</span>
+            <span class="summary-value">
+              {% if subtotal >= 999 %}
+              <span class="text-success">FREE</span>
+              {% else %}
+              {{ currency_symbol }}50.00
+              {% endif %}
+            </span>
+          </div>
+
+          <div class="summary-item d-flex justify-content-between mb-2">
+            <span class="summary-label">GST</span>
+            <span class="summary-value">{{ currency_symbol }}{{ "%.2f"|format(tax_amount) }}</span>
+          </div>
+
+          {% if discount_amount > 0 %}
+            <div class="summary-item d-flex justify-content-between mb-2 text-success">
+                <span class="summary-label">
+                    Discount
+                    {% if session.applied_coupon %}
+                    ({{ session.applied_coupon.code }})
+                    {% endif %}
+                </span>
+                <span class="summary-value">-{{ currency_symbol }}{{ "%.2f"|format(discount_amount) }}</span>
+            </div>
+            {% endif %}
+
+          <hr>
+          <div class="summary-total d-flex justify-content-between mb-4">
+            <span class="summary-label fw-bold fs-5">Total Amount</span>
+            <span class="summary-value fw-bold fs-5 text-success">{{ currency_symbol }}{{ "%.2f"|format(final_total) }}</span>
+          </div>
+
+          {% if subtotal < 999 %}
+          <div class="free-shipping-alert alert alert-info mb-4">
+            <small>
+              <i class="bi bi-info-circle me-1"></i>
+              Add {{ currency_symbol }}{{ "%.2f"|format(999 - subtotal) }} more for <strong>FREE shipping</strong>!
+            </small>
+          </div>
+          {% endif %}
+
+          <div class="checkout-button mb-3">
+            <a href="{{ url_for('shop.checkout') }}" class="btn btn-primary w-100 py-2">
+              <i class="bi bi-lock me-2"></i>Proceed to Checkout
+            </a>
+          </div>
+
+          <div class="security-info text-center">
+            <small class="text-muted">
+              <i class="bi bi-shield-check me-1"></i>
+              Secure checkout · SSL encrypted
+            </small>
+          </div>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="row">
+      <div class="col-12">
+        <div class="empty-cart text-center py-5">
+          <div class="empty-icon mb-4">
+            <i class="bi bi-cart-x display-1 text-muted"></i>
+          </div>
+          <h3 class="mb-3">Your Cart is Empty</h3>
+          <p class="text-muted mb-4">Looks like you haven't added any items to your cart yet.</p>
+          <a href="{{ url_for('shop.products') }}" class="btn btn-primary btn-lg">
+            <i class="bi bi-bag me-2"></i>Start Shopping
+          </a>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/cart.js') }}"></script>
+{% endblock %}

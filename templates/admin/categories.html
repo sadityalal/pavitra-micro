@@ -1,0 +1,411 @@
+{% extends "admin/base.html" %}
+
+{% block title %}Category Management - Pavitra Enterprises{% endblock %}
+
+{% block page_title %}Category Management{% endblock %}
+
+{% block breadcrumb %}
+<li class="breadcrumb-item"><a href="{{ url_for('admin.dashboard') }}">Dashboard</a></li>
+<li class="breadcrumb-item active">Categories</li>
+{% endblock %}
+
+{% block content %}
+<!-- Categories Management Section -->
+<section class="section">
+  <div class="container-fluid">
+
+    <!-- Header with Stats and Actions -->
+    <div class="row mb-4">
+      <div class="col-md-8">
+        <h5 class="text-heading-color mb-3">
+          <i class="bi bi-tags me-2"></i>Product Categories
+        </h5>
+        <p class="text-muted mb-0">Manage your product categories and monitor catalog health.</p>
+      </div>
+      <div class="col-md-4 text-end">
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCategoryModal">
+          <i class="bi bi-plus-circle me-2"></i>Add New Category
+        </button>
+      </div>
+    </div>
+
+    <!-- Category Health Overview Cards -->
+    <!-- Category Overview Cards -->
+<div class="row mb-4">
+    <!-- Total Categories Card -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card clickable-card stats-card h-100" data-action="view-all" data-aos="fade-up">
+            <div class="card-body">
+                <div class="stats-icon text-primary">
+                    <i class="bi bi-tags"></i>
+                </div>
+                <div class="stats-content">
+                    <h3>{{ categories|length }}</h3>
+                    <p>Total Categories</p>
+                    <span class="stats-trend text-success">
+                        <i class="bi bi-collection"></i> All categories
+                    </span>
+                </div>
+                <div class="card-overlay">
+                    <div class="overlay-content">
+                        <i class="bi bi-eye"></i>
+                        <span>View All Categories</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Empty Categories Card -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card clickable-card stats-card h-100" data-action="view-empty" data-aos="fade-up" data-aos-delay="100">
+            <div class="card-body">
+                <div class="stats-icon text-danger">
+                    <i class="bi bi-folder-x"></i>
+                </div>
+                <div class="stats-content">
+                    <h3>{{ empty_categories_count }}</h3>
+                    <p>Empty Categories</p>
+                    <span class="stats-trend text-danger">
+                        <i class="bi bi-exclamation-triangle"></i> No products
+                    </span>
+                </div>
+                <div class="card-overlay">
+                    <div class="overlay-content">
+                        <i class="bi bi-folder-x"></i>
+                        <span>View Empty Categories</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Low Product Categories Card -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card clickable-card stats-card h-100" data-action="view-low" data-aos="fade-up" data-aos-delay="200">
+            <div class="card-body">
+                <div class="stats-icon text-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                </div>
+                <div class="stats-content">
+                    <h3>{{ low_product_categories_count }}</h3>
+                    <p>Few Products</p>
+                    <span class="stats-trend text-warning">
+                        <i class="bi bi-info-circle"></i> 1-2 products only
+                    </span>
+                </div>
+                <div class="card-overlay">
+                    <div class="overlay-content">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <span>View Categories with Few Products</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Healthy Categories Card -->
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card clickable-card stats-card h-100" data-action="view-healthy" data-aos="fade-up" data-aos-delay="300">
+            <div class="card-body">
+                <div class="stats-icon text-success">
+                    <i class="bi bi-check-circle"></i>
+                </div>
+                <div class="stats-content">
+                    <h3>{{ healthy_categories_count }}</h3>
+                    <p>Well-Stocked</p>
+                    <span class="stats-trend text-success">
+                        <i class="bi bi-check-lg"></i> 3+ products
+                    </span>
+                </div>
+                <div class="card-overlay">
+                    <div class="overlay-content">
+                        <i class="bi bi-check-circle"></i>
+                        <span>View Well-Stocked Categories</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+    <!-- Quick Action Cards -->
+    <div class="row mb-4">
+      <div class="col-12">
+        <div class="card" data-aos="fade-up">
+          <div class="card-header">
+            <h6 class="card-title mb-0">
+              <i class="bi bi-lightning me-2"></i>Quick Actions
+            </h6>
+          </div>
+          <div class="card-body">
+            <div class="row g-3">
+              <div class="col-md-3">
+                <div class="quick-action-card" data-action="fix-empty-categories">
+                  <div class="action-icon text-warning">
+                    <i class="bi bi-folder-plus"></i>
+                  </div>
+                  <div class="action-content">
+                    <h6>Fix Empty</h6>
+                    <p>Add products to empty categories</p>
+                  </div>
+                  <div class="action-badge" id="empty-categories-badge">0</div>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="quick-action-card" data-action="restock-categories">
+                  <div class="action-icon text-danger">
+                    <i class="bi bi-arrow-up-circle"></i>
+                  </div>
+                  <div class="action-content">
+                    <h6>Restock</h6>
+                    <p>Manage low stock categories</p>
+                  </div>
+                  <div class="action-badge" id="low-stock-badge">0</div>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="quick-action-card" data-action="bulk-edit">
+                  <div class="action-icon text-primary">
+                    <i class="bi bi-pencil-square"></i>
+                  </div>
+                  <div class="action-content">
+                    <h6>Bulk Edit</h6>
+                    <p>Edit multiple categories</p>
+                  </div>
+                </div>
+              </div>
+              <div class="col-md-3">
+                <div class="quick-action-card" data-action="export-report">
+                  <div class="action-icon text-info">
+                    <i class="bi bi-download"></i>
+                  </div>
+                  <div class="action-content">
+                    <h6>Export Report</h6>
+                    <p>Export category health report</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Categories Table View -->
+    <div class="card" data-aos="fade-up">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="card-title mb-0">
+          <i class="bi bi-list-ul me-2"></i>All Categories
+        </h6>
+        <div class="d-flex gap-2">
+          <div class="input-group input-group-sm" style="width: 250px;">
+            <input type="text" class="form-control" placeholder="Search categories..." id="categorySearch">
+            <button class="btn btn-outline-secondary" type="button">
+              <i class="bi bi-search"></i>
+            </button>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary" id="refreshCategories">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        {% if categories %}
+        <div class="table-responsive">
+          <table class="table table-hover" id="categoriesTable">
+            <thead>
+              <tr>
+                <th width="50">#</th>
+                <th>Category</th>
+                <th>Products</th>
+                <th>Health Status</th>
+                <th>GST Rate</th>
+                <th>Status</th>
+                <th>Featured</th>
+                <th>Created</th>
+                <th width="150">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for category in categories %}
+              <tr data-category-id="{{ category.id }}" class="category-row"
+                  data-product-count="{{ category.get_product_count() }}"
+                  data-health-status="{% if category.get_product_count() == 0 %}empty{% elif category.get_product_count() <= 2 %}low{% else %}healthy{% endif %}">
+                <td>
+                  <div class="form-check">
+                    <input class="form-check-input category-checkbox" type="checkbox" value="{{ category.id }}">
+                  </div>
+                </td>
+                <td>
+                  <div class="d-flex align-items-center">
+                    {% if category.image_url %}
+                    <img src="{{ category.image_url }}" alt="{{ category.name }}"
+                         class="rounded me-3" width="40" height="40" style="object-fit: cover;">
+                    {% else %}
+                    <div class="bg-light rounded d-flex align-items-center justify-content-center me-3"
+                         style="width: 40px; height: 40px;">
+                      <i class="bi bi-folder text-muted"></i>
+                    </div>
+                    {% endif %}
+                    <div>
+                      <h6 class="mb-1">{{ category.name }}</h6>
+                      <small class="text-muted">
+                        {% if category.parent %}
+                        <i class="bi bi-arrow-return-right me-1"></i>Subcategory of {{ category.parent.name }}
+                        {% else %}
+                        <i class="bi bi-house me-1"></i>Main Category
+                        {% endif %}
+                        {% if category.name_hindi %}
+                        <br><span class="text-info">({{ category.name_hindi }})</span>
+                        {% endif %}
+                      </small>
+                    </div>
+                  </div>
+                </td>
+                <td>
+                  <span class="badge bg-primary rounded-pill">{{ category.get_product_count() }}</span>
+                </td>
+                <td>
+                  {% if category.get_product_count() == 0 %}
+                  <span class="badge bg-warning">
+                    <i class="bi bi-folder-x me-1"></i>Empty
+                  </span>
+                  {% elif category.get_product_count() <= 2 %}
+                  <span class="badge bg-danger">
+                    <i class="bi bi-exclamation-triangle me-1"></i>Low Stock
+                  </span>
+                  {% else %}
+                  <span class="badge bg-success">
+                    <i class="bi bi-check-circle me-1"></i>Healthy
+                  </span>
+                  {% endif %}
+                </td>
+                <td>
+                  <span class="badge bg-success">{{ category.gst_slab }}%</span>
+                  {% if category.hsn_code %}
+                  <br><small class="text-muted">{{ category.hsn_code }}</small>
+                  {% endif %}
+                </td>
+                <td>
+                  <span class="badge {% if category.is_active %}bg-success{% else %}bg-secondary{% endif %}">
+                    {% if category.is_active %}Active{% else %}Inactive{% endif %}
+                  </span>
+                </td>
+                <td>
+                  {% if category.is_featured %}
+                  <i class="bi bi-star-fill text-warning" title="Featured"></i>
+                  {% else %}
+                  <i class="bi bi-star text-muted" title="Not Featured"></i>
+                  {% endif %}
+                </td>
+                <td>
+                  <small class="text-muted">{{ category.created_at.strftime('%d %b %Y') }}</small>
+                </td>
+                <td>
+                  <div class="btn-group btn-group-sm" role="group">
+                    <button class="btn btn-outline-primary edit-category"
+                            data-category-id="{{ category.id }}"
+                            title="Edit Category">
+                      <i class="bi bi-pencil"></i>
+                    </button>
+                    <button class="btn btn-outline-info view-products"
+                            data-category-id="{{ category.id }}"
+                            title="View Products">
+                      <i class="bi bi-eye"></i>
+                    </button>
+                    <button class="btn btn-outline-success add-products"
+                            data-category-id="{{ category.id }}"
+                            title="Add Products">
+                      <i class="bi bi-plus-circle"></i>
+                    </button>
+                    {% if category.is_active %}
+                    <button class="btn btn-outline-warning toggle-category"
+                            data-category-id="{{ category.id }}"
+                            data-action="deactivate"
+                            title="Deactivate">
+                      <i class="bi bi-pause"></i>
+                    </button>
+                    {% else %}
+                    <button class="btn btn-outline-success toggle-category"
+                            data-category-id="{{ category.id }}"
+                            data-action="activate"
+                            title="Activate">
+                      <i class="bi bi-play"></i>
+                    </button>
+                    {% endif %}
+                    <button class="btn btn-outline-danger delete-category"
+                            data-category-id="{{ category.id }}"
+                            title="Delete Category">
+                      <i class="bi bi-trash"></i>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Bulk Actions -->
+        <div class="row mt-3">
+          <div class="col-md-6">
+            <div class="d-flex align-items-center gap-2">
+              <select class="form-select form-select-sm" style="width: auto;" id="bulkAction">
+                <option value="">Bulk Actions</option>
+                <option value="activate">Activate Selected</option>
+                <option value="deactivate">Deactivate Selected</option>
+                <option value="feature">Mark as Featured</option>
+                <option value="unfeature">Remove Featured</option>
+                <option value="delete">Delete Selected</option>
+              </select>
+              <button class="btn btn-sm btn-outline-primary" id="applyBulkAction">Apply</button>
+            </div>
+          </div>
+          <div class="col-md-6 text-end">
+            <small class="text-muted">{{ categories|length }} categories found</small>
+          </div>
+        </div>
+        {% else %}
+        <div class="text-center py-5">
+          <i class="bi bi-tags display-4 text-muted"></i>
+          <h5 class="text-muted mt-3">No Categories Found</h5>
+          <p class="text-muted">Get started by creating your first product category.</p>
+          <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#addCategoryModal">
+            <i class="bi bi-plus-circle me-2"></i>Create First Category
+          </button>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- Add Category Modal -->
+<div class="modal fade" id="addCategoryModal" tabindex="-1" aria-labelledby="addCategoryModalLabel" aria-hidden="true">
+  <!-- Your existing modal content -->
+</div>
+
+<!-- Health Report Modal -->
+<div class="modal fade" id="healthReportModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">
+          <i class="bi bi-heart-pulse me-2"></i>Category Health Report
+        </h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="healthReportContent">
+        <!-- Content loaded dynamically -->
+      </div>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/admin_categories.js') }}"></script>
+{% endblock %}
