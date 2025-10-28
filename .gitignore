@@ -42,3 +42,10 @@ docker-compose.override.yml
 mysql_data
 database
 
+# MQ
+rabbitmq_data
+
+# Cache
+redis_data
+
+

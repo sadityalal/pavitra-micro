@@ -1,22 +1,29 @@
+// frontend/src/components/layout/Header.js
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import UserMenu from '../common/UserMenu';
+import { Link } from 'react-router-dom';
 
 const Header = () => {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, siteSettings } = useAuth();
   const { totalItems } = useCart();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   useEffect(() => {
-    // Initialize Bootstrap components when component mounts
-    if (typeof window !== 'undefined' && window.bootstrap) {
-      // Initialize dropdowns
-      const dropdowns = document.querySelectorAll('.dropdown-toggle');
-      dropdowns.forEach(dropdown => {
-        new window.bootstrap.Dropdown(dropdown);
-      });
+    // Initialize AOS and other animations
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        if (window.AOS) {
+          window.AOS.init({
+            duration: 1000,
+            easing: 'ease-in-out',
+            once: true,
+            mirror: false
+          });
+        }
+      }, 100);
     }
   }, []);
 
@@ -41,17 +48,15 @@ const Header = () => {
                 <a href="tel:+919711317009">+91-9711317009</a>
               </div>
             </div>
-
             <div className="col-lg-4 text-center">
               <div className="announcement-slider">
                 <div className="swiper-wrapper">
-                  <div className="swiper-slide">🚚 Free shipping on orders over ₹999</div>
-                  <div className="swiper-slide">💰 10-day money back guarantee</div>
+                  <div className="swiper-slide">🚚 Free shipping on orders over {siteSettings.currency_symbol || '₹'}{siteSettings.free_shipping_threshold || 999}</div>
+                  <div className="swiper-slide">💰 {siteSettings.return_period_days || 10}-day money back guarantee</div>
                   <div className="swiper-slide">🎁 20% off on your first order</div>
                 </div>
               </div>
             </div>
-
             <div className="col-lg-4">
               <div className="d-flex justify-content-end">
                 <div className="top-bar-item dropdown me-3">
@@ -82,11 +87,11 @@ const Header = () => {
         <div className="container-fluid container-xl">
           <div className="d-flex py-3 align-items-center justify-content-between">
             {/* Logo */}
-            <a href="/" className="logo d-flex align-items-center text-decoration-none">
+            <Link to="/" className="logo d-flex align-items-center text-decoration-none">
               <h1 className="sitename mb-0">Pavitra Enterprises</h1>
-            </a>
+            </Link>
 
-            {/* Desktop Search Form */}
+            {/* Search Form */}
             <form className="search-form desktop-search-form d-none d-xl-flex" action="/search" method="GET">
               <div className="input-group">
                 <input type="text" className="form-control" name="q" placeholder="Search for products" />
@@ -96,7 +101,7 @@ const Header = () => {
               </div>
             </form>
 
-            {/* Actions */}
+            {/* Header Actions */}
             <div className="header-actions d-flex align-items-center">
               {/* Mobile Search Toggle */}
               <button
@@ -118,16 +123,16 @@ const Header = () => {
               </div>
 
               {/* Wishlist */}
-              <a href="/account?tab=wishlist" className="header-action-btn d-none d-md-flex position-relative">
+              <Link to="/account?tab=wishlist" className="header-action-btn d-none d-md-flex position-relative">
                 <i className="bi bi-heart"></i>
-                <span className="badge bg-primary">{0}</span>
-              </a>
+                <span className="badge bg-primary">0</span>
+              </Link>
 
               {/* Cart */}
-              <a href="/cart" className="header-action-btn position-relative">
+              <Link to="/cart" className="header-action-btn position-relative">
                 <i className="bi bi-cart3"></i>
                 <span className="badge bg-primary" id="cart-count">{totalItems}</span>
-              </a>
+              </Link>
 
               {/* Mobile Navigation Toggle */}
               <button
@@ -147,10 +152,10 @@ const Header = () => {
           <nav id="navmenu" className="navmenu">
             <ul className="d-flex flex-column flex-xl-row mb-0">
               <li className="nav-item">
-                <a href="/" className="nav-link active">Home</a>
+                <Link to="/" className="nav-link active">Home</Link>
               </li>
               <li className="nav-item">
-                <a href="/about" className="nav-link">About</a>
+                <Link to="/about" className="nav-link">About</Link>
               </li>
 
               {/* Products Mega Menu */}
@@ -159,17 +164,17 @@ const Header = () => {
                   <span>Shop</span> <i className="bi bi-chevron-down ms-1"></i>
                 </a>
                 <div className="dropdown-menu dropdown-menu-start p-3" style={{minWidth: '300px'}}>
-                  <a className="dropdown-item" href="/products">All Products</a>
-                  <a className="dropdown-item" href="/products?featured=true">Featured Products</a>
-                  <a className="dropdown-item" href="/products?new_arrivals=true">New Arrivals</a>
-                  <a className="dropdown-item" href="/products?on_sale=true">On Sale</a>
+                  <Link className="dropdown-item" to="/products">All Products</Link>
+                  <Link className="dropdown-item" to="/products?featured=true">Featured Products</Link>
+                  <Link className="dropdown-item" to="/products?new_arrivals=true">New Arrivals</Link>
+                  <Link className="dropdown-item" to="/products?on_sale=true">On Sale</Link>
                   <div className="dropdown-divider"></div>
-                  <a className="dropdown-item" href="/categories">Browse Categories</a>
+                  <Link className="dropdown-item" to="/categories">Browse Categories</Link>
                 </div>
               </li>
 
               <li className="nav-item">
-                <a href="/contact" className="nav-link">Contact</a>
+                <Link to="/contact" className="nav-link">Contact</Link>
               </li>
             </ul>
           </nav>

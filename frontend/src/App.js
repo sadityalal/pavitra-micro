@@ -22,8 +22,11 @@ function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/products" element={<Products />} />
+              <Route path="/products/:id" element={<Products />} />
+              <Route path="/categories/:id" element={<Products />} />
               <Route path="/cart" element={<Cart />} />
               <Route path="/account" element={<Account />} />
+              <Route path="/account/:tab" element={<Account />} />
             </Routes>
           </Layout>
         </Router>
