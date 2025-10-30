@@ -1,3 +1,4 @@
+// frontend/src/config/api.js
 import { config } from './environment.js'
 
 const isProduction = import.meta.env.PROD
@@ -12,16 +13,19 @@ export const SERVICE_URLS = {
 
 export const getImageUrl = (imagePath) => {
   if (!imagePath) {
-    return '/images/placeholder-product.jpg'
+    return '/static/img/product/placeholder.jpg'
   }
 
-  // If it's already a full URL, return as is
   if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
     return imagePath
   }
 
-  // For ALL environments, use the full backend URL
-  // This is the key fix - always go directly to the backend for images
+  // For static assets served from the public directory
+  if (imagePath.startsWith('/static/') || imagePath.startsWith('static/')) {
+    return imagePath.startsWith('/') ? imagePath : `/${imagePath}`
+  }
+
+  // For product images from the backend
   const backendUrl = config.PRODUCT_SERVICE_URL
   const normalizedPath = imagePath.startsWith('/') ? imagePath : `/${imagePath}`
   return `${backendUrl}${normalizedPath}`

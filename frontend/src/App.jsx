@@ -1,3 +1,4 @@
+// frontend/src/App.jsx
 import React from 'react'
 import { Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'

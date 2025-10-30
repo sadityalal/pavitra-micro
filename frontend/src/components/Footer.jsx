@@ -1,3 +1,4 @@
+// frontend/src/components/Footer.jsx
 import React from 'react'
 import { Container, Row, Col } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
@@ -6,115 +7,117 @@ const Footer = () => {
   const currentYear = new Date().getFullYear()
 
   return (
-    <footer className="bg-dark text-light py-5 mt-5">
-      <Container>
-        <Row>
-          <Col lg={4} md={6} className="mb-4">
-            <h5 className="mb-3">
-              <i className="fas fa-store me-2"></i>
-              Belo2 Store
-            </h5>
-            <p className="text-muted">
-              Your trusted e-commerce partner for quality products, fast delivery,
-              and exceptional customer service. Shop with confidence.
-            </p>
-            <div className="social-links">
-              <a href="#" className="text-light me-3">
-                <i className="fab fa-facebook-f"></i>
-              </a>
-              <a href="#" className="text-light me-3">
-                <i className="fab fa-twitter"></i>
-              </a>
-              <a href="#" className="text-light me-3">
-                <i className="fab fa-instagram"></i>
-              </a>
-              <a href="#" className="text-light">
-                <i className="fab fa-linkedin-in"></i>
-              </a>
-            </div>
-          </Col>
+    <footer id="footer" className="footer dark-background">
+      <div className="footer-main">
+        <Container>
+          <Row className="gy-4">
+            <Col lg={4} md={6}>
+              <div className="footer-widget footer-about">
+                <Link to="/" className="logo text-decoration-none">
+                  <span className="sitename">Pavitra Enterprises</span>
+                </Link>
+                <p>Your trusted destination for quality products at great prices. We offer a wide range of electronics, clothing, home goods and more with excellent customer service.</p>
 
-          <Col lg={2} md={6} className="mb-4">
-            <h6 className="mb-3">Quick Links</h6>
-            <ul className="list-unstyled">
-              <li className="mb-2">
-                <Link to="/" className="text-muted text-decoration-none">Home</Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/products" className="text-muted text-decoration-none">Products</Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/about" className="text-muted text-decoration-none">About Us</Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/contact" className="text-muted text-decoration-none">Contact</Link>
-              </li>
-            </ul>
-          </Col>
+                <div className="social-links mt-4">
+                  <h5>Connect With Us</h5>
+                  <div className="social-icons">
+                    <a href="#" aria-label="Facebook"><i className="bi bi-facebook"></i></a>
+                    <a href="#" aria-label="Instagram"><i className="bi bi-instagram"></i></a>
+                    <a href="#" aria-label="Twitter"><i className="bi bi-twitter-x"></i></a>
+                    <a href="#" aria-label="YouTube"><i className="bi bi-youtube"></i></a>
+                  </div>
+                </div>
+              </div>
+            </Col>
 
-          <Col lg={3} md={6} className="mb-4">
-            <h6 className="mb-3">Customer Service</h6>
-            <ul className="list-unstyled">
-              <li className="mb-2">
-                <Link to="/faq" className="text-muted text-decoration-none">FAQ</Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/shipping" className="text-muted text-decoration-none">Shipping Info</Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/returns" className="text-muted text-decoration-none">Returns & Refunds</Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/privacy" className="text-muted text-decoration-none">Privacy Policy</Link>
-              </li>
-              <li className="mb-2">
-                <Link to="/terms" className="text-muted text-decoration-none">Terms of Service</Link>
-              </li>
-            </ul>
-          </Col>
+            <Col lg={2} md={6} sm={6}>
+              <div className="footer-widget">
+                <h4>Shop</h4>
+                <ul className="footer-links">
+                  <li><Link to="/products?new=true">New Arrivals</Link></li>
+                  <li><Link to="/products?featured=true">Bestsellers</Link></li>
+                  <li><Link to="/products">All Products</Link></li>
+                  <li><Link to="/products?sale=true">Sale</Link></li>
+                  <li><Link to="/products?featured=true">Featured</Link></li>
+                </ul>
+              </div>
+            </Col>
 
-          <Col lg={3} md={6} className="mb-4">
-            <h6 className="mb-3">Contact Info</h6>
-            <ul className="list-unstyled text-muted">
-              <li className="mb-2">
-                <i className="fas fa-map-marker-alt me-2"></i>
-                123 Business Street, Mumbai, MH 400001
-              </li>
-              <li className="mb-2">
-                <i className="fas fa-phone me-2"></i>
-                +91-9711317009
-              </li>
-              <li className="mb-2">
-                <i className="fas fa-envelope me-2"></i>
-                support@pavitraenterprises.com
-              </li>
-              <li className="mb-2">
-                <i className="fas fa-clock me-2"></i>
-                Mon-Fri: 9AM-6PM
-              </li>
-            </ul>
-          </Col>
-        </Row>
+            <Col lg={2} md={6} sm={6}>
+              <div className="footer-widget">
+                <h4>Support</h4>
+                <ul className="footer-links">
+                  <li><Link to="/contact">Help Center</Link></li>
+                  <li><Link to="/orders">Order Status</Link></li>
+                  <li><Link to="/shipping">Shipping Info</Link></li>
+                  <li><Link to="/returns">Returns &amp; Exchanges</Link></li>
+                  <li><Link to="/faq">FAQs</Link></li>
+                  <li><Link to="/contact">Contact Us</Link></li>
+                </ul>
+              </div>
+            </Col>
 
-        <hr className="my-4" />
+            <Col lg={4} md={6}>
+              <div className="footer-widget">
+                <h4>Contact Information</h4>
+                <div className="footer-contact">
+                  <div className="contact-item">
+                    <i className="bi bi-telephone"></i>
+                    <span>+91-9711317009</span>
+                  </div>
+                  <div className="contact-item">
+                    <i className="bi bi-envelope"></i>
+                    <span>support@pavitraenterprises.com</span>
+                  </div>
+                  <div className="contact-item">
+                    <i className="bi bi-clock"></i>
+                    <span>Monday-Friday: 9am-6pm<br />Saturday: 10am-4pm<br />Sunday: Closed</span>
+                  </div>
+                  <div className="contact-item">
+                    <i className="bi bi-building"></i>
+                    <span>GST: 07AABCU9603R1ZM</span>
+                  </div>
+                </div>
+              </div>
+            </Col>
+          </Row>
+        </Container>
+      </div>
 
-        <Row className="align-items-center">
-          <Col md={6}>
-            <p className="text-muted mb-0">
-              &copy; {currentYear} Belo2 Store. All rights reserved.
-            </p>
-          </Col>
-          <Col md={6} className="text-md-end">
-            <div className="payment-methods">
-              <span className="text-muted me-2">We accept:</span>
-              <i className="fab fa-cc-visa text-muted me-2"></i>
-              <i className="fab fa-cc-mastercard text-muted me-2"></i>
-              <i className="fab fa-cc-paypal text-muted me-2"></i>
-              <i className="fas fa-university text-muted"></i>
-            </div>
-          </Col>
-        </Row>
-      </Container>
+      <div className="footer-bottom">
+        <Container>
+          <Row className="gy-3 align-items-center">
+            <Col lg={6} md={12}>
+              <div className="copyright">
+                <p>© <span>Copyright</span> <strong className="sitename">Pavitra Enterprises</strong>. All Rights Reserved.</p>
+              </div>
+            </Col>
+
+            <Col lg={6} md={12}>
+              <div className="d-flex flex-wrap justify-content-lg-end justify-content-center align-items-center gap-4">
+                <div className="payment-methods">
+                  <div className="payment-icons">
+                    <i className="bi bi-credit-card" aria-label="Credit Card"></i>
+                    <i className="bi bi-cash" aria-label="Cash on Delivery"></i>
+                    <i className="bi bi-bank" aria-label="Net Banking"></i>
+                  </div>
+                </div>
+
+                <div className="legal-links">
+                  <Link to="/terms">Terms</Link>
+                  <Link to="/privacy">Privacy</Link>
+                  <Link to="/returns">Returns</Link>
+                </div>
+              </div>
+            </Col>
+          </Row>
+        </Container>
+      </div>
+
+      {/* Scroll Top Button */}
+      <a href="#" id="scroll-top" className="scroll-top d-flex align-items-center justify-content-center">
+        <i className="bi bi-arrow-up-short"></i>
+      </a>
     </footer>
   )
 }

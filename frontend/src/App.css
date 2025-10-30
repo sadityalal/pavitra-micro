@@ -1,3 +1,6 @@
+/* frontend/src/App.css */
+/* Only React-specific styles that aren't covered by your existing CSS */
+
 .App {
   min-height: 100vh;
   display: flex;
@@ -8,67 +11,21 @@ main {
   flex: 1;
 }
 
-.hero-section {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  padding: 100px 0;
+/* Ensure React components don't conflict with existing styles */
+.react-component {
+  /* Add specific styles for React components if needed */
 }
 
-.product-card {
-  transition: transform 0.2s;
-  height: 100%;
-}
-
-.product-card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
-}
-
-.footer {
-  background-color: #f8f9fa;
-  padding: 40px 0;
-  margin-top: auto;
-}
-
-.social-links a {
-  transition: color 0.3s;
-}
-
-.social-links a:hover {
-  color: #007bff !important;
-}
-
-.navbar-brand {
-  font-weight: bold;
-}
-
-.loading-spinner {
+/* Loading states */
+.loading-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.8);
   display: flex;
-  justify-content: center;
   align-items: center;
-  min-height: 200px;
-}
-
-.error-message {
-  margin: 20px 0;
-}
-
-.empty-state {
-  text-align: center;
-  padding: 40px 20px;
-}
-
-.sticky-top {
-  position: sticky;
-  top: 100px;
-}
-
-@media (max-width: 768px) {
-  .hero-section {
-    padding: 60px 0;
-  }
-
-  .hero-section h1 {
-    font-size: 2rem;
-  }
+  justify-content: center;
+  z-index: 9999;
 }
