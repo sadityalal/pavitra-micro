@@ -71,7 +71,7 @@ const ProductDetail = () => {
           <Card>
             <Card.Img
               variant="top"
-              src={product.main_image_url || '/images/placeholder-product.jpg'}
+              src={getImageUrl(product.main_image_url) || '/images/placeholder-product.jpg'}
               style={{ height: '400px', objectFit: 'contain' }}
               alt={product.name}
             />

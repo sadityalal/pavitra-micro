@@ -161,5 +161,7 @@ if __name__ == "__main__":
         app,
         host="0.0.0.0",
         port=port,
-        log_level=config.log_level.lower()
+        log_level=config.log_level.lower(),
+        forwarded_allow_ips="*",  # allow requests from any proxy
+        proxy_headers=True  # respect X-Forwarded-* headers
     )

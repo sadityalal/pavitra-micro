@@ -1,6 +1,7 @@
 import React from 'react'
 import { Card, Button, Badge } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
+import { getImageUrl } from '../../config/api' // ADD THIS IMPORT
 
 const ProductCard = ({
   product,
@@ -27,23 +28,27 @@ const ProductCard = ({
     ? Math.round(((compare_price - base_price) / compare_price) * 100)
     : 0
 
-  const getImageUrl = (url) => {
-    if (!url) {
-      return '/images/placeholder-product.jpg'
-    }
-    return url
-  }
-
   const [imageError, setImageError] = React.useState(false)
   const [imageLoading, setImageLoading] = React.useState(true)
 
+  // REMOVE the local getImageUrl function and use the imported one
+  const imageUrl = getImageUrl(main_image_url)
+  const finalImageUrl = imageError ? '/images/placeholder-product.jpg' : imageUrl
+
+  console.log('🖼️ Image Debug:', {
+    original: main_image_url,
+    processed: imageUrl,
+    final: finalImageUrl
+  })
+
   const handleImageError = () => {
-    console.error('Image failed to load:', main_image_url)
+    console.error('❌ Image failed to load:', imageUrl)
     setImageError(true)
     setImageLoading(false)
   }
 
   const handleImageLoad = () => {
+    console.log('✅ Image loaded successfully:', imageUrl)
     setImageLoading(false)
     setImageError(false)
   }
@@ -63,9 +68,6 @@ const ProductCard = ({
       onAddToWishlist(product)
     }
   }
-
-  const imageUrl = getImageUrl(main_image_url)
-  const finalImageUrl = imageError ? '/images/placeholder-product.jpg' : imageUrl
 
   return (
     <Card className={`product-card h-100 ${className}`}>

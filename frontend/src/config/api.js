@@ -2,13 +2,33 @@ import { config } from './environment.js'
 
 const isProduction = import.meta.env.PROD
 
-// Use relative paths for Docker environment
 export const SERVICE_URLS = {
-  AUTH: isProduction ? '/api/v1/auth' : 'http://localhost:8001/api/v1/auth',
-  PRODUCTS: isProduction ? '/api/v1/products' : 'http://localhost:8002/api/v1/products',
-  USERS: isProduction ? '/api/v1/users' : 'http://localhost:8004/api/v1/users',
-  ORDERS: isProduction ? '/api/v1/orders' : 'http://localhost:8003/api/v1/orders',
-  PAYMENTS: isProduction ? '/api/v1/payments' : 'http://localhost:8005/api/v1/payments',
+  AUTH: isProduction ? '/api/v1/auth' : `${config.AUTH_SERVICE_URL}/api/v1/auth`,
+  PRODUCTS: isProduction ? '/api/v1/products' : `${config.PRODUCT_SERVICE_URL}/api/v1/products`,
+  USERS: isProduction ? '/api/v1/users' : `${config.USER_SERVICE_URL}/api/v1/users`,
+  ORDERS: isProduction ? '/api/v1/orders' : `${config.ORDER_SERVICE_URL}/api/v1/orders`,
+  PAYMENTS: isProduction ? '/api/v1/payments' : `${config.PAYMENT_SERVICE_URL}/api/v1/payments`,
+}
+
+// Image URL helper - always use relative paths so nginx can proxy to backend
+export const getImageUrl = (imagePath) => {
+  if (!imagePath) {
+    return '/images/placeholder-product.jpg'
+  }
+
+  // If it's already a full URL, return as is (shouldn't happen from backend)
+  if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
+    return imagePath
+  }
+
+  // For paths starting with /uploads, return as relative path
+  // This will be proxied by nginx to the product service
+  if (imagePath.startsWith('/uploads/')) {
+    return imagePath
+  }
+
+  // For any other relative paths
+  return imagePath
 }
 
 export const API_CONFIG = {
