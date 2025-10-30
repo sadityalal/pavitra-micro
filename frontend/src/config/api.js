@@ -1,8 +1,8 @@
 import { config } from './environment.js'
 
-// Individual service URLs for development
 const isProduction = import.meta.env.PROD
 
+// Use relative paths for Docker environment
 export const SERVICE_URLS = {
   AUTH: isProduction ? '/api/v1/auth' : 'http://localhost:8001/api/v1/auth',
   PRODUCTS: isProduction ? '/api/v1/products' : 'http://localhost:8002/api/v1/products',

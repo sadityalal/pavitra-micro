@@ -52,3 +52,11 @@ redis_data
 /.repomixignore
 /repomix.config.json
 /repomix-output.xml
+
+# Uploads - keep directory but ignore contents
+uploads/*
+!uploads/.gitkeep
+!uploads/products/.gitkeep
+!uploads/avatars/.gitkeep
+!uploads/categories/.gitkeep
+!uploads/brands/.gitkeep

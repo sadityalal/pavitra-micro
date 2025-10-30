@@ -29,13 +29,36 @@ const Products = () => {
   const loadProducts = async () => {
     try {
       setLoading(true)
-      const response = await API.products.getAll(filters)
+      console.log('🔄 Loading products with filters:', filters)
+
+      // Build query parameters
+      const params = {}
+      if (filters.category_id) params.category_id = filters.category_id
+      if (filters.brand_id) params.brand_id = filters.brand_id
+      if (filters.min_price) params.min_price = filters.min_price
+      if (filters.max_price) params.max_price = filters.max_price
+      if (filters.in_stock) params.in_stock = filters.in_stock
+
+      console.log('📡 API call params:', params)
+
+      const response = await API.products.getAll(params)
+      console.log('✅ Products API response:', response.data)
+
       // Handle different response structures
-      const productsData = response.data.products || response.data || []
+      let productsData = []
+      if (response.data.products) {
+        productsData = response.data.products
+      } else if (Array.isArray(response.data)) {
+        productsData = response.data
+      } else {
+        productsData = []
+      }
+
+      console.log(`📦 Processed ${productsData.length} products`)
       setProducts(productsData)
     } catch (err) {
-      setError('Failed to load products')
-      console.error('Error loading products:', err)
+      console.error('❌ Error loading products:', err)
+      setError('Failed to load products: ' + (err.response?.data?.detail || err.message))
     } finally {
       setLoading(false)
     }
@@ -43,31 +66,61 @@ const Products = () => {
 
   const loadCategories = async () => {
     try {
+      console.log('🔄 Loading categories...')
       const response = await API.products.getCategories()
-      const categoriesData = response.data.categories || response.data || []
+      console.log('✅ Categories response:', response.data)
+
+      let categoriesData = []
+      if (response.data.categories) {
+        categoriesData = response.data.categories
+      } else if (Array.isArray(response.data)) {
+        categoriesData = response.data
+      }
+
       setCategories(categoriesData)
     } catch (err) {
-      console.error('Error loading categories:', err)
+      console.error('❌ Error loading categories:', err)
       setCategories([])
     }
   }
 
   const loadBrands = async () => {
     try {
+      console.log('🔄 Loading brands...')
       const response = await API.products.getBrands()
-      const brandsData = response.data.brands || response.data || []
+      console.log('✅ Brands response:', response.data)
+
+      let brandsData = []
+      if (response.data.brands) {
+        brandsData = response.data.brands
+      } else if (Array.isArray(response.data)) {
+        brandsData = response.data
+      }
+
       setBrands(brandsData)
     } catch (err) {
-      console.error('Error loading brands:', err)
+      console.error('❌ Error loading brands:', err)
       setBrands([])
     }
   }
 
   const handleFilterChange = (key, value) => {
+    console.log(`🔧 Filter changed: ${key} = ${value}`)
     setFilters(prev => ({
       ...prev,
       [key]: value
     }))
+  }
+
+  const clearFilters = () => {
+    console.log('🧹 Clearing filters')
+    setFilters({
+      category_id: '',
+      brand_id: '',
+      min_price: '',
+      max_price: '',
+      in_stock: false
+    })
   }
 
   if (loading) {
@@ -80,6 +133,13 @@ const Products = () => {
 
   return (
     <Container className="mt-4">
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <h1>All Products</h1>
+        <Button variant="outline-primary" onClick={clearFilters}>
+          Clear Filters
+        </Button>
+      </div>
+
       <Row>
         <Col md={3}>
           <Card>
@@ -102,6 +162,7 @@ const Products = () => {
                     ))}
                   </Form.Select>
                 </Form.Group>
+
                 <Form.Group className="mb-3">
                   <Form.Label>Brand</Form.Label>
                   <Form.Select
@@ -116,6 +177,7 @@ const Products = () => {
                     ))}
                   </Form.Select>
                 </Form.Group>
+
                 <Form.Group className="mb-3">
                   <Form.Label>Price Range</Form.Label>
                   <Row>
@@ -137,6 +199,7 @@ const Products = () => {
                     </Col>
                   </Row>
                 </Form.Group>
+
                 <Form.Check
                   type="checkbox"
                   label="In Stock Only"
@@ -147,8 +210,18 @@ const Products = () => {
             </Card.Body>
           </Card>
         </Col>
+
         <Col md={9}>
           <ErrorMessage error={error} onRetry={loadProducts} />
+
+          <div className="mb-3">
+            <p className="text-muted">
+              Showing {products.length} products
+              {filters.category_id && ` in selected category`}
+              {filters.brand_id && ` from selected brand`}
+            </p>
+          </div>
+
           <Row>
             {products.map(product => (
               <Col key={product.id} lg={4} md={6} className="mb-4">
@@ -156,10 +229,14 @@ const Products = () => {
               </Col>
             ))}
           </Row>
+
           {products.length === 0 && !loading && (
             <div className="text-center mt-5">
               <h4>No products found</h4>
-              <p>Try adjusting your filters</p>
+              <p>Try adjusting your filters or check the console for errors.</p>
+              <Button variant="primary" onClick={clearFilters}>
+                Clear All Filters
+              </Button>
             </div>
           )}
         </Col>

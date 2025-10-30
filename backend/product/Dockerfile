@@ -13,6 +13,10 @@ COPY backend/__init__.py /app/
 COPY backend/product/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Create uploads directory
+RUN mkdir -p /app/uploads/products /app/uploads/avatars /app/uploads/categories
+RUN chmod -R 755 /app/uploads
+
 RUN useradd --create-home --shell /bin/bash appuser
 RUN chown -R appuser:appuser /app
 USER appuser

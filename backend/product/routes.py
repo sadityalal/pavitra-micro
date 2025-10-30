@@ -216,7 +216,9 @@ async def get_frontend_settings():
 @router.get("/", response_model=ProductListResponse)
 async def get_products(
         request: Request,
-        search: ProductSearch = Depends(),
+        search: Optional[str] = Query(None),
+        category_id: Optional[int] = Query(None),
+        brand_id: Optional[int] = Query(None),
         category_slug: Optional[str] = Query(None),
         brand_slug: Optional[str] = Query(None),
         featured: Optional[bool] = Query(None),
@@ -226,7 +228,9 @@ async def get_products(
         max_price: Optional[float] = Query(None),
         in_stock: Optional[bool] = Query(None),
         sort_by: str = Query("created_at"),
-        sort_order: str = Query("desc")
+        sort_order: str = Query("desc"),
+        page: int = Query(1, ge=1),
+        page_size: int = Query(20, ge=1, le=100)
 ):
     try:
         # Apply rate limiting for product browsing
@@ -238,49 +242,77 @@ async def get_products(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        logger.info(f"🔍 Fetching products with filters - search: {search}, category_id: {category_id}, page: {page}")
+
         query_conditions = ["p.status = 'active'"]
         query_params = []
-        if search.query:
+
+        # Handle search query
+        if search:
             query_conditions.append("(p.name LIKE %s OR p.short_description LIKE %s OR p.description LIKE %s)")
-            search_term = f"%{sanitize_input(search.query)}%"
+            search_term = f"%{sanitize_input(search)}%"
             query_params.extend([search_term, search_term, search_term])
-        if search.category_id:
+
+        # Handle category_id filter
+        if category_id:
             query_conditions.append("p.category_id = %s")
-            query_params.append(search.category_id)
-        if search.brand_id:
+            query_params.append(category_id)
+
+        # Handle brand_id filter
+        if brand_id:
             query_conditions.append("p.brand_id = %s")
-            query_params.append(search.brand_id)
+            query_params.append(brand_id)
+
+        # Handle category_slug filter
         if category_slug:
             query_conditions.append("c.slug = %s")
             query_params.append(sanitize_input(category_slug))
+
+        # Handle brand_slug filter
         if brand_slug:
             query_conditions.append("b.slug = %s")
             query_params.append(sanitize_input(brand_slug))
+
+        # Handle price filters
         if min_price is not None:
             query_conditions.append("p.base_price >= %s")
             query_params.append(min_price)
+
         if max_price is not None:
             query_conditions.append("p.base_price <= %s")
             query_params.append(max_price)
+
+        # Handle stock filter
         if in_stock:
             query_conditions.append("p.stock_status = 'in_stock'")
+
+        # Handle featured/trending/bestseller filters
         if featured is not None:
             query_conditions.append("p.is_featured = %s")
             query_params.append(featured)
+
         if trending is not None:
             query_conditions.append("p.is_trending = %s")
             query_params.append(trending)
+
         if bestseller is not None:
             query_conditions.append("p.is_bestseller = %s")
             query_params.append(bestseller)
-        where_clause = " AND ".join(query_conditions)
+
+        where_clause = " AND ".join(query_conditions) if query_conditions else "1=1"
+
+        # Validate sort parameters
         valid_sort_columns = ["name", "base_price", "created_at", "view_count", "total_sold", "wishlist_count"]
         valid_sort_orders = ["asc", "desc"]
+
         if sort_by not in valid_sort_columns:
             sort_by = "created_at"
         if sort_order not in valid_sort_orders:
             sort_order = "desc"
+
         with db.get_cursor() as cursor:
+            # Count total products
             count_query = f"""
                 SELECT COUNT(*) as total
                 FROM products p
@@ -288,8 +320,14 @@ async def get_products(
                 LEFT JOIN brands b ON p.brand_id = b.id
                 WHERE {where_clause}
             """
+            logger.info(f"📊 Count query: {count_query}")
+            logger.info(f"📊 Count params: {query_params}")
+
             cursor.execute(count_query, query_params)
             total_count = cursor.fetchone()['total']
+            logger.info(f"📊 Total products found: {total_count}")
+
+            # Fetch products
             products_query = f"""
                 SELECT
                     p.*,
@@ -304,13 +342,23 @@ async def get_products(
                 ORDER BY p.{sort_by} {sort_order.upper()}
                 LIMIT %s OFFSET %s
             """
-            offset = (search.page - 1) * search.page_size
-            cursor.execute(products_query, query_params + [search.page_size, offset])
+
+            offset = (page - 1) * page_size
+            final_params = query_params + [page_size, offset]
+
+            logger.info(f"📦 Products query: {products_query}")
+            logger.info(f"📦 Products params: {final_params}")
+
+            cursor.execute(products_query, final_params)
             products = cursor.fetchall()
+            logger.info(f"📦 Products fetched: {len(products)}")
+
             product_list = []
             for product in products:
                 specification = None
                 image_gallery = None
+
+                # Parse specification
                 if product['specification']:
                     try:
                         if isinstance(product['specification'], str):
@@ -319,6 +367,8 @@ async def get_products(
                             specification = product['specification']
                     except:
                         specification = None
+
+                # Parse image gallery and fix image URLs
                 if product['image_gallery']:
                     try:
                         if isinstance(product['image_gallery'], str):
@@ -327,6 +377,30 @@ async def get_products(
                             image_gallery = product['image_gallery']
                     except:
                         image_gallery = None
+
+                # Fix main image URL to be accessible from frontend
+                main_image_url = product['main_image_url']
+                if main_image_url and not main_image_url.startswith(('http://', 'https://')):
+                    # Make sure the path is correct for frontend access
+                    if main_image_url.startswith('/uploads/'):
+                        main_image_url = f"http://localhost:8002{main_image_url}"
+                    elif main_image_url.startswith('uploads/'):
+                        main_image_url = f"http://localhost:8002/{main_image_url}"
+
+                # Fix image gallery URLs
+                fixed_image_gallery = []
+                if image_gallery:
+                    for img_url in image_gallery:
+                        if img_url and not img_url.startswith(('http://', 'https://')):
+                            if img_url.startswith('/uploads/'):
+                                fixed_image_gallery.append(f"http://localhost:8002{img_url}")
+                            elif img_url.startswith('uploads/'):
+                                fixed_image_gallery.append(f"http://localhost:8002/{img_url}")
+                            else:
+                                fixed_image_gallery.append(img_url)
+                        else:
+                            fixed_image_gallery.append(img_url)
+
                 product_list.append(ProductResponse(
                     id=product['id'],
                     uuid=product['uuid'],
@@ -348,8 +422,8 @@ async def get_products(
                     stock_status=product['stock_status'],
                     product_type=product['product_type'],
                     weight_grams=float(product['weight_grams']) if product['weight_grams'] else None,
-                    main_image_url=product['main_image_url'],
-                    image_gallery=image_gallery,
+                    main_image_url=main_image_url,
+                    image_gallery=fixed_image_gallery or None,
                     status=product['status'],
                     is_featured=bool(product['is_featured']),
                     is_trending=bool(product['is_trending']),
@@ -360,16 +434,25 @@ async def get_products(
                     created_at=product['created_at'],
                     updated_at=product['updated_at']
                 ))
-            total_pages = (total_count + search.page_size - 1) // search.page_size
+
+            total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 1
+
+            logger.info(f"✅ Successfully returning {len(product_list)} products")
+
             return ProductListResponse(
                 products=product_list,
                 total_count=total_count,
-                page=search.page,
-                page_size=search.page_size,
+                page=page,
+                page_size=page_size,
                 total_pages=total_pages
             )
+
     except Exception as e:
-        logger.error(f"Failed to fetch products: {e}")
+        logger.error(f"❌ Failed to fetch products: {str(e)}")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch products"

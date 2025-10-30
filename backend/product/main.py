@@ -32,6 +32,7 @@ app.add_middleware(
     max_age=600,
 )
 
+
 @app.middleware("http")
 async def secure_cors_headers(request: Request, call_next):
     response = await call_next(request)
@@ -47,6 +48,7 @@ async def secure_cors_headers(request: Request, call_next):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     return response
 
+
 @app.options("/{path:path}")
 async def secure_options_handler(path: str, request: Request):
     origin = request.headers.get('origin')
@@ -61,6 +63,7 @@ async def secure_options_handler(path: str, request: Request):
     response.headers['X-Frame-Options'] = 'DENY'
     return response
 
+
 @app.middleware("http")
 async def maintenance_mode_middleware(request, call_next):
     maintenance_exempt_paths = [
@@ -68,23 +71,24 @@ async def maintenance_mode_middleware(request, call_next):
         "/api/v1/products/health", "/api/v1/products/site-settings",
         "/api/v1/products/debug/maintenance", "/api/v1/products/debug/settings"
     ]
-    
+
     if any(request.url.path.startswith(path) for path in maintenance_exempt_paths):
         response = await call_next(request)
         return response
-    
+
     config.refresh_cache()
     logger.info(f"DEBUG Middleware: maintenance_mode={config.maintenance_mode}, type={type(config.maintenance_mode)}")
-    
+
     if config.maintenance_mode:
         logger.warning(f"Maintenance mode blocking request to: {request.url.path}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Service is under maintenance. Please try again later."
         )
-    
+
     response = await call_next(request)
     return response
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -95,8 +99,12 @@ async def startup_event():
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
 
+
+# Mount static files - FIXED PATH
 app.mount("/uploads", StaticFiles(directory="/app/uploads"), name="uploads")
+
 app.include_router(router, prefix="/api/v1/products")
+
 
 @app.get("/health")
 async def health():
@@ -123,6 +131,7 @@ async def health():
             detail="Service unhealthy"
         )
 
+
 @app.post("/refresh-config")
 async def refresh_config():
     config.refresh_cache()
@@ -131,6 +140,7 @@ async def refresh_config():
         "maintenance_mode": config.maintenance_mode,
         "timestamp": "updated"
     }
+
 
 @app.get("/")
 async def root():
@@ -141,8 +151,10 @@ async def root():
         "maintenance_mode": config.maintenance_mode
     }
 
+
 if __name__ == "__main__":
     import uvicorn
+
     port = config.get_service_port('product')
     logger.info(f"🚀 Starting Product Service on port {port}")
     uvicorn.run(
