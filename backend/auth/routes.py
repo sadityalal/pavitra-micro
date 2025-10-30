@@ -6,12 +6,13 @@ from shared import (
     create_access_token, verify_token, validate_email,
     validate_phone, sanitize_input, get_logger, rabbitmq_client, redis_client
 )
-from shared.auth_middleware import get_current_user, require_roles  # ADD THIS IMPORT
+from shared.auth_middleware import get_current_user, require_roles
 from .models import (
     UserCreate, UserLogin, Token, UserResponse,
     RoleResponse, PermissionCheck, HealthResponse
 )
 import re
+
 router = APIRouter()
 logger = get_logger(__name__)
 
@@ -367,36 +368,53 @@ async def get_frontend_settings():
             detail="Failed to fetch frontend settings"
         )
 
+
 @router.post("/login")
 async def login_user(login_data: UserLogin):
     try:
         # Check maintenance mode
         config.refresh_cache()
         logger.info(f"DEBUG: Maintenance mode value: {config.maintenance_mode}, type: {type(config.maintenance_mode)}")
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
 
+        logger.info(f"🔐 Login attempt for: {login_data.login_id}")
+
         with db.get_cursor() as cursor:
+            # Enhanced query to find user by email, phone, or username
             cursor.execute("""
-                SELECT id, email, password_hash, first_name, last_name,
-                       is_active, email_verified, phone_verified
-                FROM users
+                SELECT 
+                    id, email, password_hash, first_name, last_name,
+                    is_active, email_verified, phone_verified
+                FROM users 
                 WHERE email = %s OR phone = %s OR username = %s
             """, (login_data.login_id, login_data.login_id, login_data.login_id))
+
             user = cursor.fetchone()
 
-            if not user or not verify_password(login_data.password, user['password_hash']):
-                # Log failed login attempt for security monitoring
-                logger.warning(f"Failed login attempt for: {login_data.login_id}")
+            if not user:
+                logger.warning(f"❌ User not found: {login_data.login_id}")
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials"
+                )
+
+            logger.info(f"✅ User found: {user['email']}, checking password...")
+
+            # Verify password
+            if not verify_password(login_data.password, user['password_hash']):
+                logger.warning(f"❌ Invalid password for user: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
 
             if not user['is_active']:
+                logger.warning(f"❌ Account deactivated: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Account is deactivated"
@@ -404,22 +422,31 @@ async def login_user(login_data: UserLogin):
 
             # Get user roles and permissions
             cursor.execute("""
-                SELECT ur.name as role_name, p.name as permission_name
+                SELECT 
+                    ur.name as role_name, 
+                    p.name as permission_name
                 FROM user_role_assignments ura
                 JOIN user_roles ur ON ura.role_id = ur.id
                 LEFT JOIN role_permissions rp ON ur.id = rp.role_id
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user['id'],))
-            
+
             roles = set()
             permissions = set()
+
             for row in cursor.fetchall():
                 if row['role_name']:
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
 
+            # Ensure customer role is assigned
+            if not roles:
+                roles.add('customer')
+                logger.info(f"✅ Assigned default customer role to user {user['id']}")
+
+            # Create access token
             access_token = create_access_token(
                 data={
                     "sub": str(user['id']),
@@ -432,8 +459,9 @@ async def login_user(login_data: UserLogin):
 
             # Update last login
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
-            
-            logger.info(f"User login successful with Argon2 verification: {user['email']}")
+
+            logger.info(f"✅ Login successful for user: {user['email']}")
+
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -445,10 +473,14 @@ async def login_user(login_data: UserLogin):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Login failed: {e}")
+        logger.error(f"❌ Login failed: {str(e)}")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Login failed"
+            detail="Login failed due to server error"
         )
 
 @router.post("/logout")

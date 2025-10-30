@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react'
-import { authAPI, API } from '../services/api' // Add API import
+import { authAPI, API } from '../services/api'
 
 const AuthContext = createContext()
 
@@ -26,21 +26,12 @@ export const AuthProvider = ({ children }) => {
 
   const verifyToken = async () => {
     try {
-      const response = await authAPI.refresh()
-      const { access_token, user_roles, user_permissions } = response.data
-      if (access_token) {
-        setToken(access_token)
-        localStorage.setItem('token', access_token)
-        // Get user profile from users service
-        const userResponse = await API.users.getProfile()
-        setUser({
-          ...userResponse.data,
-          roles: user_roles,
-          permissions: user_permissions
-        })
-      }
+      console.log('🔄 Verifying token...')
+      const userResponse = await API.users.getProfile()
+      console.log('✅ Token valid, user:', userResponse.data)
+      setUser(userResponse.data)
     } catch (error) {
-      console.error('Token verification failed:', error)
+      console.error('❌ Token verification failed:', error)
       logout()
     } finally {
       setLoading(false)
@@ -48,73 +39,108 @@ export const AuthProvider = ({ children }) => {
   }
 
   const login = async (credentials) => {
-      try {
-        console.log('🔄 Starting login with:', credentials)
-        const response = await authAPI.login(credentials)
-        console.log('✅ Auth login successful:', response.data)
-        const { access_token, user_roles, user_permissions } = response.data
+    try {
+      console.log('🔄 Starting login with:', credentials)
 
-        setToken(access_token)
-        localStorage.setItem('token', access_token)
-        console.log('✅ Token stored')
+      // Clear any existing token first
+      localStorage.removeItem('token')
 
-        // Get user profile from users service
-        try {
-          console.log('🔄 Fetching user profile...')
-          const userResponse = await API.users.getProfile()
-          console.log('✅ User profile:', userResponse.data)
-          setUser({
-            ...userResponse.data,
-            roles: user_roles,
-            permissions: user_permissions
-          })
-        } catch (profileError) {
-          console.error('❌ Profile fetch failed:', profileError)
-          // If profile fetch fails, create basic user from login data
-          setUser({
-            email: credentials.login_id,
-            roles: user_roles,
-            permissions: user_permissions,
-            first_name: '',
-            last_name: ''
-          })
-          console.log('✅ Created basic user as fallback')
-        }
+      const response = await authAPI.post('/login', credentials)
+      console.log('✅ Auth login successful:', response.data)
 
-        console.log('✅ Login completed successfully')
-        return { success: true }
-      } catch (error) {
-        console.error('❌ Login failed:', error)
-        return {
-          success: false,
-          error: error.response?.data?.detail || 'Login failed'
-        }
+      const { access_token, user_roles, user_permissions } = response.data
+
+      if (!access_token) {
+        throw new Error('No access token received')
+      }
+
+      // Store token
+      setToken(access_token)
+      localStorage.setItem('token', access_token)
+      console.log('✅ Token stored')
+
+      // Create user object from response
+      const userData = {
+        id: response.data.user_id, // If available in response
+        email: credentials.login_id, // Use login_id as fallback
+        first_name: '', // Will be populated from profile
+        last_name: '', // Will be populated from profile
+        roles: user_roles || ['customer'],
+        permissions: user_permissions || []
+      }
+
+      setUser(userData)
+      console.log('✅ Login completed successfully')
+
+      return { success: true }
+    } catch (error) {
+      console.error('❌ Login failed:', error)
+
+      // Clear token on failure
+      localStorage.removeItem('token')
+      setToken(null)
+      setUser(null)
+
+      const errorMessage = error.response?.data?.detail ||
+                          error.response?.data?.message ||
+                          error.message ||
+                          'Login failed'
+
+      return {
+        success: false,
+        error: errorMessage
       }
     }
+  }
 
   const register = async (userData) => {
     try {
-      const response = await authAPI.register(userData)
+      console.log('🔄 Starting registration...')
+
+      const response = await authAPI.post('/register', userData)
+      console.log('✅ Registration successful:', response.data)
+
       const { access_token, user_roles, user_permissions } = response.data
+
+      if (!access_token) {
+        throw new Error('No access token received')
+      }
+
+      // Store token
       setToken(access_token)
       localStorage.setItem('token', access_token)
-      setUser({
-        ...userData,
-        roles: user_roles,
-        permissions: user_permissions
-      })
+
+      // Create user object
+      const newUser = {
+        first_name: userData.first_name,
+        last_name: userData.last_name,
+        email: userData.email,
+        roles: user_roles || ['customer'],
+        permissions: user_permissions || []
+      }
+
+      setUser(newUser)
+      console.log('✅ Registration completed successfully')
+
       return { success: true }
     } catch (error) {
+      console.error('❌ Registration failed:', error)
+
+      const errorMessage = error.response?.data?.detail ||
+                          error.response?.data?.message ||
+                          error.message ||
+                          'Registration failed'
+
       return {
         success: false,
-        error: error.response?.data?.detail || 'Registration failed'
+        error: errorMessage
       }
     }
   }
 
   const logout = async () => {
     try {
-      await authAPI.logout()
+      await authAPI.post('/logout')
     } catch (error) {
       console.error('Logout error:', error)
     } finally {
@@ -128,9 +154,9 @@ export const AuthProvider = ({ children }) => {
     user,
     token,
     loading,
-    login,
-    register,
-    logout,
+    login, // Make sure this is included
+    register, // Make sure this is included
+    logout, // Make sure this is included
     isAuthenticated: !!user && !!token,
     hasRole: (role) => user?.roles?.includes(role),
     hasPermission: (permission) => user?.permissions?.includes(permission)
