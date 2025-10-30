@@ -1,7 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import { Container, Row, Col, Card, Button, Form, Spinner, Alert } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
-import { productsAPI } from '../services/api'
+import { API } from '../services/api'
+import ProductCard from '../components/products/ProductCard'
+import LoadingSpinner from '../components/common/LoadingSpinner'
+import ErrorMessage from '../components/common/ErrorMessage'
 
 const Products = () => {
   const [products, setProducts] = useState([])
@@ -26,8 +29,10 @@ const Products = () => {
   const loadProducts = async () => {
     try {
       setLoading(true)
-      const response = await productsAPI.getAll(filters)
-      setProducts(response.data.products)
+      const response = await API.products.getAll(filters)
+      // Handle different response structures
+      const productsData = response.data.products || response.data || []
+      setProducts(productsData)
     } catch (err) {
       setError('Failed to load products')
       console.error('Error loading products:', err)
@@ -38,19 +43,23 @@ const Products = () => {
 
   const loadCategories = async () => {
     try {
-      const response = await productsAPI.getCategories()
-      setCategories(response.data)
+      const response = await API.products.getCategories()
+      const categoriesData = response.data.categories || response.data || []
+      setCategories(categoriesData)
     } catch (err) {
       console.error('Error loading categories:', err)
+      setCategories([])
     }
   }
 
   const loadBrands = async () => {
     try {
-      const response = await productsAPI.getBrands()
-      setBrands(response.data)
+      const response = await API.products.getBrands()
+      const brandsData = response.data.brands || response.data || []
+      setBrands(brandsData)
     } catch (err) {
       console.error('Error loading brands:', err)
+      setBrands([])
     }
   }
 
@@ -63,10 +72,8 @@ const Products = () => {
 
   if (loading) {
     return (
-      <Container className="text-center mt-5">
-        <Spinner animation="border" role="status">
-          <span className="visually-hidden">Loading...</span>
-        </Spinner>
+      <Container className="mt-4">
+        <LoadingSpinner text="Loading products..." />
       </Container>
     )
   }
@@ -95,7 +102,6 @@ const Products = () => {
                     ))}
                   </Form.Select>
                 </Form.Group>
-
                 <Form.Group className="mb-3">
                   <Form.Label>Brand</Form.Label>
                   <Form.Select
@@ -110,7 +116,6 @@ const Products = () => {
                     ))}
                   </Form.Select>
                 </Form.Group>
-
                 <Form.Group className="mb-3">
                   <Form.Label>Price Range</Form.Label>
                   <Row>
@@ -132,7 +137,6 @@ const Products = () => {
                     </Col>
                   </Row>
                 </Form.Group>
-
                 <Form.Check
                   type="checkbox"
                   label="In Stock Only"
@@ -143,50 +147,15 @@ const Products = () => {
             </Card.Body>
           </Card>
         </Col>
-
         <Col md={9}>
-          {error && <Alert variant="danger">{error}</Alert>}
-
+          <ErrorMessage error={error} onRetry={loadProducts} />
           <Row>
             {products.map(product => (
               <Col key={product.id} lg={4} md={6} className="mb-4">
-                <Card className="product-card h-100">
-                  <Card.Img
-                    variant="top"
-                    src={product.main_image_url || '/placeholder-product.jpg'}
-                    style={{ height: '200px', objectFit: 'cover' }}
-                  />
-                  <Card.Body className="d-flex flex-column">
-                    <Card.Title>{product.name}</Card.Title>
-                    <Card.Text className="text-muted flex-grow-1">
-                      {product.short_description}
-                    </Card.Text>
-                    <div className="mt-auto">
-                      <div className="d-flex justify-content-between align-items-center mb-2">
-                        <strong className="text-primary">
-                          ₹{product.base_price}
-                        </strong>
-                        <small className={
-                          product.stock_status === 'in_stock' ? 'text-success' : 'text-danger'
-                        }>
-                          {product.stock_status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
-                        </small>
-                      </div>
-                      <Button
-                        as={Link}
-                        to={`/products/${product.id}`}
-                        variant="primary"
-                        className="w-100"
-                      >
-                        View Details
-                      </Button>
-                    </div>
-                  </Card.Body>
-                </Card>
+                <ProductCard product={product} />
               </Col>
             ))}
           </Row>
-
           {products.length === 0 && !loading && (
             <div className="text-center mt-5">
               <h4>No products found</h4>

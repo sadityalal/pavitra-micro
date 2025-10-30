@@ -22,20 +22,20 @@ const Login = () => {
   }
 
   const handleSubmit = async (e) => {
-    e.preventDefault()
-    setError('')
-    setLoading(true)
+      e.preventDefault()
+      setError('')
+      setLoading(true)
 
-    const result = await login(formData)
+      const result = await login(formData)
 
-    if (result.success) {
-      navigate('/')
-    } else {
-      setError(result.error)
-    }
+      if (result.success) {
+        navigate('/') // Redirect to home on success
+      } else {
+        setError(result.error)
+      }
 
-    setLoading(false)
-  }
+      setLoading(false)
+}
 
   return (
     <Container className="mt-5">

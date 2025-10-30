@@ -22,12 +22,17 @@ const Home = () => {
         API.products.getBestsellers(),
         API.products.getNewArrivals()
       ])
-
-      setFeaturedProducts(featuredResponse.data.products || [])
-      setBestsellers(bestsellersResponse.data.products || [])
-      setNewArrivals(newArrivalsResponse.data.products || [])
+      
+      // Handle different response structures
+      setFeaturedProducts(featuredResponse.data?.products || featuredResponse.data || [])
+      setBestsellers(bestsellersResponse.data?.products || bestsellersResponse.data || [])
+      setNewArrivals(newArrivalsResponse.data?.products || newArrivalsResponse.data || [])
     } catch (error) {
       console.error('Error loading home data:', error)
+      // Set empty arrays to prevent crashes
+      setFeaturedProducts([])
+      setBestsellers([])
+      setNewArrivals([])
     } finally {
       setLoading(false)
     }
@@ -39,7 +44,6 @@ const Home = () => {
 
   return (
     <>
-      {/* Hero Section */}
       <section className="hero-section">
         <Container>
           <Row className="align-items-center">
@@ -75,9 +79,7 @@ const Home = () => {
           </Row>
         </Container>
       </section>
-
       <Container className="my-5">
-        {/* Featured Products */}
         <section className="mb-5">
           <div className="d-flex justify-content-between align-items-center mb-4">
             <h2>Featured Products</h2>
@@ -93,8 +95,6 @@ const Home = () => {
             ))}
           </Row>
         </section>
-
-        {/* Bestsellers */}
         <section className="mb-5">
           <div className="d-flex justify-content-between align-items-center mb-4">
             <h2>Bestsellers</h2>
@@ -110,8 +110,6 @@ const Home = () => {
             ))}
           </Row>
         </section>
-
-        {/* New Arrivals */}
         <section className="mb-5">
           <div className="d-flex justify-content-between align-items-center mb-4">
             <h2>New Arrivals</h2>
@@ -127,8 +125,6 @@ const Home = () => {
             ))}
           </Row>
         </section>
-
-        {/* Features Section */}
         <section className="my-5">
           <Row>
             <Col md={4} className="text-center mb-4">

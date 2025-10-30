@@ -1,5 +1,5 @@
 import React, { createContext, useState, useContext, useEffect } from 'react'
-import { authAPI } from '../services/api'
+import { authAPI, API } from '../services/api' // Add API import
 
 const AuthContext = createContext()
 
@@ -18,7 +18,6 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     if (token) {
-      // Verify token and get user data
       verifyToken()
     } else {
       setLoading(false)
@@ -29,13 +28,11 @@ export const AuthProvider = ({ children }) => {
     try {
       const response = await authAPI.refresh()
       const { access_token, user_roles, user_permissions } = response.data
-
       if (access_token) {
         setToken(access_token)
         localStorage.setItem('token', access_token)
-
-        // Get user profile
-        const userResponse = await authAPI.getProfile()
+        // Get user profile from users service
+        const userResponse = await API.users.getProfile()
         setUser({
           ...userResponse.data,
           roles: user_roles,
@@ -51,44 +48,61 @@ export const AuthProvider = ({ children }) => {
   }
 
   const login = async (credentials) => {
-    try {
-      const response = await authAPI.login(credentials)
-      const { access_token, user_roles, user_permissions } = response.data
+      try {
+        console.log('🔄 Starting login with:', credentials)
+        const response = await authAPI.login(credentials)
+        console.log('✅ Auth login successful:', response.data)
+        const { access_token, user_roles, user_permissions } = response.data
 
-      setToken(access_token)
-      localStorage.setItem('token', access_token)
+        setToken(access_token)
+        localStorage.setItem('token', access_token)
+        console.log('✅ Token stored')
 
-      // Get user profile
-      const userResponse = await usersAPI.getProfile()
-      setUser({
-        ...userResponse.data,
-        roles: user_roles,
-        permissions: user_permissions
-      })
+        // Get user profile from users service
+        try {
+          console.log('🔄 Fetching user profile...')
+          const userResponse = await API.users.getProfile()
+          console.log('✅ User profile:', userResponse.data)
+          setUser({
+            ...userResponse.data,
+            roles: user_roles,
+            permissions: user_permissions
+          })
+        } catch (profileError) {
+          console.error('❌ Profile fetch failed:', profileError)
+          // If profile fetch fails, create basic user from login data
+          setUser({
+            email: credentials.login_id,
+            roles: user_roles,
+            permissions: user_permissions,
+            first_name: '',
+            last_name: ''
+          })
+          console.log('✅ Created basic user as fallback')
+        }
 
-      return { success: true }
-    } catch (error) {
-      return {
-        success: false,
-        error: error.response?.data?.detail || 'Login failed'
+        console.log('✅ Login completed successfully')
+        return { success: true }
+      } catch (error) {
+        console.error('❌ Login failed:', error)
+        return {
+          success: false,
+          error: error.response?.data?.detail || 'Login failed'
+        }
       }
     }
-  }
 
   const register = async (userData) => {
     try {
       const response = await authAPI.register(userData)
       const { access_token, user_roles, user_permissions } = response.data
-
       setToken(access_token)
       localStorage.setItem('token', access_token)
-
       setUser({
         ...userData,
         roles: user_roles,
         permissions: user_permissions
       })
-
       return { success: true }
     } catch (error) {
       return {

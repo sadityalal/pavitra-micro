@@ -31,29 +31,36 @@ const ProductDetail = () => {
       }
     } catch (err) {
       setError('Product not found')
+      console.error('Error loading product:', err)
     } finally {
       setLoading(false)
     }
   }
 
   const handleAddToCart = async () => {
-    const productId = selectedVariation ? selectedVariation.id : product.id
-    const result = await addToCart(productId, quantity, selectedVariation?.id)
-    if (result.success) {
-      // Show success message
+    try {
+      const productId = selectedVariation ? selectedVariation.id : product.id
+      const result = await addToCart(productId, quantity, selectedVariation?.id)
+      if (result.success) {
+        // Show success message
+        console.log('Product added to cart')
+      }
+    } catch (err) {
+      console.error('Error adding to cart:', err)
     }
   }
 
   const handleAddToWishlist = async () => {
     if (!isAuthenticated) {
-      // Redirect to login
+      // Redirect to login or show message
       return
     }
     try {
       await API.users.addToWishlist(product.id)
       // Show success message
+      console.log('Product added to wishlist')
     } catch (err) {
-      // Show error message
+      console.error('Error adding to wishlist:', err)
     }
   }
 
@@ -69,6 +76,7 @@ const ProductDetail = () => {
               variant="top"
               src={product.main_image_url || '/images/placeholder-product.jpg'}
               style={{ height: '400px', objectFit: 'contain' }}
+              alt={product.name}
             />
           </Card>
         </Col>
@@ -80,10 +88,8 @@ const ProductDetail = () => {
               {product.stock_status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
             </Badge>
           </div>
-
           <h1 className="h2">{product.name}</h1>
           <p className="text-muted">{product.short_description}</p>
-
           <div className="mb-3">
             <h3 className="text-primary">₹{product.base_price}</h3>
             {product.compare_price && product.compare_price > product.base_price && (
@@ -92,7 +98,6 @@ const ProductDetail = () => {
               </small>
             )}
           </div>
-
           {product.variations && product.variations.length > 0 && (
             <div className="mb-3">
               <h6>Variations:</h6>
@@ -110,7 +115,6 @@ const ProductDetail = () => {
               </div>
             </div>
           )}
-
           <div className="mb-3">
             <Row className="align-items-center">
               <Col xs="auto">
@@ -131,7 +135,6 @@ const ProductDetail = () => {
               </Col>
             </Row>
           </div>
-
           <div className="d-flex gap-2 mb-4">
             <Button
               variant="primary"
@@ -150,7 +153,6 @@ const ProductDetail = () => {
               <i className="fas fa-heart"></i>
             </Button>
           </div>
-
           <Card>
             <Card.Body>
               <h6>Product Details</h6>

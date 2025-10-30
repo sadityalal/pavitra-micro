@@ -1,7 +1,6 @@
 import axios from 'axios'
 import { API_CONFIG, SERVICE_URLS } from '../config/api'
 
-// Create axios instance with default config
 const createApiInstance = (baseURL) => {
   const instance = axios.create({
     baseURL,
@@ -12,75 +11,59 @@ const createApiInstance = (baseURL) => {
     withCredentials: true,
   })
 
-  // Request interceptor
   instance.interceptors.request.use(
     (config) => {
       const token = localStorage.getItem('token')
       if (token) {
         config.headers.Authorization = `Bearer ${token}`
       }
-
-      // Add timestamp to avoid caching
+      // Add cache busting for GET requests
       if (config.method === 'get') {
         config.params = {
           ...config.params,
           _t: Date.now()
         }
       }
-
       return config
     },
     (error) => Promise.reject(error)
   )
 
-  // Response interceptor with retry logic
   instance.interceptors.response.use(
     (response) => response,
     async (error) => {
       const originalRequest = error.config
-
-      // Retry logic for network errors
+      
+      // Retry logic for server errors
       if (!originalRequest._retryCount) {
         originalRequest._retryCount = 0
       }
-
+      
       if (originalRequest._retryCount < API_CONFIG.RETRY_ATTEMPTS &&
           (!error.response || error.response.status >= 500)) {
         originalRequest._retryCount++
-
-        // Exponential backoff
         const delay = Math.pow(2, originalRequest._retryCount) * 1000
         await new Promise(resolve => setTimeout(resolve, delay))
-
         return instance(originalRequest)
       }
 
-      // Handle 401 Unauthorized
+      // Handle 401 errors (token refresh)
       if (error.response?.status === 401 && !originalRequest._retry) {
         originalRequest._retry = true
-
         try {
-          const refreshToken = localStorage.getItem('refreshToken')
-          if (refreshToken) {
-            // Attempt to refresh token
-            const refreshResponse = await authAPI.refresh()
-            const { access_token } = refreshResponse.data
-
-            if (access_token) {
-              localStorage.setItem('token', access_token)
-              originalRequest.headers.Authorization = `Bearer ${access_token}`
-              return instance(originalRequest)
-            }
+          const refreshResponse = await authAPI.refresh()
+          const { access_token } = refreshResponse.data
+          if (access_token) {
+            localStorage.setItem('token', access_token)
+            originalRequest.headers.Authorization = `Bearer ${access_token}`
+            return instance(originalRequest)
           }
         } catch (refreshError) {
-          // Refresh failed, logout user
           localStorage.removeItem('token')
-          localStorage.removeItem('refreshToken')
-          localStorage.removeItem('user')
           window.location.href = '/login'
         }
       }
-
+      
       return Promise.reject(error)
     }
   )
@@ -88,7 +71,6 @@ const createApiInstance = (baseURL) => {
   return instance
 }
 
-// Create API instances
 export const authAPI = createApiInstance(SERVICE_URLS.AUTH)
 export const productsAPI = createApiInstance(SERVICE_URLS.PRODUCTS)
 export const ordersAPI = createApiInstance(SERVICE_URLS.ORDERS)
@@ -96,7 +78,6 @@ export const usersAPI = createApiInstance(SERVICE_URLS.USERS)
 export const paymentsAPI = createApiInstance(SERVICE_URLS.PAYMENTS)
 export const notificationsAPI = createApiInstance(SERVICE_URLS.NOTIFICATIONS)
 
-// Consolidated API object
 export const API = {
   auth: {
     login: (credentials) => authAPI.post('/login', credentials),
@@ -105,7 +86,7 @@ export const API = {
     refresh: () => authAPI.post('/refresh'),
     forgotPassword: (email) => authAPI.post('/forgot-password', { email }),
     resetPassword: (data) => authAPI.post('/reset-password', data),
-    getProfile: () => usersAPI.get('/profile'),
+    getProfile: () => authAPI.get('/profile'),
   },
   products: {
     getAll: (params = {}) => productsAPI.get('/', { params }),
