@@ -61,6 +61,7 @@ def publish_user_registration_event(user_data: dict):
 
 @router.post("/register", response_model=Token)
 async def register_user(
+        user_data: UserCreate = None,
         email: Optional[str] = Form(None),
         phone: Optional[str] = Form(None),
         username: Optional[str] = Form(None),
@@ -68,26 +69,34 @@ async def register_user(
         first_name: str = Form(...),
         last_name: str = Form(...),
         country_id: int = Form(1),
-        telegram_username: Optional[str] = Form(None),
-        telegram_phone: Optional[str] = Form(None),
-        whatsapp_phone: Optional[str] = Form(None),
         background_tasks: BackgroundTasks = None
 ):
     try:
         # Check maintenance mode
         config.refresh_cache()
         logger.info(f"DEBUG: Maintenance mode value: {config.maintenance_mode}, type: {type(config.maintenance_mode)}")
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Registration is temporarily unavailable."
             )
 
+        # Use form data if provided, otherwise use UserCreate object
+        if user_data:
+            email = user_data.email
+            phone = user_data.phone
+            username = user_data.username
+            password = user_data.password
+            first_name = user_data.first_name
+            last_name = user_data.last_name
+            country_id = user_data.country_id or 1
+
+        logger.info(f"🔄 Processing registration for: {email or phone or username}")
+
+        # Sanitize inputs
         first_name = sanitize_input(first_name)
         last_name = sanitize_input(last_name)
-        telegram_username = sanitize_input(telegram_username) if telegram_username else None
-        telegram_phone = sanitize_input(telegram_phone) if telegram_phone else None
-        whatsapp_phone = sanitize_input(whatsapp_phone) if whatsapp_phone else None
 
         if not email and not phone and not username:
             raise HTTPException(
@@ -127,7 +136,8 @@ async def register_user(
                 detail="Password is too common. Please choose a stronger password."
             )
 
-        logger.info(f"Processing registration with Argon2 hashing")
+        logger.info(f"🔄 Processing registration with Argon2 hashing")
+
         with db.get_cursor() as cursor:
             # Check for existing user
             if email:
@@ -154,62 +164,42 @@ async def register_user(
                         detail="Username already taken"
                     )
 
-            if telegram_username:
-                telegram_username = telegram_username.lstrip('@')
-                cursor.execute("SELECT id FROM users WHERE telegram_username = %s", (telegram_username,))
-                if cursor.fetchone():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Telegram username already taken"
-                    )
-
-
             password_hash = get_password_hash(password)
+            logger.info(f"🔐 Password hashed successfully")
+
+            # Insert user
             cursor.execute("""
-                INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id, telegram_username, telegram_phone, whatsapp_phone)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (email, phone, username, password_hash, first_name, last_name, country_id, telegram_username, phone, phone))
+                INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+            """, (email, phone, username, password_hash, first_name, last_name, country_id))
+
             user_id = cursor.lastrowid
+            logger.info(f"✅ User created with ID: {user_id}")
 
             # Assign customer role by default
             cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
             role = cursor.fetchone()
+
             if role:
                 cursor.execute("""
                     INSERT INTO user_role_assignments (user_id, role_id, assigned_by)
                     VALUES (%s, %s, %s)
                 """, (user_id, role['id'], user_id))
+                logger.info(f"✅ Customer role assigned to user {user_id}")
 
-            # ✅ AUTOMATICALLY ENABLE NOTIFICATION METHODS
-            # Enable Telegram if Telegram username provided
-            if telegram_username:
-                cursor.execute("""
-                    INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
-                    VALUES (%s, 'telegram', TRUE)
-                    ON DUPLICATE KEY UPDATE is_enabled = TRUE
-                """, (user_id,))
-                logger.info(f"✅ Automatically enabled Telegram notifications for user {user_id}")
-
-            # Enable WhatsApp if WhatsApp phone provided
-            if whatsapp_phone:
-                cursor.execute("""
-                    INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
-                    VALUES (%s, 'whatsapp', TRUE)
-                    ON DUPLICATE KEY UPDATE is_enabled = TRUE
-                """, (user_id,))
-                logger.info(f"✅ Automatically enabled WhatsApp notifications for user {user_id}")
-
-            # Always enable email as fallback
+            # Enable email notifications by default
             cursor.execute("""
                 INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
                 VALUES (%s, 'email', TRUE)
                 ON DUPLICATE KEY UPDATE is_enabled = TRUE
             """, (user_id,))
-            logger.info(f"✅ Enabled email notifications for user {user_id}")
+            logger.info(f"✅ Email notifications enabled for user {user_id}")
 
             # Get user roles and permissions
             cursor.execute("""
-                SELECT ur.name as role_name, p.name as permission_name
+                SELECT 
+                    ur.name as role_name, 
+                    p.name as permission_name
                 FROM user_role_assignments ura
                 JOIN user_roles ur ON ura.role_id = ur.id
                 LEFT JOIN role_permissions rp ON ur.id = rp.role_id
@@ -219,11 +209,16 @@ async def register_user(
 
             roles = set()
             permissions = set()
+
             for row in cursor.fetchall():
                 if row['role_name']:
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
+
+            # Ensure customer role is present
+            if not roles:
+                roles.add('customer')
 
             # Create access token with secure expiration
             access_token = create_access_token(
@@ -236,6 +231,7 @@ async def register_user(
                 expires_delta=timedelta(hours=24)
             )
 
+            # Get user data for event publishing
             cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             user = cursor.fetchone()
 
@@ -246,7 +242,8 @@ async def register_user(
                     user
                 )
 
-            logger.info(f"User registered successfully with Argon2: {email or phone or username}")
+            logger.info(f"✅ User registered successfully: {email or phone or username}")
+
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -258,10 +255,14 @@ async def register_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Registration failed: {str(e)}")
+        logger.error(f"❌ Registration failed: {str(e)}")
+        logger.error(f"❌ Error type: {type(e).__name__}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Registration failed"
+            detail="Registration failed due to server error"
         )
 
 

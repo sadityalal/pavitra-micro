@@ -94,49 +94,76 @@ export const AuthProvider = ({ children }) => {
   }
 
   const register = async (userData) => {
-    try {
-      console.log('🔄 Starting registration...')
+      try {
+        console.log('🔄 Starting registration with data:', userData)
 
-      const response = await authAPI.post('/register', userData)
-      console.log('✅ Registration successful:', response.data)
+        // Clear any existing token first
+        localStorage.removeItem('token')
 
-      const { access_token, user_roles, user_permissions } = response.data
+        // Create FormData for registration
+        const formData = new FormData()
 
-      if (!access_token) {
-        throw new Error('No access token received')
-      }
+        // Append all fields to FormData
+        Object.keys(userData).forEach(key => {
+          if (userData[key] !== null && userData[key] !== undefined) {
+            formData.append(key, userData[key])
+          }
+        })
 
-      // Store token
-      setToken(access_token)
-      localStorage.setItem('token', access_token)
+        console.log('🔄 Sending registration request...')
+        const response = await authAPI.post('/register', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data'
+          }
+        })
 
-      // Create user object
-      const newUser = {
-        first_name: userData.first_name,
-        last_name: userData.last_name,
-        email: userData.email,
-        roles: user_roles || ['customer'],
-        permissions: user_permissions || []
-      }
+        console.log('✅ Registration successful:', response.data)
 
-      setUser(newUser)
-      console.log('✅ Registration completed successfully')
+        const { access_token, user_roles, user_permissions } = response.data
 
-      return { success: true }
-    } catch (error) {
-      console.error('❌ Registration failed:', error)
+        if (!access_token) {
+          throw new Error('No access token received')
+        }
 
-      const errorMessage = error.response?.data?.detail ||
-                          error.response?.data?.message ||
-                          error.message ||
-                          'Registration failed'
+        // Store token
+        setToken(access_token)
+        localStorage.setItem('token', access_token)
+        console.log('✅ Token stored')
 
-      return {
-        success: false,
-        error: errorMessage
+        // Create user object
+        const newUser = {
+          first_name: userData.first_name,
+          last_name: userData.last_name,
+          email: userData.email,
+          phone: userData.phone,
+          username: userData.username,
+          roles: user_roles || ['customer'],
+          permissions: user_permissions || []
+        }
+
+        setUser(newUser)
+        console.log('✅ Registration completed successfully')
+
+        return { success: true }
+      } catch (error) {
+        console.error('❌ Registration failed:', error)
+
+        // Clear token on failure
+        localStorage.removeItem('token')
+        setToken(null)
+        setUser(null)
+
+        const errorMessage = error.response?.data?.detail ||
+                            error.response?.data?.message ||
+                            error.message ||
+                            'Registration failed'
+
+        return {
+          success: false,
+          error: errorMessage
+        }
       }
     }
-  }
 
   const logout = async () => {
     try {
