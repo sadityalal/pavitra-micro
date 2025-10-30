@@ -206,4 +206,4 @@ const OrderRow = ({ order, onStatusChange, getStatusVariant, formatDate }) => {
   )
 }
 
-export default Order
+export default Orders

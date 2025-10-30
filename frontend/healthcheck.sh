@@ -1,6 +1,7 @@
 #!/bin/sh
-# Health check for frontend
-if wget -q --spider http://localhost:80; then
+
+# Health check for the container
+if curl -f http://localhost:80/health > /dev/null 2>&1; then
     exit 0
 else
     exit 1

@@ -1,7 +1,7 @@
 import axios from 'axios'
 import { API_CONFIG, SERVICE_URLS } from '../config/api'
 
-// Create axios instances for each service
+// Create axios instance with default config
 const createApiInstance = (baseURL) => {
   const instance = axios.create({
     baseURL,
@@ -9,7 +9,7 @@ const createApiInstance = (baseURL) => {
     headers: {
       'Content-Type': 'application/json',
     },
-    withCredentials: true, // Important for CORS with credentials
+    withCredentials: true,
   })
 
   // Request interceptor
@@ -20,11 +20,12 @@ const createApiInstance = (baseURL) => {
         config.headers.Authorization = `Bearer ${token}`
       }
 
-      // Add CORS headers for development
-      if (process.env.NODE_ENV === 'development') {
-        config.headers['Access-Control-Allow-Origin'] = '*'
-        config.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-        config.headers['Access-Control-Allow-Headers'] = 'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+      // Add timestamp to avoid caching
+      if (config.method === 'get') {
+        config.params = {
+          ...config.params,
+          _t: Date.now()
+        }
       }
 
       return config
@@ -32,25 +33,47 @@ const createApiInstance = (baseURL) => {
     (error) => Promise.reject(error)
   )
 
-  // Response interceptor
+  // Response interceptor with retry logic
   instance.interceptors.response.use(
     (response) => response,
     async (error) => {
       const originalRequest = error.config
 
+      // Retry logic for network errors
+      if (!originalRequest._retryCount) {
+        originalRequest._retryCount = 0
+      }
+
+      if (originalRequest._retryCount < API_CONFIG.RETRY_ATTEMPTS &&
+          (!error.response || error.response.status >= 500)) {
+        originalRequest._retryCount++
+
+        // Exponential backoff
+        const delay = Math.pow(2, originalRequest._retryCount) * 1000
+        await new Promise(resolve => setTimeout(resolve, delay))
+
+        return instance(originalRequest)
+      }
+
+      // Handle 401 Unauthorized
       if (error.response?.status === 401 && !originalRequest._retry) {
         originalRequest._retry = true
+
         try {
           const refreshToken = localStorage.getItem('refreshToken')
           if (refreshToken) {
-            // Implement token refresh logic here
-            // const response = await authInstance.post('/refresh', { refresh_token: refreshToken })
-            // const newToken = response.data.access_token
-            // localStorage.setItem('token', newToken)
-            // originalRequest.headers.Authorization = `Bearer ${newToken}`
-            // return instance(originalRequest)
+            // Attempt to refresh token
+            const refreshResponse = await authAPI.refresh()
+            const { access_token } = refreshResponse.data
+
+            if (access_token) {
+              localStorage.setItem('token', access_token)
+              originalRequest.headers.Authorization = `Bearer ${access_token}`
+              return instance(originalRequest)
+            }
           }
         } catch (refreshError) {
+          // Refresh failed, logout user
           localStorage.removeItem('token')
           localStorage.removeItem('refreshToken')
           localStorage.removeItem('user')
@@ -65,7 +88,7 @@ const createApiInstance = (baseURL) => {
   return instance
 }
 
-// Create instances for each service
+// Create API instances
 export const authAPI = createApiInstance(SERVICE_URLS.AUTH)
 export const productsAPI = createApiInstance(SERVICE_URLS.PRODUCTS)
 export const ordersAPI = createApiInstance(SERVICE_URLS.ORDERS)
@@ -73,9 +96,8 @@ export const usersAPI = createApiInstance(SERVICE_URLS.USERS)
 export const paymentsAPI = createApiInstance(SERVICE_URLS.PAYMENTS)
 export const notificationsAPI = createApiInstance(SERVICE_URLS.NOTIFICATIONS)
 
-// API Methods
+// Consolidated API object
 export const API = {
-  // Auth
   auth: {
     login: (credentials) => authAPI.post('/login', credentials),
     register: (userData) => authAPI.post('/register', userData),
@@ -83,10 +105,8 @@ export const API = {
     refresh: () => authAPI.post('/refresh'),
     forgotPassword: (email) => authAPI.post('/forgot-password', { email }),
     resetPassword: (data) => authAPI.post('/reset-password', data),
-    getProfile: () => usersAPI.get('/profile'), // User service for profile
+    getProfile: () => usersAPI.get('/profile'),
   },
-
-  // Products
   products: {
     getAll: (params = {}) => productsAPI.get('/', { params }),
     getFeatured: () => productsAPI.get('/featured'),
@@ -98,8 +118,6 @@ export const API = {
     getBrands: () => productsAPI.get('/brands/all'),
     search: (query) => productsAPI.get('/', { params: { search: query } }),
   },
-
-  // Users
   users: {
     getProfile: () => usersAPI.get('/profile'),
     updateProfile: (data) => usersAPI.put('/profile', data),
@@ -111,13 +129,12 @@ export const API = {
     addToWishlist: (productId) => usersAPI.post(`/wishlist/${productId}`),
     removeFromWishlist: (productId) => usersAPI.delete(`/wishlist/${productId}`),
     getCart: () => usersAPI.get('/cart'),
-    addToCart: (productId, quantity = 1) => usersAPI.post(`/cart/${productId}`, { quantity }),
+    addToCart: (productId, quantity = 1, variationId = null) =>
+      usersAPI.post(`/cart/${productId}`, { quantity, variation_id: variationId }),
     updateCartItem: (cartItemId, quantity) => usersAPI.put(`/cart/${cartItemId}`, { quantity }),
     removeFromCart: (cartItemId) => usersAPI.delete(`/cart/${cartItemId}`),
     clearCart: () => usersAPI.delete('/cart'),
   },
-
-  // Orders
   orders: {
     create: (data) => ordersAPI.post('/', data),
     getById: (id) => ordersAPI.get(`/${id}`),
@@ -125,8 +142,6 @@ export const API = {
     updateStatus: (id, data) => ordersAPI.put(`/${id}/status`, data),
     cancel: (id, reason) => ordersAPI.post(`/${id}/cancel`, { reason }),
   },
-
-  // Payments
   payments: {
     initiate: (data) => paymentsAPI.post('/initiate', data),
     verify: (paymentId, data) => paymentsAPI.post(`/verify/${paymentId}`, data),
@@ -134,12 +149,6 @@ export const API = {
     savePaymentMethod: (data) => paymentsAPI.post('/save-payment-method', data),
     getTransactions: () => paymentsAPI.get('/transactions'),
     createRefund: (data) => paymentsAPI.post('/refund', data),
-  },
-
-  // Notifications
-  notifications: {
-    getPreferences: () => usersAPI.get('/notification-preferences'),
-    updatePreferences: (data) => usersAPI.put('/notification-preferences', data),
   },
 }
 
