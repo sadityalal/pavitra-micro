@@ -27,43 +27,25 @@ const ProductCard = ({
     ? Math.round(((compare_price - base_price) / compare_price) * 100)
     : 0
 
-  // Fix image URL - always use relative paths for nginx proxy
   const getImageUrl = (url) => {
     if (!url) {
-      console.log('🖼️ No image URL for product:', name)
       return '/images/placeholder-product.jpg'
     }
-
-    // If it's a full URL with port 8002, extract the path
-    if (url.includes('localhost:8002')) {
-      const path = url.replace('http://localhost:8002', '')
-      console.log('🖼️ Converted to path:', path)
-      return path
-    }
-
-    // If it's already a relative path, use it as is
-    if (url.startsWith('/uploads/')) {
-      return url
-    }
-
-    // If missing leading slash, add it
-    if (url.startsWith('uploads/')) {
-      return `/${url}`
-    }
-
-    console.log('🖼️ Using fallback for URL:', url)
-    return '/images/placeholder-product.jpg'
+    return url
   }
 
   const [imageError, setImageError] = React.useState(false)
+  const [imageLoading, setImageLoading] = React.useState(true)
 
   const handleImageError = () => {
-    console.error('❌ Image failed to load:', main_image_url)
+    console.error('Image failed to load:', main_image_url)
     setImageError(true)
+    setImageLoading(false)
   }
 
   const handleImageLoad = () => {
-    console.log('✅ Image loaded:', main_image_url)
+    setImageLoading(false)
+    setImageError(false)
   }
 
   const handleAddToCart = (e) => {
@@ -85,30 +67,35 @@ const ProductCard = ({
   const imageUrl = getImageUrl(main_image_url)
   const finalImageUrl = imageError ? '/images/placeholder-product.jpg' : imageUrl
 
-  console.log(`🖼️ Product "${name}":`, {
-    original: main_image_url,
-    final: finalImageUrl,
-    error: imageError
-  })
-
   return (
     <Card className={`product-card h-100 ${className}`}>
       <div className="position-relative">
-        <Card.Img
-          variant="top"
-          src={finalImageUrl}
-          style={{ height: '200px', objectFit: 'cover' }}
-          alt={name}
-          onError={handleImageError}
-          onLoad={handleImageLoad}
-        />
-        {}
+        <div className="image-container" style={{ height: '200px', overflow: 'hidden', position: 'relative' }}>
+          {imageLoading && (
+            <div className="d-flex justify-content-center align-items-center h-100">
+              <div className="spinner-border text-primary" role="status">
+                <span className="visually-hidden">Loading...</span>
+              </div>
+            </div>
+          )}
+          <Card.Img
+            variant="top"
+            src={finalImageUrl}
+            style={{
+              height: '200px',
+              objectFit: 'cover',
+              display: imageLoading ? 'none' : 'block'
+            }}
+            alt={name}
+            onError={handleImageError}
+            onLoad={handleImageLoad}
+          />
+        </div>
         <div className="position-absolute top-0 start-0 p-2">
           {is_featured && <Badge bg="danger" className="me-1">Featured</Badge>}
           {is_bestseller && <Badge bg="warning" text="dark" className="me-1">Bestseller</Badge>}
           {hasDiscount && <Badge bg="success">{discountPercent}% OFF</Badge>}
         </div>
-        {}
         <div className="position-absolute top-0 end-0 p-2">
           <Badge bg={stock_status === 'in_stock' ? 'success' : 'danger'}>
             {stock_status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
@@ -129,7 +116,6 @@ const ProductCard = ({
           {short_description?.length > 100 && '...'}
         </Card.Text>
         <div className="mt-auto">
-          {}
           <div className="d-flex align-items-center mb-2">
             <strong className="text-primary h5 mb-0">
               ₹{base_price}
@@ -140,7 +126,6 @@ const ProductCard = ({
               </small>
             )}
           </div>
-          {}
           {showActions && (
             <div className="d-flex gap-2">
               <Button

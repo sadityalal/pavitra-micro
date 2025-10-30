@@ -2,9 +2,9 @@ from fastapi import FastAPI, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from shared import config, setup_logging, get_logger, db
 from .routes import router
-from fastapi.staticfiles import StaticFiles
 import os
 
 setup_logging("product-service")
@@ -17,7 +17,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
-
+# Need to fix this hardcoded urls from config.py and site-settings table
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 app.add_middleware(
     CORSMiddleware,

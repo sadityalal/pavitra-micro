@@ -42,7 +42,6 @@ const ProductDetail = () => {
       const productId = selectedVariation ? selectedVariation.id : product.id
       const result = await addToCart(productId, quantity, selectedVariation?.id)
       if (result.success) {
-        // Show success message
         console.log('Product added to cart')
       }
     } catch (err) {
@@ -52,12 +51,10 @@ const ProductDetail = () => {
 
   const handleAddToWishlist = async () => {
     if (!isAuthenticated) {
-      // Redirect to login or show message
       return
     }
     try {
       await API.users.addToWishlist(product.id)
-      // Show success message
       console.log('Product added to wishlist')
     } catch (err) {
       console.error('Error adding to wishlist:', err)
@@ -156,7 +153,7 @@ const ProductDetail = () => {
           <Card>
             <Card.Body>
               <h6>Product Details</h6>
-              <div dangerouslySetInnerHTML={{ __html: product.long_description }} />
+              <div dangerouslySetInnerHTML={{ __html: product.description }} />
             </Card.Body>
           </Card>
         </Col>

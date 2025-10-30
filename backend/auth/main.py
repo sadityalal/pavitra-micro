@@ -14,7 +14,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
-
+# Need to fix this hardcoded urls from config.py and site-settings table
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 app.add_middleware(
     CORSMiddleware,

@@ -16,7 +16,7 @@ backend_dir = os.path.join(current_dir, '..')
 project_root = os.path.join(current_dir, '..', '..')
 sys.path.insert(0, backend_dir)
 sys.path.insert(0, project_root)
-
+# Need to fix this hardcoded urls from config.py and site-settings table
 class SecurePaymentTester:
     def __init__(self, base_url="http://localhost:8005", auth_url="http://localhost:8001"):
         self.base_url = base_url
