@@ -100,9 +100,8 @@ async def startup_event():
         logger.error(f"❌ Database initialization failed: {e}")
 
 
-# Mount static files - FIXED PATH
-app.mount("/uploads", StaticFiles(directory="/app/uploads"), name="uploads")
 
+app.mount("/uploads", StaticFiles(directory="/app/uploads"), name="uploads")
 app.include_router(router, prefix="/api/v1/products")
 
 

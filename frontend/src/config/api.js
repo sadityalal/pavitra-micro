@@ -10,25 +10,21 @@ export const SERVICE_URLS = {
   PAYMENTS: isProduction ? '/api/v1/payments' : `${config.PAYMENT_SERVICE_URL}/api/v1/payments`,
 }
 
-// Image URL helper - always use relative paths so nginx can proxy to backend
 export const getImageUrl = (imagePath) => {
   if (!imagePath) {
     return '/images/placeholder-product.jpg'
   }
 
-  // If it's already a full URL, return as is (shouldn't happen from backend)
+  // If it's already a full URL, return as is
   if (imagePath.startsWith('http://') || imagePath.startsWith('https://')) {
     return imagePath
   }
 
-  // For paths starting with /uploads, return as relative path
-  // This will be proxied by nginx to the product service
-  if (imagePath.startsWith('/uploads/')) {
-    return imagePath
-  }
-
-  // For any other relative paths
-  return imagePath
+  // For ALL environments, use the full backend URL
+  // This is the key fix - always go directly to the backend for images
+  const backendUrl = config.PRODUCT_SERVICE_URL
+  const normalizedPath = imagePath.startsWith('/') ? imagePath : `/${imagePath}`
+  return `${backendUrl}${normalizedPath}`
 }
 
 export const API_CONFIG = {

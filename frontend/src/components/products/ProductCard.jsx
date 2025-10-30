@@ -1,7 +1,7 @@
 import React from 'react'
 import { Card, Button, Badge } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
-import { getImageUrl } from '../../config/api' // ADD THIS IMPORT
+import { getImageUrl } from '../../config/api'
 
 const ProductCard = ({
   product,
@@ -22,27 +22,32 @@ const ProductCard = ({
     is_featured,
     is_bestseller
   } = product
-
   const hasDiscount = compare_price && compare_price > base_price
   const discountPercent = hasDiscount
     ? Math.round(((compare_price - base_price) / compare_price) * 100)
     : 0
-
   const [imageError, setImageError] = React.useState(false)
   const [imageLoading, setImageLoading] = React.useState(true)
 
-  // REMOVE the local getImageUrl function and use the imported one
+  // Get the properly formatted image URL
   const imageUrl = getImageUrl(main_image_url)
   const finalImageUrl = imageError ? '/images/placeholder-product.jpg' : imageUrl
 
-  console.log('🖼️ Image Debug:', {
-    original: main_image_url,
-    processed: imageUrl,
-    final: finalImageUrl
+  console.log('🖼️ ProductCard Image Debug:', {
+    productId: id,
+    productName: name,
+    originalImagePath: main_image_url,
+    processedUrl: imageUrl,
+    finalUrl: finalImageUrl,
+    imageError: imageError
   })
 
   const handleImageError = () => {
-    console.error('❌ Image failed to load:', imageUrl)
+    console.error('❌ Image failed to load:', {
+      imageUrl,
+      productId: id,
+      productName: name
+    })
     setImageError(true)
     setImageLoading(false)
   }
@@ -74,7 +79,7 @@ const ProductCard = ({
       <div className="position-relative">
         <div className="image-container" style={{ height: '200px', overflow: 'hidden', position: 'relative' }}>
           {imageLoading && (
-            <div className="d-flex justify-content-center align-items-center h-100">
+            <div className="d-flex justify-content-center align-items-center h-100 bg-light">
               <div className="spinner-border text-primary" role="status">
                 <span className="visually-hidden">Loading...</span>
               </div>
@@ -91,6 +96,7 @@ const ProductCard = ({
             alt={name}
             onError={handleImageError}
             onLoad={handleImageLoad}
+            crossOrigin="anonymous"
           />
         </div>
         <div className="position-absolute top-0 start-0 p-2">
