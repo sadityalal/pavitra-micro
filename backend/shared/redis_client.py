@@ -152,4 +152,73 @@ class RedisClient:
             logger.error(f"Failed to delete pattern {pattern}: {e}")
             return False
 
+    def ping(self):
+        """Check if Redis connection is alive"""
+        if not self._ensure_connection():
+            return False
+        try:
+            return self.redis_client.ping()
+        except Exception:
+            return False
+
+    def setex(self, key: str, expire: int, value: str):
+        """Safe setex with connection handling"""
+        if not self._ensure_connection():
+            return False
+        try:
+            return self.redis_client.setex(key, expire, value)
+        except Exception as e:
+            logger.error(f"Redis setex failed for {key}: {e}")
+            return False
+
+    def get(self, key: str):
+        """Safe get with connection handling"""
+        if not self._ensure_connection():
+            return None
+        try:
+            return self.redis_client.get(key)
+        except Exception as e:
+            logger.error(f"Redis get failed for {key}: {e}")
+            return None
+
+    def delete(self, key: str):
+        """Safe delete with connection handling"""
+        if not self._ensure_connection():
+            return False
+        try:
+            return self.redis_client.delete(key) > 0
+        except Exception as e:
+            logger.error(f"Redis delete failed for {key}: {e}")
+            return False
+
+    def exists(self, key: str):
+        """Safe exists check with connection handling"""
+        if not self._ensure_connection():
+            return False
+        try:
+            return self.redis_client.exists(key) > 0
+        except Exception as e:
+            logger.error(f"Redis exists failed for {key}: {e}")
+            return False
+
+    def incr(self, key: str):
+        """Safe increment with connection handling"""
+        if not self._ensure_connection():
+            return 0
+        try:
+            return self.redis_client.incr(key)
+        except Exception as e:
+            logger.error(f"Redis incr failed for {key}: {e}")
+            return 0
+
+    def expire(self, key: str, expire: int):
+        """Safe expire with connection handling"""
+        if not self._ensure_connection():
+            return False
+        try:
+            return self.redis_client.expire(key, expire)
+        except Exception as e:
+            logger.error(f"Redis expire failed for {key}: {e}")
+            return False
+
 redis_client = RedisClient()

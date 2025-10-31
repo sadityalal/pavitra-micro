@@ -27,11 +27,7 @@ class DatabaseConfig:
             try:
                 from .database import db
                 self._db = db
-                try:
-                    self._db.get_connection()
-                    logger.info("Database connection established in config")
-                except Exception as e:
-                    logger.warning(f"Database connection test failed: {e}")
+                logger.info("Database instance loaded in config")
             except ImportError:
                 logger.warning("Database not available yet")
                 return None
@@ -69,10 +65,9 @@ class DatabaseConfig:
                 connection.close()
 
     def _get_setting(self, key: str, default: Any = None) -> Any:
-        # Always check if settings have been updated
         self._check_settings_version()
-
         current_time = time.time()
+
         if (key in self._cache and
                 key in self._cache_timestamps and
                 current_time - self._cache_timestamps[key] < self._cache_duration):
@@ -88,7 +83,6 @@ class DatabaseConfig:
 
         db = self._get_db()
         if not db:
-            logger.warning(f"Database not available for setting {key}, using default: {default}")
             return default
 
         connection = None
@@ -98,32 +92,20 @@ class DatabaseConfig:
             cursor.execute("SELECT setting_value, setting_type FROM site_settings WHERE setting_key = %s", (key,))
             result = cursor.fetchone()
 
-            # DEBUG: Log what we found in database
-            logger.info(f"🔧 DATABASE DEBUG - Key: {key}, Found: {result is not None}")
             if result:
-                logger.info(
-                    f"🔧 DATABASE DEBUG - Raw Value: '{result['setting_value']}', Type: {result['setting_type']}")
-
-            if result:
-                # Use the setting_type from database to determine conversion
                 db_type = result['setting_type']
                 value = self._convert_value_by_type(result['setting_value'], db_type)
-
-                # DEBUG: Log conversion result
-                logger.info(
-                    f"🔧 CONVERSION DEBUG - Key: {key}, Raw: '{result['setting_value']}', Converted: {value}, Type: {type(value)}")
-
                 self._cache[key] = value
                 self._cache_timestamps[key] = current_time
-                logger.info(
-                    f"Loaded setting {key} from database: {value} (db_type: {db_type}, python_type: {type(value)})")
+                logger.debug(f"Loaded setting {key} from database: {value}")
                 return value
 
-            logger.warning(f"Setting {key} not found in database, using default: {default}")
             return default
 
         except Exception as e:
-            logger.warning(f"Failed to get {key} from database: {e}, using default: {default}")
+            # FIX: Don't log warnings for expected database unavailability during startup
+            if "connection" not in str(e).lower() or "not available" not in str(e).lower():
+                logger.warning(f"Failed to get {key} from database: {e}, using default: {default}")
             return default
         finally:
             if connection and connection.is_connected():

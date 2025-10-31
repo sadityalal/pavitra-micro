@@ -46,12 +46,17 @@ def get_password_hash(password: str) -> str:
 # JWT token handling
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
+
     if expires_delta:
         expire = datetime.utcnow() + expires_delta
     else:
         expire = datetime.utcnow() + timedelta(minutes=30)
 
-    to_encode.update({"exp": expire})
+    to_encode.update({
+        "exp": expire,
+        "iat": datetime.utcnow(),  # FIX: Add issued at timestamp
+        "iss": config.app_name  # FIX: Add issuer claim
+    })
 
     try:
         encoded_jwt = jwt.encode(to_encode, config.jwt_secret, algorithm=config.jwt_algorithm)
@@ -60,12 +65,31 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         logger.error(f"❌ Token creation failed: {str(e)}")
         raise
 
+
 def verify_token(token: str) -> Optional[Dict[str, Any]]:
     try:
         payload = jwt.decode(token, config.jwt_secret, algorithms=[config.jwt_algorithm])
+
+        # FIX: Additional validation for token expiration
+        if 'exp' not in payload:
+            logger.warning("Token missing expiration claim")
+            return None
+
+        # FIX: Check if token is expired
+        from datetime import datetime
+        if datetime.utcnow().timestamp() > payload['exp']:
+            logger.warning("Token has expired")
+            return None
+
         return payload
-    except JWTError as e:
-        logger.error(f"❌ JWT verification failed: {e}")
+    except jwt.ExpiredSignatureError:
+        logger.warning("Token signature has expired")
+        return None
+    except jwt.JWTError as e:
+        logger.error(f"JWT verification failed: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error during token verification: {e}")
         return None
 
 # Input sanitization

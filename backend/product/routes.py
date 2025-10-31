@@ -19,6 +19,52 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+def invalidate_product_cache_comprehensive(product_id: int):
+    """Comprehensive cache invalidation for product and related data"""
+    try:
+        keys_to_delete = [
+            f"product:{product_id}",
+            "categories:all",
+            "products:featured",
+            "products:bestsellers",
+            "products:new_arrivals"
+        ]
+
+        # FIX: Use pipeline for atomic deletion
+        pipeline = redis_client.redis_client.pipeline()
+        for key in keys_to_delete:
+            pipeline.delete(key)
+        pipeline.execute()
+
+        # FIX: Also delete pattern-based keys
+        pattern_keys = redis_client.redis_client.keys("products:*")
+        if pattern_keys:
+            redis_client.redis_client.delete(*pattern_keys)
+
+        logger.info(f"Comprehensively invalidated cache for product {product_id}")
+    except Exception as e:
+        logger.error(f"Failed to comprehensively invalidate product cache: {e}")
+
+
+def get_cached_products_with_fallback(cache_key: str, fallback_func: callable, expire: int = 1800):
+    """Get cached products with fallback function and proper error handling"""
+    try:
+        cached_data = redis_client.get(cache_key)
+        if cached_data:
+            return json.loads(cached_data)
+    except Exception as e:
+        logger.warning(f"Cache read failed for {cache_key}: {e}")
+
+    # Fallback to database
+    try:
+        data = fallback_func()
+        if data:
+            redis_client.setex(cache_key, expire, json.dumps(data))
+        return data
+    except Exception as e:
+        logger.error(f"Fallback function failed for {cache_key}: {e}")
+        return None
+
 def publish_product_event(product_data: dict, event_type: str):
     try:
         message = {
@@ -328,19 +374,25 @@ async def get_products(
                 detail="Service is under maintenance. Please try again later."
             )
 
-        # SESSION: Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
 
         logger.info(f"🔍 Fetching products with filters - search: {search}, category_id: {category_id}, page: {page}")
+
+        # FIX: Use parameterized queries to prevent SQL injection and improve performance
         query_conditions = ["p.status = 'active'"]
         query_params = []
 
         if search:
-            query_conditions.append("(p.name LIKE %s OR p.short_description LIKE %s OR p.description LIKE %s)")
+            # FIX: Use full-text search for better performance
+            search_condition = """
+                (MATCH(p.name, p.short_description, p.description) AGAINST (%s IN BOOLEAN MODE) 
+                OR p.name LIKE %s OR p.short_description LIKE %s OR p.description LIKE %s)
+            """
+            query_conditions.append(search_condition)
             search_term = f"%{sanitize_input(search)}%"
-            query_params.extend([search_term, search_term, search_term])
+            query_params.extend([search, search_term, search_term, search_term])
 
         if category_id:
             query_conditions.append("p.category_id = %s")
@@ -383,6 +435,7 @@ async def get_products(
 
         where_clause = " AND ".join(query_conditions) if query_conditions else "1=1"
 
+        # FIX: Validate and sanitize sort parameters to prevent SQL injection
         valid_sort_columns = ["name", "base_price", "created_at", "view_count", "total_sold", "wishlist_count"]
         valid_sort_orders = ["asc", "desc"]
 
@@ -391,27 +444,17 @@ async def get_products(
         if sort_order not in valid_sort_orders:
             sort_order = "desc"
 
+        # FIX: Use parameterized queries for all parts
         with db.get_cursor() as cursor:
-            count_query = f"""
-                SELECT COUNT(*) as total
-                FROM products p
-                LEFT JOIN categories c ON p.category_id = c.id
-                LEFT JOIN brands b ON p.brand_id = b.id
-                WHERE {where_clause}
-            """
-            logger.info(f"📊 Count query: {count_query}")
-            logger.info(f"📊 Count params: {query_params}")
-            cursor.execute(count_query, query_params)
-            total_count = cursor.fetchone()['total']
-            logger.info(f"📊 Total products found: {total_count}")
-
+            # FIX: Use COUNT(*) OVER() for more efficient pagination
             products_query = f"""
                 SELECT
                     p.*,
                     c.name as category_name,
                     c.slug as category_slug,
                     b.name as brand_name,
-                    b.slug as brand_slug
+                    b.slug as brand_slug,
+                    COUNT(*) OVER() as total_count
                 FROM products p
                 LEFT JOIN categories c ON p.category_id = c.id
                 LEFT JOIN brands b ON p.brand_id = b.id
@@ -419,18 +462,37 @@ async def get_products(
                 ORDER BY p.{sort_by} {sort_order.upper()}
                 LIMIT %s OFFSET %s
             """
+
             offset = (page - 1) * page_size
             final_params = query_params + [page_size, offset]
-            logger.info(f"📦 Products query: {products_query}")
-            logger.info(f"📦 Products params: {final_params}")
+
+            logger.info(f"📦 Products query executing with {len(final_params)} parameters")
             cursor.execute(products_query, final_params)
             products = cursor.fetchall()
-            logger.info(f"📦 Products fetched: {len(products)}")
+
+            # FIX: Get total count from the first row if available
+            total_count = 0
+            if products:
+                total_count = products[0].get('total_count', 0)
+            else:
+                # Fallback to count query if no products found
+                count_query = f"""
+                    SELECT COUNT(*) as total
+                    FROM products p
+                    LEFT JOIN categories c ON p.category_id = c.id
+                    LEFT JOIN brands b ON p.brand_id = b.id
+                    WHERE {where_clause}
+                """
+                cursor.execute(count_query, query_params)
+                total_count = cursor.fetchone()['total']
+
+            logger.info(f"📦 Products fetched: {len(products)}, total: {total_count}")
 
             product_list = []
             for product in products:
                 specification = None
                 image_gallery = None
+
                 if product['specification']:
                     try:
                         if isinstance(product['specification'], str):
@@ -488,6 +550,7 @@ async def get_products(
 
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 1
             logger.info(f"✅ Successfully returning {len(product_list)} products")
+
             return ProductListResponse(
                 products=product_list,
                 total_count=total_count,
@@ -1757,12 +1820,12 @@ async def update_product(
                 detail="Service is under maintenance. Please try again later."
             )
 
-        # SESSION: Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
 
         current_user = await require_roles(['admin', 'vendor'], request)
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id FROM products WHERE id = %s", (product_id,))
             if not cursor.fetchone():
@@ -1770,12 +1833,22 @@ async def update_product(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             cursor.execute("SELECT id FROM products WHERE sku = %s AND id != %s", (product_data.sku, product_id))
             if cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="SKU already exists"
                 )
+
+            # FIX: Also check slug uniqueness
+            cursor.execute("SELECT id FROM products WHERE slug = %s AND id != %s", (product_data.slug, product_id))
+            if cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Slug already exists"
+                )
+
             cursor.execute("""
                 UPDATE products SET
                     sku = %s, name = %s, slug = %s, short_description = %s,
@@ -1802,15 +1875,21 @@ async def update_product(
                 product_data.is_featured,
                 product_id
             ))
+
             cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
+
             if background_tasks:
                 background_tasks.add_task(
                     publish_product_event,
                     product,
                     'updated'
                 )
-            invalidate_product_cache(product_id)
+
+            # FIX: Use comprehensive cache invalidation
+            background_tasks.add_task(invalidate_product_cache_comprehensive, product_id)
+
+            # Rest of the function remains the same...
             specification = None
             if product['specification']:
                 try:
@@ -1820,7 +1899,7 @@ async def update_product(
                         specification = product['specification']
                 except:
                     specification = None
-            # FIXED: Normalize image URLs for updated product
+
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(product['image_gallery'])
 
@@ -1857,6 +1936,7 @@ async def update_product(
                 created_at=product['created_at'],
                 updated_at=product['updated_at']
             )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1883,7 +1963,6 @@ async def upload_product_images(
                 detail="Service is under maintenance. Please try again later."
             )
 
-        # SESSION: Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -1896,10 +1975,12 @@ async def upload_product_images(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-            max_size = 5 * 1024 * 1024
+            max_size = 5 * 1024 * 1024  # 5MB
             uploaded_urls = []
             existing_gallery = []
+
             if product['image_gallery']:
                 try:
                     if isinstance(product['image_gallery'], str):
@@ -1908,40 +1989,81 @@ async def upload_product_images(
                         existing_gallery = product['image_gallery']
                 except:
                     existing_gallery = []
+
             for file in files:
+                # FIX: Validate file type more securely
                 if file.content_type not in allowed_types:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Invalid file type for {file.filename}. Only JPEG, PNG, GIF, and WebP are allowed."
                     )
+
+                # FIX: Validate file extension
+                file_extension = file.filename.split('.')[-1].lower()
+                if file_extension not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid file extension for {file.filename}. Only .jpg, .jpeg, .png, .gif, .webp are allowed."
+                    )
+
                 file.file.seek(0, 2)
                 file_size = file.file.tell()
                 file.file.seek(0)
+
                 if file_size > max_size:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"File {file.filename} too large. Maximum size is 5MB."
                     )
-                file_extension = file.filename.split('.')[-1]
-                unique_filename = f"product_{product_id}_{int(datetime.now().timestamp())}_{len(uploaded_urls)}.{file_extension}"
-                file_path = f"/app/uploads/products/{unique_filename}"
-                os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
+                # FIX: Sanitize filename to prevent path traversal
+                safe_filename = "".join(c for c in file.filename if c.isalnum() or c in ('-', '_', '.')).rstrip()
+                unique_filename = f"product_{product_id}_{int(datetime.now().timestamp())}_{len(uploaded_urls)}_{safe_filename}"
+
+                # FIX: Ensure upload directory exists and is secure
+                upload_dir = "/app/uploads/products"
+                os.makedirs(upload_dir, exist_ok=True, mode=0o755)
+
+                file_path = os.path.join(upload_dir, unique_filename)
+
+                # FIX: Prevent path traversal
+                if not file_path.startswith("/app/uploads/"):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Invalid file path"
+                    )
+
+                # Read and write file in chunks to prevent memory issues
                 with open(file_path, "wb") as buffer:
-                    content = await file.read()
-                    buffer.write(content)
-                # FIXED: Store relative path only, not full URL
+                    while True:
+                        chunk = await file.read(8192)  # 8KB chunks
+                        if not chunk:
+                            break
+                        buffer.write(chunk)
+
                 image_url = f"/uploads/products/{unique_filename}"
                 uploaded_urls.append(image_url)
+
             updated_gallery = existing_gallery + uploaded_urls
+
+            # FIX: Limit the number of images in gallery
+            if len(updated_gallery) > 20:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Maximum 20 images allowed per product"
+                )
+
             if not product['main_image_url'] and uploaded_urls:
                 cursor.execute(
                     "UPDATE products SET main_image_url = %s WHERE id = %s",
                     (uploaded_urls[0], product_id)
                 )
+
             cursor.execute(
                 "UPDATE products SET image_gallery = %s WHERE id = %s",
                 (str(updated_gallery), product_id)
             )
+
             if background_tasks:
                 cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
                 updated_product = cursor.fetchone()
@@ -1950,12 +2072,15 @@ async def upload_product_images(
                     updated_product,
                     'images_updated'
                 )
+
             invalidate_product_cache(product_id)
+
             return {
                 "message": f"Successfully uploaded {len(uploaded_urls)} images",
                 "uploaded_urls": uploaded_urls,
                 "total_images": len(updated_gallery)
             }
+
     except HTTPException:
         raise
     except Exception as e:

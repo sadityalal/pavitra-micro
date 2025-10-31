@@ -90,16 +90,42 @@ class Database:
             try:
                 connection = self.connection_pool.get_connection()
                 if connection.is_connected():
-                    connection.ping(reconnect=False, attempts=1, delay=0)
-                    return connection
+                    # FIX: Use a more reliable connection check
+                    try:
+                        connection.ping(reconnect=True, attempts=1, delay=0)
+                        return connection
+                    except Error:
+                        # Connection is dead, close it and try again
+                        try:
+                            connection.close()
+                        except:
+                            pass
+                        continue
                 else:
-                    connection.close()
+                    # Connection is not connected, close and try again
+                    try:
+                        connection.close()
+                    except:
+                        pass
                     logger.warning(f"🔌 Got disconnected connection, retry {attempt + 1}/{max_retries}")
+
             except Error as e:
                 logger.warning(f"🔌 Connection attempt {attempt + 1} failed: {e}")
                 if attempt == max_retries - 1:
                     logger.error("💥 Failed to get database connection after retries")
+                    # FIX: Don't raise error, try to reinitialize pool
+                    try:
+                        self._initialize_pool()
+                        # One more attempt after reinitialization
+                        if self.connection_pool:
+                            connection = self.connection_pool.get_connection()
+                            if connection and connection.is_connected():
+                                return connection
+                    except Exception as pool_error:
+                        logger.error(f"💥 Pool reinitialization also failed: {pool_error}")
                     raise
+                time.sleep(1)  # Wait before retry
+
         raise Error("Failed to get database connection")
 
     @contextmanager
@@ -234,6 +260,31 @@ class Database:
             query += f" LIMIT {max_rows}"
 
         return self.execute_query(query, params)
+
+    def _monitor_connection_health(self):
+        """Monitor and repair connection pool health"""
+        try:
+            if not self.connection_pool:
+                return
+
+            # Try to get a connection and immediately return it
+            test_conn = None
+            try:
+                test_conn = self.connection_pool.get_connection()
+                if test_conn and test_conn.is_connected():
+                    test_conn.ping(reconnect=False)
+            except Exception as e:
+                logger.warning(f"Connection pool health check failed: {e}")
+                # Reinitialize pool if health check fails
+                self._initialize_pool()
+            finally:
+                if test_conn:
+                    try:
+                        test_conn.close()
+                    except:
+                        pass
+        except Exception as e:
+            logger.error(f"Connection health monitoring failed: {e}")
 
 
 db = Database()

@@ -1,4 +1,5 @@
 from fastapi import Request, Response
+from fastapi.responses import JSONResponse
 from typing import Optional, Callable, Any
 from datetime import datetime
 import uuid
@@ -33,32 +34,45 @@ class SessionMiddleware:
                 session_id = session.session_id
                 is_new_session = True
 
-        # Attach session to request state
+        # Store session in request state
         request.state.session = session
         request.state.session_id = session_id
 
-        # Create response wrapper to set cookies
-        async def send_wrapper(message):
-            if message["type"] == "http.response.start" and is_new_session and session:
-                # Add Set-Cookie header
-                headers = message.get("headers", [])
-                cookie_value = f"{self.session_cookie_name}={session_id}; Max-Age=86400; HttpOnly; SameSite=lax"
-                if not request.app.debug:
-                    cookie_value += "; Secure"
-                headers.append([b"set-cookie", cookie_value.encode()])
-                message["headers"] = headers
-                logger.info(f"✅ Set session cookie for new {session.session_type.value} session: {session_id}")
+        # Create a custom response class to handle cookie setting
+        async def session_send_wrapper(message):
+            if message["type"] == "http.response.start":
+                # Add session cookie for new sessions
+                if is_new_session and session:
+                    headers = message.get("headers", [])
+                    cookie_value = f"{self.session_cookie_name}={session_id}; Max-Age=86400; HttpOnly; SameSite=lax; Path=/"
+
+                    from shared import config
+                    if not config.debug_mode:
+                        cookie_value += "; Secure"
+
+                    headers.append([b"set-cookie", cookie_value.encode()])
+                    message["headers"] = headers
+                    logger.info(f"✅ Set session cookie: {session_id}")
+
             await send(message)
 
-        await self.app(scope, receive, send_wrapper)
+        try:
+            await self.app(scope, receive, session_send_wrapper)
+        except Exception as e:
+            logger.error(f"Session middleware error: {e}")
+            await self.app(scope, receive, send)
 
     def _get_session_id(self, request: Request) -> Optional[str]:
+        # Check cookies first
         session_id = request.cookies.get(self.session_cookie_name)
         if session_id:
             return session_id
+
+        # Check Authorization header as fallback
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Session "):
             return auth_header[8:]
+
         return None
 
     async def _create_new_session(self, request: Request) -> Optional[SessionData]:
@@ -67,6 +81,7 @@ class SessionMiddleware:
             user_id = None
             guest_id = str(uuid.uuid4())
 
+            # Check if user is authenticated via JWT
             auth_header = request.headers.get("Authorization")
             if auth_header and auth_header.startswith("Bearer "):
                 from .auth_middleware import verify_token
@@ -76,6 +91,11 @@ class SessionMiddleware:
                     session_type = SessionType.USER
                     user_id = int(payload['sub'])
                     guest_id = None
+
+                    # Check for existing user session
+                    existing_session = session_service.get_session_by_user_id(user_id)
+                    if existing_session:
+                        return existing_session
 
             session_data = {
                 'session_type': session_type,
@@ -90,7 +110,6 @@ class SessionMiddleware:
             if session:
                 logger.info(f"✅ Created new {session_type.value} session: {session.session_id}")
             return session
-
         except Exception as e:
             logger.error(f"❌ Failed to create new session: {e}")
             return None
