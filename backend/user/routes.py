@@ -858,8 +858,9 @@ async def add_to_cart(
             with db.get_cursor() as cursor:
                 cursor.execute("""
                     SELECT id, quantity FROM shopping_cart
-                    WHERE user_id = %s AND product_id = %s AND variation_id = %s
-                """, (user_id, product_id, variation_id))
+                    WHERE user_id = %s AND product_id = %s 
+                    AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
+                """, (user_id, product_id, variation_id, variation_id))
                 existing_item = cursor.fetchone()
 
                 if existing_item:
