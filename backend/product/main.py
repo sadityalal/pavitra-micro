@@ -4,6 +4,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from shared import config, setup_logging, get_logger, db
+from shared.session_middleware import SessionMiddleware
 from .routes import router
 import os
 
@@ -19,6 +20,7 @@ app = FastAPI(
 )
 # Need to fix this hardcoded urls from config.py and site-settings table
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
+app.add_middleware(SessionMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins,

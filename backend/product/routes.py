@@ -3,6 +3,8 @@ from typing import Optional, List
 from shared import config, db, sanitize_input, get_logger, require_roles, redis_client, rabbitmq_client
 from shared.auth_middleware import get_current_user
 from shared.rate_limiter import rate_limiter
+from shared.session_middleware import get_session, get_session_id
+from shared.session_service import session_service, SessionType
 from .models import (
     ProductResponse, ProductListResponse, CategoryResponse,
     BrandResponse, ProductSearch, HealthResponse, ProductCreate, ProductStatus, StockStatus, ProductType
@@ -92,18 +94,14 @@ def invalidate_product_cache(product_id: int):
 
 
 def normalize_image_urls(image_data):
-    """Normalize image URLs to return only relative paths"""
     if not image_data:
         return image_data
-
     if isinstance(image_data, str):
-        # Single image URL
         if image_data.startswith(('http://', 'https://')):
             parsed = urlparse(image_data)
             return parsed.path
         return image_data
     elif isinstance(image_data, list):
-        # Image gallery
         normalized = []
         for img_url in image_data:
             if img_url and img_url.startswith(('http://', 'https://')):
@@ -113,6 +111,72 @@ def normalize_image_urls(image_data):
                 normalized.append(img_url)
         return normalized
     return image_data
+
+
+def update_session_product_views(session, product_id: int):
+    """Update session with product view history"""
+    try:
+        if not session:
+            return
+
+        session_id = get_session_id(Request)
+        if not session_id:
+            return
+
+        # Initialize viewed_products if not exists
+        if not hasattr(session, 'viewed_products'):
+            session.viewed_products = []
+
+        # Add product to viewed products (limit to 50 most recent)
+        if product_id not in session.viewed_products:
+            session.viewed_products.insert(0, product_id)
+            session.viewed_products = session.viewed_products[:50]  # Keep only 50 most recent
+
+        # Update session data
+        session_service.update_session_data(session_id, {
+            'viewed_products': session.viewed_products
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to update session product views: {e}")
+
+
+def get_session_wishlist(session):
+    """Get wishlist items from session"""
+    try:
+        if not session:
+            return []
+        return getattr(session, 'wishlist_items', [])
+    except Exception as e:
+        logger.error(f"Failed to get session wishlist: {e}")
+        return []
+
+
+def update_session_wishlist(session, session_id: str, product_id: int, action: str):
+    """Update wishlist in session"""
+    try:
+        if not session or not session_id:
+            return False
+
+        # Initialize wishlist_items if not exists
+        if not hasattr(session, 'wishlist_items'):
+            session.wishlist_items = []
+
+        if action == 'add':
+            if product_id not in session.wishlist_items:
+                session.wishlist_items.append(product_id)
+        elif action == 'remove':
+            if product_id in session.wishlist_items:
+                session.wishlist_items.remove(product_id)
+
+        # Update session data
+        return session_service.update_session_data(session_id, {
+            'wishlist_items': session.wishlist_items
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to update session wishlist: {e}")
+        return False
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -265,49 +329,71 @@ async def get_products(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session = get_session(request)
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         logger.info(f"🔍 Fetching products with filters - search: {search}, category_id: {category_id}, page: {page}")
         query_conditions = ["p.status = 'active'"]
         query_params = []
+
         if search:
             query_conditions.append("(p.name LIKE %s OR p.short_description LIKE %s OR p.description LIKE %s)")
             search_term = f"%{sanitize_input(search)}%"
             query_params.extend([search_term, search_term, search_term])
+
         if category_id:
             query_conditions.append("p.category_id = %s")
             query_params.append(category_id)
+
         if brand_id:
             query_conditions.append("p.brand_id = %s")
             query_params.append(brand_id)
+
         if category_slug:
             query_conditions.append("c.slug = %s")
             query_params.append(sanitize_input(category_slug))
+
         if brand_slug:
             query_conditions.append("b.slug = %s")
             query_params.append(sanitize_input(brand_slug))
+
         if min_price is not None:
             query_conditions.append("p.base_price >= %s")
             query_params.append(min_price)
+
         if max_price is not None:
             query_conditions.append("p.base_price <= %s")
             query_params.append(max_price)
+
         if in_stock:
             query_conditions.append("p.stock_status = 'in_stock'")
+
         if featured is not None:
             query_conditions.append("p.is_featured = %s")
             query_params.append(featured)
+
         if trending is not None:
             query_conditions.append("p.is_trending = %s")
             query_params.append(trending)
+
         if bestseller is not None:
             query_conditions.append("p.is_bestseller = %s")
             query_params.append(bestseller)
+
         where_clause = " AND ".join(query_conditions) if query_conditions else "1=1"
+
         valid_sort_columns = ["name", "base_price", "created_at", "view_count", "total_sold", "wishlist_count"]
         valid_sort_orders = ["asc", "desc"]
+
         if sort_by not in valid_sort_columns:
             sort_by = "created_at"
         if sort_order not in valid_sort_orders:
             sort_order = "desc"
+
         with db.get_cursor() as cursor:
             count_query = f"""
                 SELECT COUNT(*) as total
@@ -321,6 +407,7 @@ async def get_products(
             cursor.execute(count_query, query_params)
             total_count = cursor.fetchone()['total']
             logger.info(f"📊 Total products found: {total_count}")
+
             products_query = f"""
                 SELECT
                     p.*,
@@ -342,6 +429,7 @@ async def get_products(
             cursor.execute(products_query, final_params)
             products = cursor.fetchall()
             logger.info(f"📦 Products fetched: {len(products)}")
+
             product_list = []
             for product in products:
                 specification = None
@@ -354,6 +442,7 @@ async def get_products(
                             specification = product['specification']
                     except:
                         specification = None
+
                 if product['image_gallery']:
                     try:
                         if isinstance(product['image_gallery'], str):
@@ -362,7 +451,7 @@ async def get_products(
                             image_gallery = product['image_gallery']
                     except:
                         image_gallery = None
-                # FIXED: Normalize image URLs to relative paths only
+
                 main_image_url = normalize_image_urls(product['main_image_url'])
                 image_gallery = normalize_image_urls(image_gallery)
 
@@ -399,6 +488,7 @@ async def get_products(
                     created_at=product['created_at'],
                     updated_at=product['updated_at']
                 ))
+
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 1
             logger.info(f"✅ Successfully returning {len(product_list)} products")
             return ProductListResponse(
@@ -408,6 +498,7 @@ async def get_products(
                 page_size=page_size,
                 total_pages=total_pages
             )
+
     except Exception as e:
         logger.error(f"❌ Failed to fetch products: {str(e)}")
         logger.error(f"❌ Error type: {type(e).__name__}")
@@ -433,6 +524,12 @@ async def get_featured_products(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             count_query = "SELECT COUNT(*) as total FROM products WHERE status = 'active' AND is_featured = 1"
             cursor.execute(count_query)
@@ -466,6 +563,7 @@ async def get_featured_products(
                             specification = product['specification']
                     except:
                         specification = None
+
                 if product['image_gallery']:
                     try:
                         if isinstance(product['image_gallery'], str):
@@ -474,7 +572,7 @@ async def get_featured_products(
                             image_gallery = product['image_gallery']
                     except:
                         image_gallery = None
-                # FIXED: Normalize image URLs
+
                 main_image_url = normalize_image_urls(product['main_image_url'])
                 image_gallery = normalize_image_urls(image_gallery)
 
@@ -511,6 +609,7 @@ async def get_featured_products(
                     created_at=product['created_at'],
                     updated_at=product['updated_at']
                 ))
+
             total_pages = (total_count + page_size - 1) // page_size
             return ProductListResponse(
                 products=product_list,
@@ -541,6 +640,12 @@ async def get_bestseller_products(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             count_query = "SELECT COUNT(*) as total FROM products WHERE status = 'active' AND is_bestseller = 1"
             cursor.execute(count_query)
@@ -574,6 +679,7 @@ async def get_bestseller_products(
                             specification = product['specification']
                     except:
                         specification = None
+
                 if product['image_gallery']:
                     try:
                         if isinstance(product['image_gallery'], str):
@@ -582,7 +688,7 @@ async def get_bestseller_products(
                             image_gallery = product['image_gallery']
                     except:
                         image_gallery = None
-                # FIXED: Normalize image URLs
+
                 main_image_url = normalize_image_urls(product['main_image_url'])
                 image_gallery = normalize_image_urls(image_gallery)
 
@@ -619,6 +725,7 @@ async def get_bestseller_products(
                     created_at=product['created_at'],
                     updated_at=product['updated_at']
                 ))
+
             total_pages = (total_count + page_size - 1) // page_size
             return ProductListResponse(
                 products=product_list,
@@ -649,6 +756,12 @@ async def get_new_arrivals(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             count_query = "SELECT COUNT(*) as total FROM products WHERE status = 'active' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"
             cursor.execute(count_query)
@@ -682,6 +795,7 @@ async def get_new_arrivals(
                             specification = product['specification']
                     except:
                         specification = None
+
                 if product['image_gallery']:
                     try:
                         if isinstance(product['image_gallery'], str):
@@ -690,7 +804,7 @@ async def get_new_arrivals(
                             image_gallery = product['image_gallery']
                     except:
                         image_gallery = None
-                # FIXED: Normalize image URLs
+
                 main_image_url = normalize_image_urls(product['main_image_url'])
                 image_gallery = normalize_image_urls(image_gallery)
 
@@ -727,6 +841,7 @@ async def get_new_arrivals(
                     created_at=product['created_at'],
                     updated_at=product['updated_at']
                 ))
+
             total_pages = (total_count + page_size - 1) // page_size
             return ProductListResponse(
                 products=product_list,
@@ -753,10 +868,19 @@ async def get_product(product_id: int, request: Request):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update product views and session activity
+        session = get_session(request)
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+            update_session_product_views(session, product_id)
+
         cached_product = get_cached_product(product_id)
         if cached_product:
             logger.info(f"Returning cached product {product_id}")
             return ProductResponse(**cached_product)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -776,9 +900,11 @@ async def get_product(product_id: int, request: Request):
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             cursor.execute("""
                 UPDATE products SET view_count = view_count + 1 WHERE id = %s
             """, (product_id,))
+
             specification = None
             image_gallery = None
             if product['specification']:
@@ -789,6 +915,7 @@ async def get_product(product_id: int, request: Request):
                         specification = product['specification']
                 except:
                     specification = None
+
             if product['image_gallery']:
                 try:
                     if isinstance(product['image_gallery'], str):
@@ -797,7 +924,7 @@ async def get_product(product_id: int, request: Request):
                         image_gallery = product['image_gallery']
                 except:
                     image_gallery = None
-            # FIXED: Normalize image URLs
+
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(image_gallery)
 
@@ -834,8 +961,10 @@ async def get_product(product_id: int, request: Request):
                 created_at=product['created_at'],
                 updated_at=product['updated_at']
             )
+
             cache_product(product_id, product_response.model_dump())
             return product_response
+
     except HTTPException:
         raise
     except Exception as e:
@@ -856,6 +985,13 @@ async def get_product_by_slug(product_slug: str, request: Request):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session = get_session(request)
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -875,9 +1011,15 @@ async def get_product_by_slug(product_slug: str, request: Request):
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             cursor.execute("""
                 UPDATE products SET view_count = view_count + 1 WHERE id = %s
             """, (product['id'],))
+
+            # SESSION: Update product views
+            if session_id:
+                update_session_product_views(session, product['id'])
+
             specification = None
             image_gallery = None
             if product['specification']:
@@ -888,6 +1030,7 @@ async def get_product_by_slug(product_slug: str, request: Request):
                         specification = product['specification']
                 except:
                     specification = None
+
             if product['image_gallery']:
                 try:
                     if isinstance(product['image_gallery'], str):
@@ -896,7 +1039,7 @@ async def get_product_by_slug(product_slug: str, request: Request):
                         image_gallery = product['image_gallery']
                 except:
                     image_gallery = None
-            # FIXED: Normalize image URLs
+
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(image_gallery)
 
@@ -957,21 +1100,31 @@ async def get_categories(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         cached_categories = get_cached_categories()
         if cached_categories and parent_id is None and featured is None:
             logger.info("Returning cached categories")
             return [CategoryResponse(**cat) for cat in cached_categories]
+
         with db.get_cursor() as cursor:
             query_conditions = ["is_active = 1"]
             query_params = []
+
             if parent_id is not None:
                 query_conditions.append("parent_id = %s")
                 query_params.append(parent_id)
             else:
                 query_conditions.append("parent_id IS NULL")
+
             if featured is not None:
                 query_conditions.append("is_featured = %s")
                 query_params.append(featured)
+
             where_clause = " AND ".join(query_conditions)
             cursor.execute(f"""
                 SELECT * FROM categories
@@ -987,7 +1140,7 @@ async def get_categories(
                     slug=cat['slug'],
                     description=cat['description'],
                     parent_id=cat['parent_id'],
-                    image_url=normalize_image_urls(cat['image_url']),  # FIXED: Normalize category images
+                    image_url=normalize_image_urls(cat['image_url']),
                     is_active=bool(cat['is_active']),
                     sort_order=cat['sort_order']
                 )
@@ -1014,6 +1167,12 @@ async def get_category(category_id: int, request: Request):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM categories
@@ -1032,7 +1191,7 @@ async def get_category(category_id: int, request: Request):
                 slug=category['slug'],
                 description=category['description'],
                 parent_id=category['parent_id'],
-                image_url=normalize_image_urls(category['image_url']),  # FIXED: Normalize category image
+                image_url=normalize_image_urls(category['image_url']),
                 is_active=bool(category['is_active']),
                 sort_order=category['sort_order']
             )
@@ -1056,6 +1215,12 @@ async def get_category_by_slug(category_slug: str, request: Request):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM categories
@@ -1074,7 +1239,7 @@ async def get_category_by_slug(category_slug: str, request: Request):
                 slug=category['slug'],
                 description=category['description'],
                 parent_id=category['parent_id'],
-                image_url=normalize_image_urls(category['image_url']),  # FIXED: Normalize category image
+                image_url=normalize_image_urls(category['image_url']),
                 is_active=bool(category['is_active']),
                 sort_order=category['sort_order']
             )
@@ -1098,6 +1263,12 @@ async def get_brands(request: Request, featured: Optional[bool] = Query(None)):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             query = "SELECT * FROM brands WHERE is_active = 1"
             params = []
@@ -1114,7 +1285,7 @@ async def get_brands(request: Request, featured: Optional[bool] = Query(None)):
                     name=brand['name'],
                     slug=brand['slug'],
                     description=brand['description'],
-                    logo_url=normalize_image_urls(brand['logo_url']),  # FIXED: Normalize brand logo
+                    logo_url=normalize_image_urls(brand['logo_url']),
                     is_active=bool(brand['is_active'])
                 )
                 for brand in brands
@@ -1137,6 +1308,12 @@ async def get_brand(brand_id: int, request: Request):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM brands
@@ -1154,7 +1331,7 @@ async def get_brand(brand_id: int, request: Request):
                 name=brand['name'],
                 slug=brand['slug'],
                 description=brand['description'],
-                logo_url=normalize_image_urls(brand['logo_url']),  # FIXED: Normalize brand logo
+                logo_url=normalize_image_urls(brand['logo_url']),
                 is_active=bool(brand['is_active'])
             )
     except HTTPException:
@@ -1166,6 +1343,406 @@ async def get_brand(brand_id: int, request: Request):
             detail="Failed to fetch brand"
         )
 
+
+# Wishlist endpoints with session support
+@router.get("/wishlist")
+async def get_wishlist(request: Request, current_user: dict = Depends(get_current_user)):
+    """Get combined wishlist from session and database"""
+    try:
+        # SESSION: Update session activity
+        session = get_session(request)
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
+        user_id = current_user['sub']
+        session_wishlist = get_session_wishlist(session) if session else []
+
+        with db.get_cursor() as cursor:
+            # Get database wishlist
+            cursor.execute("""
+                SELECT
+                    w.*,
+                    p.name as product_name,
+                    p.slug as product_slug,
+                    p.main_image_url as product_image,
+                    p.base_price as product_price,
+                    p.stock_status as product_stock_status
+                FROM wishlists w
+                JOIN products p ON w.product_id = p.id
+                WHERE w.user_id = %s AND p.status = 'active'
+                ORDER BY w.created_at DESC
+            """, (user_id,))
+            db_wishlist = cursor.fetchall()
+
+            # Combine session and database wishlists (remove duplicates)
+            db_product_ids = {item['product_id'] for item in db_wishlist}
+            combined_product_ids = set(session_wishlist) | db_product_ids
+
+            # Get combined product details
+            if combined_product_ids:
+                placeholders = ','.join(['%s'] * len(combined_product_ids))
+                cursor.execute(f"""
+                    SELECT
+                        id, name, slug, main_image_url, base_price, stock_status
+                    FROM products
+                    WHERE id IN ({placeholders}) AND status = 'active'
+                """, list(combined_product_ids))
+                products = {p['id']: p for p in cursor.fetchall()}
+
+                wishlist_items = []
+                for product_id in combined_product_ids:
+                    if product_id in products:
+                        product = products[product_id]
+                        wishlist_items.append({
+                            'product_id': product_id,
+                            'product_name': product['name'],
+                            'product_slug': product['slug'],
+                            'product_image': product['main_image_url'],
+                            'product_price': float(product['base_price']),
+                            'product_stock_status': product['stock_status'],
+                            'in_session': product_id in session_wishlist,
+                            'in_database': product_id in db_product_ids
+                        })
+
+                return {
+                    "items": wishlist_items,
+                    "total_count": len(wishlist_items),
+                    "session_items_count": len(session_wishlist),
+                    "database_items_count": len(db_wishlist)
+                }
+            else:
+                return {
+                    "items": [],
+                    "total_count": 0,
+                    "session_items_count": 0,
+                    "database_items_count": 0
+                }
+
+    except Exception as e:
+        logger.error(f"Failed to fetch wishlist: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch wishlist"
+        )
+
+
+@router.post("/wishlist/{product_id}")
+async def add_to_wishlist(
+        product_id: int,
+        request: Request,
+        current_user: dict = Depends(get_current_user)
+):
+    """Add product to wishlist (both session and database)"""
+    try:
+        user_id = current_user['sub']
+        session = get_session(request)
+        session_id = get_session_id(request)
+
+        # SESSION: Update session activity
+        if session_id:
+            session_service.update_session_activity(session_id)
+
+        with db.get_cursor() as cursor:
+            # Verify product exists
+            cursor.execute("SELECT id FROM products WHERE id = %s AND status = 'active'", (product_id,))
+            if not cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Product not found"
+                )
+
+            # Add to database wishlist
+            cursor.execute("""
+                INSERT IGNORE INTO wishlists (user_id, product_id) 
+                VALUES (%s, %s)
+            """, (user_id, product_id))
+
+            # Update product wishlist count
+            cursor.execute("UPDATE products SET wishlist_count = wishlist_count + 1 WHERE id = %s", (product_id,))
+
+            # SESSION: Also add to session wishlist
+            if session and session_id:
+                update_session_wishlist(session, session_id, product_id, 'add')
+
+            logger.info(f"Product {product_id} added to wishlist for user {user_id}")
+            return {"message": "Product added to wishlist"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add to wishlist: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to add to wishlist"
+        )
+
+
+@router.delete("/wishlist/{product_id}")
+async def remove_from_wishlist(
+        product_id: int,
+        request: Request,
+        current_user: dict = Depends(get_current_user)
+):
+    """Remove product from wishlist (both session and database)"""
+    try:
+        user_id = current_user['sub']
+        session = get_session(request)
+        session_id = get_session_id(request)
+
+        # SESSION: Update session activity
+        if session_id:
+            session_service.update_session_activity(session_id)
+
+        with db.get_cursor() as cursor:
+            # Remove from database wishlist
+            cursor.execute("DELETE FROM wishlists WHERE user_id = %s AND product_id = %s", (user_id, product_id))
+
+            if cursor.rowcount > 0:
+                # Update product wishlist count
+                cursor.execute("UPDATE products SET wishlist_count = GREATEST(0, wishlist_count - 1) WHERE id = %s",
+                               (product_id,))
+
+            # SESSION: Also remove from session wishlist
+            if session and session_id:
+                update_session_wishlist(session, session_id, product_id, 'remove')
+
+            logger.info(f"Product {product_id} removed from wishlist for user {user_id}")
+            return {"message": "Product removed from wishlist"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to remove from wishlist: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to remove from wishlist"
+        )
+
+
+@router.get("/session/recommendations")
+async def get_personalized_recommendations(
+        request: Request,
+        limit: int = Query(10, ge=1, le=50)
+):
+    """Get personalized product recommendations based on session data"""
+    try:
+        session = get_session(request)
+        session_id = get_session_id(request)
+
+        # SESSION: Update session activity
+        if session_id:
+            session_service.update_session_activity(session_id)
+
+        if not session:
+            # Return featured products if no session data
+            with db.get_cursor() as cursor:
+                cursor.execute("""
+                    SELECT * FROM products 
+                    WHERE status = 'active' AND is_featured = 1
+                    ORDER BY created_at DESC 
+                    LIMIT %s
+                """, (limit,))
+                products = cursor.fetchall()
+                return {"recommendations": products, "source": "featured"}
+
+        # Get recommendations based on viewed products
+        viewed_products = getattr(session, 'viewed_products', [])
+        wishlist_items = getattr(session, 'wishlist_items', [])
+
+        with db.get_cursor() as cursor:
+            if viewed_products:
+                # Recommend similar products based on viewed items
+                placeholders = ','.join(['%s'] * len(viewed_products))
+                cursor.execute(f"""
+                    SELECT DISTINCT p.*
+                    FROM products p
+                    WHERE p.status = 'active' 
+                    AND p.id NOT IN ({placeholders})
+                    AND (p.category_id IN (
+                        SELECT DISTINCT category_id FROM products WHERE id IN ({placeholders})
+                    ) OR p.brand_id IN (
+                        SELECT DISTINCT brand_id FROM products WHERE id IN ({placeholders})
+                    ))
+                    ORDER BY p.view_count DESC, p.created_at DESC
+                    LIMIT %s
+                """, viewed_products + viewed_products + viewed_products + [limit])
+                recommendations = cursor.fetchall()
+                return {"recommendations": recommendations, "source": "viewed_products"}
+            else:
+                # Fallback to trending products
+                cursor.execute("""
+                    SELECT * FROM products 
+                    WHERE status = 'active' AND is_trending = 1
+                    ORDER BY view_count DESC, created_at DESC 
+                    LIMIT %s
+                """, (limit,))
+                recommendations = cursor.fetchall()
+                return {"recommendations": recommendations, "source": "trending"}
+
+    except Exception as e:
+        logger.error(f"Failed to get recommendations: {e}")
+        # Fallback to featured products
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT * FROM products 
+                WHERE status = 'active' AND is_featured = 1
+                ORDER BY created_at DESC 
+                LIMIT %s
+            """, (limit,))
+            products = cursor.fetchall()
+            return {"recommendations": products, "source": "featured_fallback"}
+
+
+# Admin endpoints (remain mostly unchanged, but with session activity updates)
+@router.post("/admin/products", response_model=ProductResponse)
+async def create_product(
+        product_data: ProductCreate,
+        request: Request,
+        background_tasks: BackgroundTasks
+):
+    try:
+        config.refresh_cache()
+        if config.maintenance_mode:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Service is under maintenance. Please try again later."
+            )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
+        current_user = await require_roles(['admin', 'vendor'], request)
+        user_id = int(current_user.get('sub'))
+
+        with db.get_cursor() as cursor:
+            cursor.execute("SELECT id FROM products WHERE sku = %s", (product_data.sku,))
+            if cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="SKU already exists"
+                )
+
+            cursor.execute("SELECT id FROM products WHERE slug = %s", (product_data.slug,))
+            if cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Slug already exists"
+                )
+
+            cursor.execute("SELECT id FROM categories WHERE id = %s AND is_active = 1", (product_data.category_id,))
+            if not cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Category not found"
+                )
+
+            if product_data.brand_id:
+                cursor.execute("SELECT id FROM brands WHERE id = %s AND is_active = 1", (product_data.brand_id,))
+                if not cursor.fetchone():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Brand not found"
+                    )
+
+            cursor.execute("""
+                INSERT INTO products (
+                    sku, name, slug, short_description, description, specification,
+                    base_price, compare_price, category_id, brand_id, gst_rate,
+                    track_inventory, stock_quantity, product_type, is_featured,
+                    status, stock_status, low_stock_threshold
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                product_data.sku,
+                sanitize_input(product_data.name),
+                sanitize_input(product_data.slug),
+                sanitize_input(product_data.short_description) if product_data.short_description else None,
+                sanitize_input(product_data.description) if product_data.description else None,
+                str(product_data.specification) if product_data.specification else None,
+                product_data.base_price,
+                product_data.compare_price,
+                product_data.category_id,
+                product_data.brand_id,
+                product_data.gst_rate,
+                product_data.track_inventory,
+                product_data.stock_quantity,
+                product_data.product_type.value,
+                product_data.is_featured,
+                'active',
+                'in_stock' if product_data.stock_quantity > 0 else 'out_of_stock',
+                5
+            ))
+            product_id = cursor.lastrowid
+            cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
+            product = cursor.fetchone()
+
+            specification = None
+            if product['specification']:
+                try:
+                    if isinstance(product['specification'], str):
+                        specification = ast.literal_eval(product['specification'])
+                    else:
+                        specification = product['specification']
+                except:
+                    specification = None
+
+            main_image_url = normalize_image_urls(product['main_image_url'])
+            image_gallery = normalize_image_urls(product['image_gallery'])
+
+            product_response = ProductResponse(
+                id=product['id'],
+                uuid=product['uuid'],
+                name=product['name'],
+                sku=product['sku'],
+                slug=product['slug'],
+                short_description=product['short_description'],
+                description=product['description'],
+                base_price=float(product['base_price']),
+                compare_price=float(product['compare_price']) if product['compare_price'] else None,
+                category_id=product['category_id'],
+                brand_id=product['brand_id'],
+                specification=specification,
+                gst_rate=float(product['gst_rate']),
+                is_gst_inclusive=bool(product['is_gst_inclusive']),
+                track_inventory=bool(product['track_inventory']),
+                stock_quantity=product['stock_quantity'],
+                low_stock_threshold=product['low_stock_threshold'],
+                stock_status=product['stock_status'],
+                product_type=product['product_type'],
+                weight_grams=float(product['weight_grams']) if product['weight_grams'] else None,
+                main_image_url=main_image_url,
+                image_gallery=image_gallery,
+                status=product['status'],
+                is_featured=bool(product['is_featured']),
+                is_trending=bool(product['is_trending']),
+                is_bestseller=bool(product['is_bestseller']),
+                view_count=product['view_count'],
+                wishlist_count=product['wishlist_count'],
+                total_sold=product['total_sold'],
+                created_at=product['created_at'],
+                updated_at=product['updated_at']
+            )
+
+            if background_tasks:
+                background_tasks.add_task(
+                    publish_product_event,
+                    product,
+                    'created'
+                )
+
+            logger.info(f"Product created successfully: {product_data.name}")
+            return product_response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to create product: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create product"
+        )
 
 @router.post("/admin/products", response_model=ProductResponse)
 async def create_product(

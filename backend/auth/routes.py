@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, Form, Request, status, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Form, Request, status, BackgroundTasks, Response
 from typing import Optional, List
 from datetime import datetime, timedelta
 from shared import (
@@ -6,7 +6,9 @@ from shared import (
     create_access_token, verify_token, validate_email,
     validate_phone, sanitize_input, get_logger, rabbitmq_client, redis_client
 )
-from shared.auth_middleware import get_current_user, require_roles
+from shared.auth_middleware import get_current_user, require_roles, blacklist_token
+from shared.session_service import session_service, SessionType
+from shared.session_middleware import get_session, get_session_id
 from .models import (
     UserCreate, UserLogin, Token, UserResponse,
     RoleResponse, PermissionCheck, HealthResponse
@@ -16,18 +18,19 @@ import re
 router = APIRouter()
 logger = get_logger(__name__)
 
+
 def validate_username(username: str) -> bool:
     if not username:
         return False
     pattern = r'^[a-zA-Z0-9_]{3,30}$'
     return re.match(pattern, username) is not None
 
+
 def publish_user_registration_event(user_data: dict):
     try:
-        # Convert datetime objects to strings for JSON serialization
         serializable_user_data = {}
         for key, value in user_data.items():
-            if hasattr(value, 'isoformat'):  # Check if it's a datetime object
+            if hasattr(value, 'isoformat'):
                 serializable_user_data[key] = value.isoformat()
             else:
                 serializable_user_data[key] = value
@@ -37,11 +40,10 @@ def publish_user_registration_event(user_data: dict):
             'user_id': serializable_user_data['id'],
             'email': serializable_user_data.get('email'),
             'first_name': serializable_user_data.get('first_name'),
-            'timestamp': datetime.utcnow().isoformat(),  # Already a string
+            'timestamp': datetime.utcnow().isoformat(),
             'data': serializable_user_data
         }
 
-        # Ensure RabbitMQ client is connected before publishing
         if rabbitmq_client.connect():
             success = rabbitmq_client.publish_message(
                 exchange='notification_events',
@@ -54,7 +56,6 @@ def publish_user_registration_event(user_data: dict):
                 logger.error(f"❌ Failed to publish user registration event for user {serializable_user_data['id']}")
         else:
             logger.error("❌ Cannot publish user registration event - RabbitMQ not connected")
-
     except Exception as e:
         logger.error(f"❌ Failed to publish user registration event: {e}")
 
@@ -69,13 +70,13 @@ async def register_user(
         first_name: str = Form(...),
         last_name: str = Form(...),
         country_id: int = Form(1),
-        background_tasks: BackgroundTasks = None
+        background_tasks: BackgroundTasks = None,
+        request: Request = None,
+        response: Response = None
 ):
     try:
-        # Check maintenance mode
         config.refresh_cache()
         logger.info(f"DEBUG: Maintenance mode value: {config.maintenance_mode}, type: {type(config.maintenance_mode)}")
-
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -172,14 +173,12 @@ async def register_user(
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (email, phone, username, password_hash, first_name, last_name, country_id))
-
             user_id = cursor.lastrowid
             logger.info(f"✅ User created with ID: {user_id}")
 
             # Assign customer role by default
             cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
             role = cursor.fetchone()
-
             if role:
                 cursor.execute("""
                     INSERT INTO user_role_assignments (user_id, role_id, assigned_by)
@@ -197,8 +196,8 @@ async def register_user(
 
             # Get user roles and permissions
             cursor.execute("""
-                SELECT 
-                    ur.name as role_name, 
+                SELECT
+                    ur.name as role_name,
                     p.name as permission_name
                 FROM user_role_assignments ura
                 JOIN user_roles ur ON ura.role_id = ur.id
@@ -206,10 +205,8 @@ async def register_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_id,))
-
             roles = set()
             permissions = set()
-
             for row in cursor.fetchall():
                 if row['role_name']:
                     roles.add(row['role_name'])
@@ -235,6 +232,45 @@ async def register_user(
             cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             user = cursor.fetchone()
 
+            # SESSION MANAGEMENT: Create user session
+            if request:
+                try:
+                    # Get current session (might be guest session)
+                    current_session = get_session(request)
+                    current_session_id = get_session_id(request)
+
+                    # Create new user session
+                    session_data = {
+                        'session_type': SessionType.USER,
+                        'user_id': user_id,
+                        'guest_id': None,
+                        'ip_address': request.client.host,
+                        'user_agent': request.headers.get("user-agent"),
+                        'cart_items': current_session.cart_items if current_session else {}
+                    }
+
+                    new_session = session_service.create_session(session_data)
+
+                    if new_session and response:
+                        # Set session cookie
+                        response.set_cookie(
+                            key="session_id",
+                            value=new_session.session_id,
+                            max_age=86400,  # 24 hours
+                            httponly=True,
+                            secure=not config.debug_mode,
+                            samesite="lax"
+                        )
+                        logger.info(f"✅ User session created for new user {user_id}")
+
+                    # Delete old guest session if it existed
+                    if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
+                        session_service.delete_session(current_session_id)
+
+                except Exception as e:
+                    logger.error(f"❌ Session creation failed during registration: {e}")
+                    # Continue without session - registration should still succeed
+
             # Publish registration event in background
             if background_tasks:
                 background_tasks.add_task(
@@ -243,7 +279,6 @@ async def register_user(
                 )
 
             logger.info(f"✅ User registered successfully: {email or phone or username}")
-
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -259,7 +294,6 @@ async def register_user(
         logger.error(f"❌ Error type: {type(e).__name__}")
         import traceback
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed due to server error"
@@ -268,8 +302,6 @@ async def register_user(
 
 @router.get("/site-settings")
 async def get_site_settings(current_user: dict = Depends(get_current_user)):
-    """Get all site settings - Admin access required"""
-
     # Manual role check
     user_roles = current_user.get('roles', [])
     if 'admin' not in user_roles and 'super_admin' not in user_roles:
@@ -341,9 +373,10 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch site settings"
         )
+
+
 @router.get("/frontend-settings")
 async def get_frontend_settings():
-    """Public frontend settings - no authentication required"""
     try:
         config.refresh_cache()
         frontend_settings = {
@@ -371,12 +404,14 @@ async def get_frontend_settings():
 
 
 @router.post("/login")
-async def login_user(login_data: UserLogin):
+async def login_user(
+        login_data: UserLogin,
+        request: Request = None,
+        response: Response = None
+):
     try:
-        # Check maintenance mode
         config.refresh_cache()
         logger.info(f"DEBUG: Maintenance mode value: {config.maintenance_mode}, type: {type(config.maintenance_mode)}")
-
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -388,13 +423,12 @@ async def login_user(login_data: UserLogin):
         with db.get_cursor() as cursor:
             # Enhanced query to find user by email, phone, or username
             cursor.execute("""
-                SELECT 
+                SELECT
                     id, email, password_hash, first_name, last_name,
                     is_active, email_verified, phone_verified
-                FROM users 
+                FROM users
                 WHERE email = %s OR phone = %s OR username = %s
             """, (login_data.login_id, login_data.login_id, login_data.login_id))
-
             user = cursor.fetchone()
 
             if not user:
@@ -423,8 +457,8 @@ async def login_user(login_data: UserLogin):
 
             # Get user roles and permissions
             cursor.execute("""
-                SELECT 
-                    ur.name as role_name, 
+                SELECT
+                    ur.name as role_name,
                     p.name as permission_name
                 FROM user_role_assignments ura
                 JOIN user_roles ur ON ura.role_id = ur.id
@@ -432,10 +466,8 @@ async def login_user(login_data: UserLogin):
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user['id'],))
-
             roles = set()
             permissions = set()
-
             for row in cursor.fetchall():
                 if row['role_name']:
                     roles.add(row['role_name'])
@@ -458,9 +490,47 @@ async def login_user(login_data: UserLogin):
                 expires_delta=timedelta(hours=24)
             )
 
+            # SESSION MANAGEMENT: Create user session
+            if request:
+                try:
+                    # Get current session (might be guest session)
+                    current_session = get_session(request)
+                    current_session_id = get_session_id(request)
+
+                    # Create new user session
+                    session_data = {
+                        'session_type': SessionType.USER,
+                        'user_id': user['id'],
+                        'guest_id': None,
+                        'ip_address': request.client.host,
+                        'user_agent': request.headers.get("user-agent"),
+                        'cart_items': current_session.cart_items if current_session else {}
+                    }
+
+                    new_session = session_service.create_session(session_data)
+
+                    if new_session and response:
+                        # Set session cookie
+                        response.set_cookie(
+                            key="session_id",
+                            value=new_session.session_id,
+                            max_age=86400,  # 24 hours
+                            httponly=True,
+                            secure=not config.debug_mode,
+                            samesite="lax"
+                        )
+                        logger.info(f"✅ User session created for user {user['id']}")
+
+                    # Delete old guest session if it existed
+                    if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
+                        session_service.delete_session(current_session_id)
+
+                except Exception as e:
+                    logger.error(f"❌ Session creation failed during login: {e}")
+                    # Continue without session - login should still succeed
+
             # Update last login
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
-
             logger.info(f"✅ Login successful for user: {user['email']}")
 
             return Token(
@@ -478,27 +548,51 @@ async def login_user(login_data: UserLogin):
         logger.error(f"❌ Error type: {type(e).__name__}")
         import traceback
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
-
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Login failed due to server error"
         )
 
+
 @router.post("/logout")
-async def logout_user(request: Request):
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-        try:
-            # Invalidate token in Redis
-            redis_client.redis_client.delete(f"token:{token}")
-            logger.info("User logged out successfully - token invalidated")
-        except Exception as e:
-            logger.error(f"Token invalidation failed: {e}")
-    return {"message": "Logged out successfully"}
+async def logout_user(
+        request: Request,
+        response: Response,
+        current_user: dict = Depends(get_current_user)
+):
+    try:
+        user_id = current_user['sub']
+
+        # Invalidate JWT token
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            blacklist_token(token)
+            logger.info(f"✅ JWT token invalidated for user {user_id}")
+
+        # SESSION MANAGEMENT: Delete user session
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.delete_session(session_id)
+            logger.info(f"✅ Session deleted for user {user_id}")
+
+        # Clear session cookie
+        response.delete_cookie("session_id")
+
+        logger.info(f"✅ User {user_id} logged out successfully")
+        return {"message": "Logged out successfully"}
+
+    except Exception as e:
+        logger.error(f"❌ Logout failed: {e}")
+        # Still return success even if some cleanup failed
+        return {"message": "Logged out successfully"}
+
 
 @router.post("/refresh")
-async def refresh_token(request: Request):
+async def refresh_token(
+        request: Request,
+        response: Response = None
+):
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(
@@ -514,6 +608,12 @@ async def refresh_token(request: Request):
             detail="Invalid or expired token"
         )
 
+    # SESSION MANAGEMENT: Refresh session activity
+    session_id = get_session_id(request)
+    if session_id:
+        session_service.update_session_activity(session_id)
+        logger.info(f"✅ Session activity refreshed for user {payload['sub']}")
+
     # Create new token with same claims
     new_token = create_access_token(
         data={
@@ -525,7 +625,7 @@ async def refresh_token(request: Request):
         expires_delta=timedelta(hours=24)
     )
 
-    logger.info(f"Token refreshed successfully for user {payload['sub']}")
+    logger.info(f"✅ Token refreshed successfully for user {payload['sub']}")
     return Token(
         access_token=new_token,
         token_type="bearer",
@@ -533,6 +633,7 @@ async def refresh_token(request: Request):
         user_roles=payload.get('roles', []),
         user_permissions=payload.get('permissions', [])
     )
+
 
 @router.post("/forgot-password")
 async def forgot_password(email: str = Form(...)):
@@ -559,6 +660,7 @@ async def forgot_password(email: str = Form(...)):
                     reset_token
                 )
                 logger.info(f"Password reset initiated for user {user['id']}")
+
             # Always return same message for security (prevent email enumeration)
             return {"message": "If the email exists, a reset link has been sent"}
     except Exception as e:
@@ -567,6 +669,7 @@ async def forgot_password(email: str = Form(...)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Password reset failed"
         )
+
 
 @router.post("/reset-password")
 async def reset_password(token: str = Form(...), new_password: str = Form(...)):
@@ -612,10 +715,8 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
             )
             # Remove used reset token
             redis_client.redis_client.delete(f"password_reset:{user_id}")
-            
             logger.info(f"Password reset successful for user {user_id} using Argon2")
             return {"message": "Password reset successfully"}
-
     except HTTPException:
         raise
     except Exception as e:
@@ -625,13 +726,13 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
             detail="Password reset failed"
         )
 
+
 @router.get("/roles", response_model=List[RoleResponse])
 async def get_roles():
-    """Get all available roles (admin only)"""
     try:
         with db.get_cursor() as cursor:
             cursor.execute("""
-                SELECT id, name, description FROM user_roles 
+                SELECT id, name, description FROM user_roles
                 WHERE is_system_role = 1
                 ORDER BY name
             """)
@@ -652,13 +753,12 @@ async def get_roles():
             detail="Failed to fetch roles"
         )
 
+
 @router.post("/check-permission", response_model=PermissionCheck)
 async def check_permission(permission: str, request: Request):
-    """Check if current user has specific permission"""
     try:
         current_user = await get_current_user(request)
         user_permissions = current_user.get('permissions', [])
-        
         has_access = permission in user_permissions
         return PermissionCheck(
             permission=permission,
@@ -673,9 +773,9 @@ async def check_permission(permission: str, request: Request):
             detail="Permission check failed"
         )
 
+
 @router.get("/debug/maintenance")
 async def debug_maintenance():
-    """Debug endpoint to check maintenance mode status"""
     config.refresh_cache()
     return {
         "maintenance_mode": config.maintenance_mode,
@@ -683,9 +783,9 @@ async def debug_maintenance():
         "maintenance_mode_raw": str(config.maintenance_mode)
     }
 
+
 @router.get("/debug/settings")
 async def debug_settings():
-    """Debug endpoint to check all settings"""
     config.refresh_cache()
     return {
         "maintenance_mode": config.maintenance_mode,
@@ -698,3 +798,53 @@ async def debug_settings():
             "cache_keys": list(config._cache.keys())
         }
     }
+
+
+# New session-related endpoints
+@router.get("/session/info")
+async def get_session_info(request: Request, current_user: dict = Depends(get_current_user)):
+    """Get current session information"""
+    try:
+        session = get_session(request)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return {
+            "session_id": session.session_id,
+            "session_type": session.session_type,
+            "user_id": session.user_id,
+            "guest_id": session.guest_id,
+            "created_at": session.created_at,
+            "last_activity": session.last_activity,
+            "expires_at": session.expires_at,
+            "cart_items_count": len(session.cart_items)
+        }
+    except Exception as e:
+        logger.error(f"Failed to get session info: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get session information"
+        )
+
+
+@router.post("/session/refresh")
+async def refresh_user_session(request: Request, response: Response):
+    """Refresh session activity and extend expiration"""
+    try:
+        session_id = get_session_id(request)
+        if not session_id:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        success = session_service.update_session_activity(session_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return {"message": "Session refreshed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to refresh session: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to refresh session"
+        )
