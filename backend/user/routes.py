@@ -4,7 +4,6 @@ from shared import config, db, sanitize_input, get_logger, redis_client, rabbitm
 from shared.security import verify_password, get_password_hash
 from shared.auth_middleware import get_current_user
 from shared.rate_limiter import rate_limiter
-from shared.redis_client import redis_client
 from shared.session_service import session_service, SessionType
 from shared.session_middleware import get_session, get_session_id
 from .models import (
@@ -56,7 +55,7 @@ def publish_user_event(user_data: dict, event_type: str):
 def cache_user_profile(user_id: int, profile_data: dict, expire: int = 1800):
     try:
         key = f"user_profile:{user_id}"
-        redis_client.redis_client.setex(key, expire, json.dumps(profile_data))
+        redis_client.setex(key, expire, json.dumps(profile_data))
         logger.info(f"Cached user profile for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to cache user profile: {e}")
@@ -65,7 +64,7 @@ def cache_user_profile(user_id: int, profile_data: dict, expire: int = 1800):
 def get_cached_user_profile(user_id: int) -> Optional[dict]:
     try:
         key = f"user_profile:{user_id}"
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -77,7 +76,7 @@ def get_cached_user_profile(user_id: int) -> Optional[dict]:
 def cache_user_addresses(user_id: int, addresses: List[dict], expire: int = 1800):
     try:
         key = f"user_addresses:{user_id}"
-        redis_client.redis_client.setex(key, expire, json.dumps(addresses))
+        redis_client.setex(key, expire, json.dumps(addresses))
         logger.info(f"Cached addresses for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to cache user addresses: {e}")
@@ -86,7 +85,7 @@ def cache_user_addresses(user_id: int, addresses: List[dict], expire: int = 1800
 def get_cached_user_addresses(user_id: int) -> Optional[List[dict]]:
     try:
         key = f"user_addresses:{user_id}"
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -98,7 +97,7 @@ def get_cached_user_addresses(user_id: int) -> Optional[List[dict]]:
 def cache_user_wishlist(user_id: int, wishlist_data: dict, expire: int = 900):
     try:
         key = f"user_wishlist:{user_id}"
-        redis_client.redis_client.setex(key, expire, json.dumps(wishlist_data))
+        redis_client.setex(key, expire, json.dumps(wishlist_data))
         logger.info(f"Cached wishlist for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to cache user wishlist: {e}")
@@ -107,7 +106,7 @@ def cache_user_wishlist(user_id: int, wishlist_data: dict, expire: int = 900):
 def get_cached_user_wishlist(user_id: int) -> Optional[dict]:
     try:
         key = f"user_wishlist:{user_id}"
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -119,7 +118,7 @@ def get_cached_user_wishlist(user_id: int) -> Optional[dict]:
 def cache_user_cart(user_id: int, cart_data: dict, expire: int = 600):
     try:
         key = f"user_cart:{user_id}"
-        redis_client.redis_client.setex(key, expire, json.dumps(cart_data))
+        redis_client.setex(key, expire, json.dumps(cart_data))
         logger.info(f"Cached cart for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to cache user cart: {e}")
@@ -128,7 +127,7 @@ def cache_user_cart(user_id: int, cart_data: dict, expire: int = 600):
 def get_cached_user_cart(user_id: int) -> Optional[dict]:
     try:
         key = f"user_cart:{user_id}"
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -140,7 +139,7 @@ def get_cached_user_cart(user_id: int) -> Optional[dict]:
 def cache_guest_cart(guest_id: str, cart_data: dict, expire: int = 86400):
     try:
         key = f"guest_cart:{guest_id}"
-        redis_client.redis_client.setex(key, expire, json.dumps(cart_data))
+        redis_client.setex(key, expire, json.dumps(cart_data))
         logger.info(f"Cached cart for guest {guest_id}")
     except Exception as e:
         logger.error(f"Failed to cache guest cart: {e}")
@@ -149,7 +148,7 @@ def cache_guest_cart(guest_id: str, cart_data: dict, expire: int = 86400):
 def get_cached_guest_cart(guest_id: str) -> Optional[dict]:
     try:
         key = f"guest_cart:{guest_id}"
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -167,7 +166,7 @@ def invalidate_user_cache(user_id: int):
             f"user_cart:{user_id}"
         ]
         for key in keys:
-            redis_client.redis_client.delete(key)
+            redis_client.delete(key)
         logger.info(f"Invalidated cache for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to invalidate user cache: {e}")
@@ -184,16 +183,33 @@ def get_or_create_guest_id(request: Request, x_guest_id: Optional[str] = Header(
 
 async def get_current_user_or_guest(request: Request, x_guest_id: Optional[str] = Header(None)):
     try:
-        return await get_current_user(request)
+        # First try to get authenticated user
+        current_user = await get_current_user(request)
+        return {
+            "user_id": current_user['sub'],
+            "is_guest": False,
+            "session_based": False,
+            "session": None
+        }
     except HTTPException:
-        # Try to get guest session
+        # Try to get session
         session = get_session(request)
         if session and session.session_type == SessionType.GUEST:
-            return {"guest_id": session.guest_id, "is_guest": True}
+            return {
+                "guest_id": session.guest_id,
+                "is_guest": True,
+                "session_based": True,
+                "session": session
+            }
 
         # Fall back to old guest system
         guest_id = get_or_create_guest_id(request, x_guest_id)
-        return {"guest_id": guest_id, "is_guest": True}
+        return {
+            "guest_id": guest_id,
+            "is_guest": True,
+            "session_based": False,
+            "session": None
+        }
 
 
 @router.get("/health", response_model=HealthResponse)
@@ -285,7 +301,7 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
                 created_at=user['created_at'],
                 updated_at=user['updated_at']
             )
-            cache_user_profile(user_id, profile_data.model_dump())
+            cache_user_profile(user_id, profile_data.dict())
             return profile_data
     except Exception as e:
         logger.error(f"Failed to fetch user profile: {e}")
@@ -316,31 +332,31 @@ async def update_user_profile(
 
             update_fields = []
             update_params = []
-            if profile_data.first_name:
+            if profile_data.first_name is not None:
                 update_fields.append("first_name = %s")
                 update_params.append(sanitize_input(profile_data.first_name))
-            if profile_data.last_name:
+            if profile_data.last_name is not None:
                 update_fields.append("last_name = %s")
                 update_params.append(sanitize_input(profile_data.last_name))
-            if profile_data.phone:
+            if profile_data.phone is not None:
                 update_fields.append("phone = %s")
                 update_params.append(sanitize_input(profile_data.phone))
-            if profile_data.username:
+            if profile_data.username is not None:
                 update_fields.append("username = %s")
                 update_params.append(sanitize_input(profile_data.username))
-            if profile_data.country_id:
+            if profile_data.country_id is not None:
                 update_fields.append("country_id = %s")
                 update_params.append(profile_data.country_id)
-            if profile_data.preferred_currency:
+            if profile_data.preferred_currency is not None:
                 update_fields.append("preferred_currency = %s")
                 update_params.append(profile_data.preferred_currency)
-            if profile_data.preferred_language:
+            if profile_data.preferred_language is not None:
                 update_fields.append("preferred_language = %s")
                 update_params.append(profile_data.preferred_language)
-            if profile_data.date_of_birth:
+            if profile_data.date_of_birth is not None:
                 update_fields.append("date_of_birth = %s")
                 update_params.append(profile_data.date_of_birth)
-            if profile_data.gender:
+            if profile_data.gender is not None:
                 update_fields.append("gender = %s")
                 update_params.append(profile_data.gender)
 
@@ -371,6 +387,13 @@ async def update_user_profile(
                 )
 
             invalidate_user_cache(user_id)
+
+            # Return updated profile
+            cached_profile = get_cached_user_profile(user_id)
+            if cached_profile:
+                return UserProfileResponse(**cached_profile)
+
+            # Fallback to fetching from database
             return await get_user_profile(current_user)
 
     except HTTPException:
@@ -420,7 +443,7 @@ async def get_user_addresses(current_user: dict = Depends(get_current_user)):
                 )
                 for addr in addresses
             ]
-            cache_user_addresses(user_id, [addr.model_dump() for addr in address_list])
+            cache_user_addresses(user_id, [addr.dict() for addr in address_list])
             return address_list
     except Exception as e:
         logger.error(f"Failed to fetch user addresses: {e}")
@@ -464,7 +487,7 @@ async def create_user_address(
                 sanitize_input(address_data.state),
                 sanitize_input(address_data.country),
                 sanitize_input(address_data.postal_code),
-                address_data.address_type_detail.value,
+                address_data.address_type_detail.value if address_data.address_type_detail else None,
                 address_data.is_default
             ))
             address_id = cursor.lastrowid
@@ -541,7 +564,7 @@ async def get_user_wishlist(current_user: dict = Depends(get_current_user)):
                 items=items,
                 total_count=len(items)
             )
-            cache_user_wishlist(user_id, wishlist_data.model_dump())
+            cache_user_wishlist(user_id, wishlist_data.dict())
             return wishlist_data
     except Exception as e:
         logger.error(f"Failed to fetch wishlist: {e}")
@@ -576,7 +599,7 @@ async def add_to_wishlist(
             cursor.execute("INSERT INTO wishlists (user_id, product_id) VALUES (%s, %s)", (user_id, product_id))
             cursor.execute("UPDATE products SET wishlist_count = wishlist_count + 1 WHERE id = %s", (product_id,))
 
-            redis_client.redis_client.delete(f"user_wishlist:{user_id}")
+            redis_client.delete(f"user_wishlist:{user_id}")
             logger.info(f"Product {product_id} added to wishlist for user {user_id}")
             return {"message": "Product added to wishlist"}
     except HTTPException:
@@ -606,7 +629,7 @@ async def remove_from_wishlist(
 
             cursor.execute("UPDATE products SET wishlist_count = GREATEST(0, wishlist_count - 1) WHERE id = %s",
                            (product_id,))
-            redis_client.redis_client.delete(f"user_wishlist:{user_id}")
+            redis_client.delete(f"user_wishlist:{user_id}")
             logger.info(f"Product {product_id} removed from wishlist for user {user_id}")
             return {"message": "Product removed from wishlist"}
     except HTTPException:
@@ -619,7 +642,6 @@ async def remove_from_wishlist(
         )
 
 
-# ENHANCED CART ENDPOINTS WITH SESSION SUPPORT
 @router.get("/cart", response_model=CartResponse)
 async def get_cart(
         request: Request,
@@ -629,9 +651,9 @@ async def get_cart(
         await rate_limiter.check_rate_limit(request)
 
         # SESSION-BASED CART: Try to get cart from session first
-        session = get_session(request)
-        if session and session.cart_items:
-            logger.info(f"🛒 Getting cart from session for {session.session_type.value}")
+        session = current_user_or_guest.get('session')
+        if session and current_user_or_guest.get('session_based'):
+            logger.info(f"Getting cart from session for guest {session.guest_id}")
             return await _convert_session_cart_to_response(session.cart_items)
 
         # FALLBACK: Use existing database/redis cart system
@@ -643,7 +665,7 @@ async def get_cart(
                 return CartResponse(**cached_cart)
             return CartResponse(items=[], subtotal=0.0, total_items=0)
         else:
-            user_id = current_user_or_guest['sub']
+            user_id = current_user_or_guest['user_id']
             cached_cart = get_cached_user_cart(user_id)
             if cached_cart:
                 logger.info(f"Returning cached cart for user {user_id}")
@@ -667,7 +689,7 @@ async def get_cart(
                 """, (user_id,))
                 cart_items = cursor.fetchall()
                 cart_data = await _convert_db_cart_to_response(cart_items)
-                cache_user_cart(user_id, cart_data.model_dump())
+                cache_user_cart(user_id, cart_data.dict())
                 return cart_data
 
     except Exception as e:
@@ -682,38 +704,47 @@ async def _convert_session_cart_to_response(cart_items: Dict[str, Any]) -> CartR
     """Convert session cart items to CartResponse"""
     try:
         items = []
-        subtotal = 0
+        subtotal = 0.0
         total_items = 0
 
-        for product_id, item_data in cart_items.items():
-            # Get product details from database
-            with db.get_cursor() as cursor:
-                cursor.execute("""
-                    SELECT id, name, slug, main_image_url, base_price, 
-                           stock_quantity, stock_status, max_cart_quantity
-                    FROM products WHERE id = %s AND status = 'active'
-                """, (int(product_id),))
-                product = cursor.fetchone()
+        if not cart_items:
+            return CartResponse(items=[], subtotal=0.0, total_items=0)
 
-                if product:
-                    item_total = float(product['base_price']) * item_data['quantity']
-                    subtotal += item_total
-                    total_items += item_data['quantity']
+        for product_id_str, item_data in cart_items.items():
+            try:
+                product_id = int(product_id_str)
 
-                    items.append({
-                        'id': int(product_id),  # Using product_id as temporary ID
-                        'product_id': int(product_id),
-                        'variation_id': item_data.get('variation_id'),
-                        'product_name': product['name'],
-                        'product_slug': product['slug'],
-                        'product_image': product['main_image_url'],
-                        'product_price': float(product['base_price']),
-                        'quantity': item_data['quantity'],
-                        'total_price': item_total,
-                        'stock_quantity': product['stock_quantity'],
-                        'stock_status': product['stock_status'],
-                        'max_cart_quantity': product['max_cart_quantity']
-                    })
+                # Get product details from database
+                with db.get_cursor() as cursor:
+                    cursor.execute("""
+                        SELECT id, name, slug, main_image_url, base_price, 
+                               stock_quantity, stock_status, max_cart_quantity
+                        FROM products WHERE id = %s AND status = 'active'
+                    """, (product_id,))
+                    product = cursor.fetchone()
+
+                    if product:
+                        item_total = float(product['base_price']) * item_data['quantity']
+                        subtotal += item_total
+                        total_items += item_data['quantity']
+
+                        items.append({
+                            'id': product_id,  # Using product_id as temporary ID
+                            'product_id': product_id,
+                            'variation_id': item_data.get('variation_id'),
+                            'product_name': product['name'],
+                            'product_slug': product['slug'],
+                            'product_image': product['main_image_url'],
+                            'product_price': float(product['base_price']),
+                            'quantity': item_data['quantity'],
+                            'total_price': item_total,
+                            'stock_quantity': product['stock_quantity'],
+                            'stock_status': product['stock_status'],
+                            'max_cart_quantity': product['max_cart_quantity']
+                        })
+            except (ValueError, KeyError) as e:
+                logger.warning(f"Skipping invalid cart item {product_id_str}: {e}")
+                continue
 
         return CartResponse(
             items=items,
@@ -728,7 +759,7 @@ async def _convert_session_cart_to_response(cart_items: Dict[str, Any]) -> CartR
 async def _convert_db_cart_to_response(cart_items: List[Dict]) -> CartResponse:
     """Convert database cart items to CartResponse"""
     items = []
-    subtotal = 0
+    subtotal = 0.0
     total_items = 0
 
     for item in cart_items:
@@ -808,13 +839,13 @@ async def add_to_cart(
                 )
 
         # SESSION-BASED CART: Add to session cart
-        session = get_session(request)
+        session = current_user_or_guest.get('session')
         session_id = get_session_id(request)
 
-        if session and session_id:
+        if session and current_user_or_guest.get('session_based') and session_id:
             try:
                 # Get current cart items from session
-                cart_items = session.cart_items.copy()
+                cart_items = session.cart_items.copy() if session.cart_items else {}
 
                 # Generate unique key for this cart item (product + variation)
                 item_key = f"{product_id}_{variation_id}" if variation_id else str(product_id)
@@ -838,23 +869,25 @@ async def add_to_cart(
                 # Update session with new cart items
                 success = session_service.update_session_data(session_id, {"cart_items": cart_items})
                 if success:
-                    logger.info(f"✅ Product {product_id} added to session cart")
+                    logger.info(f"Product {product_id} added to session cart for guest {session.guest_id}")
                     return {"message": "Product added to cart", "session_based": True}
                 else:
                     logger.warning("Failed to update session cart, falling back to database")
 
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Session cart update failed: {e}, falling back to database")
 
         # FALLBACK: Use existing database cart system
         if current_user_or_guest.get('is_guest'):
             guest_id = current_user_or_guest['guest_id']
+            # For guest users without session, use the old guest cart system
             guest_cart = get_cached_guest_cart(guest_id) or {"items": [], "subtotal": 0.0, "total_items": 0}
-
-            # ... existing guest cart logic ...
+            cache_guest_cart(guest_id, guest_cart)
             return {"message": "Product added to cart", "guest_id": guest_id, "session_based": False}
         else:
-            user_id = current_user_or_guest['sub']
+            user_id = current_user_or_guest['user_id']
             with db.get_cursor() as cursor:
                 cursor.execute("""
                     SELECT id, quantity FROM shopping_cart
@@ -881,7 +914,7 @@ async def add_to_cart(
                         VALUES (%s, %s, %s, %s)
                     """, (user_id, product_id, variation_id, quantity))
 
-                redis_client.redis_client.delete(f"user_cart:{user_id}")
+                redis_client.delete(f"user_cart:{user_id}")
                 logger.info(f"Product {product_id} added to database cart for user {user_id}")
                 return {"message": "Product added to cart", "session_based": False}
 
@@ -912,10 +945,10 @@ async def update_cart_item(
             )
 
         # SESSION-BASED CART: Update session cart
-        session = get_session(request)
+        session = current_user_or_guest.get('session')
         session_id = get_session_id(request)
 
-        if session and session_id and session.cart_items:
+        if session and current_user_or_guest.get('session_based') and session_id and session.cart_items:
             try:
                 # For session carts, we use product_id as cart_item_id
                 product_id = cart_item_id
@@ -951,6 +984,7 @@ async def update_cart_item(
                     # Update session
                     success = session_service.update_session_data(session_id, {"cart_items": cart_items})
                     if success:
+                        logger.info(f"Session cart updated for guest {session.guest_id}")
                         return {"message": "Cart updated successfully", "session_based": True}
 
             except HTTPException:
@@ -960,10 +994,10 @@ async def update_cart_item(
 
         # FALLBACK: Use existing database cart system
         if current_user_or_guest.get('is_guest'):
-            # ... existing guest cart logic ...
+            # For guest users without session, return simple response
             return {"message": "Cart updated successfully", "session_based": False}
         else:
-            user_id = current_user_or_guest['sub']
+            user_id = current_user_or_guest['user_id']
             with db.get_cursor() as cursor:
                 cursor.execute("""
                     SELECT sc.*, p.stock_quantity, p.stock_status, p.max_cart_quantity
@@ -981,7 +1015,7 @@ async def update_cart_item(
 
                 if quantity == 0:
                     cursor.execute("DELETE FROM shopping_cart WHERE id = %s", (cart_item_id,))
-                    redis_client.redis_client.delete(f"user_cart:{user_id}")
+                    redis_client.delete(f"user_cart:{user_id}")
                     return {"message": "Item removed from cart", "session_based": False}
 
                 max_quantity = min(cart_item['max_cart_quantity'], cart_item['stock_quantity'])
@@ -996,7 +1030,7 @@ async def update_cart_item(
                     SET quantity = %s, updated_at = NOW()
                     WHERE id = %s
                 """, (quantity, cart_item_id))
-                redis_client.redis_client.delete(f"user_cart:{user_id}")
+                redis_client.delete(f"user_cart:{user_id}")
                 return {"message": "Cart updated successfully", "session_based": False}
 
     except HTTPException:
@@ -1019,10 +1053,10 @@ async def remove_from_cart(
         await rate_limiter.check_rate_limit(request)
 
         # SESSION-BASED CART: Remove from session cart
-        session = get_session(request)
+        session = current_user_or_guest.get('session')
         session_id = get_session_id(request)
 
-        if session and session_id and session.cart_items:
+        if session and current_user_or_guest.get('session_based') and session_id and session.cart_items:
             try:
                 # For session carts, we use product_id as cart_item_id
                 product_id = cart_item_id
@@ -1046,10 +1080,9 @@ async def remove_from_cart(
 
         # FALLBACK: Use existing database cart system
         if current_user_or_guest.get('is_guest'):
-            # ... existing guest cart logic ...
             return {"message": "Item removed from cart", "session_based": False}
         else:
-            user_id = current_user_or_guest['sub']
+            user_id = current_user_or_guest['user_id']
             with db.get_cursor() as cursor:
                 cursor.execute("DELETE FROM shopping_cart WHERE id = %s AND user_id = %s", (cart_item_id, user_id))
                 if cursor.rowcount == 0:
@@ -1057,7 +1090,7 @@ async def remove_from_cart(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Cart item not found"
                     )
-                redis_client.redis_client.delete(f"user_cart:{user_id}")
+                redis_client.delete(f"user_cart:{user_id}")
                 return {"message": "Item removed from cart", "session_based": False}
 
     except HTTPException:
@@ -1091,10 +1124,10 @@ async def clear_cart(
             cache_guest_cart(guest_id, {"items": [], "subtotal": 0.0, "total_items": 0})
             return {"message": "Cart cleared successfully", "session_based": False}
         else:
-            user_id = current_user_or_guest['sub']
+            user_id = current_user_or_guest['user_id']
             with db.get_cursor() as cursor:
                 cursor.execute("DELETE FROM shopping_cart WHERE user_id = %s", (user_id,))
-                redis_client.redis_client.delete(f"user_cart:{user_id}")
+                redis_client.delete(f"user_cart:{user_id}")
                 return {"message": "Cart cleared successfully", "session_based": False}
 
     except Exception as e:
@@ -1105,7 +1138,6 @@ async def clear_cart(
         )
 
 
-# SESSION-RELATED ENDPOINTS
 @router.get("/session/info")
 async def get_session_info(request: Request, current_user: dict = Depends(get_current_user)):
     """Get current session information for authenticated users"""
@@ -1122,7 +1154,7 @@ async def get_session_info(request: Request, current_user: dict = Depends(get_cu
             "created_at": session.created_at,
             "last_activity": session.last_activity,
             "expires_at": session.expires_at,
-            "cart_items_count": len(session.cart_items),
+            "cart_items_count": len(session.cart_items) if session.cart_items else 0,
             "ip_address": session.ip_address
         }
     except Exception as e:
@@ -1174,9 +1206,9 @@ async def migrate_cart_to_session(
         # Clear database cart
         with db.get_cursor() as cursor:
             cursor.execute("DELETE FROM shopping_cart WHERE user_id = %s", (user_id,))
-        redis_client.redis_client.delete(f"user_cart:{user_id}")
+        redis_client.delete(f"user_cart:{user_id}")
 
-        logger.info(f"✅ Cart migrated to session for user {user_id}")
+        logger.info(f"Cart migrated to session for user {user_id}")
         return {"message": "Cart migrated to session successfully", "items_migrated": len(session_cart)}
 
     except Exception as e:
@@ -1186,8 +1218,6 @@ async def migrate_cart_to_session(
             detail="Failed to migrate cart"
         )
 
-
-# ... (keep the existing endpoints for avatar upload, password change, admin functions, etc.)
 
 @router.post("/profile/avatar")
 async def upload_avatar(
@@ -1359,7 +1389,6 @@ async def update_user_status(
 async def debug_test():
     import traceback
     try:
-        logger = get_logger(__name__)
         maintenance_mode = config.maintenance_mode
         debug_mode = config.debug_mode
         db_status = "unknown"
@@ -1375,7 +1404,7 @@ async def debug_test():
             logger.error(f"Database error: {db_error}")
         redis_status = "unknown"
         try:
-            redis_status = "connected" if redis_client._ensure_connection() else "disconnected"
+            redis_status = "connected" if redis_client.ping() else "disconnected"
         except Exception as redis_error:
             redis_status = f"error: {str(redis_error)}"
         return {

@@ -2,25 +2,28 @@ from fastapi import Request, Response
 from typing import Optional, Callable, Any
 from datetime import datetime
 import uuid
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
-
 from shared import get_logger
 from .session_service import session_service, SessionType, SessionData
-from .session_models import SessionCreate
 
 logger = get_logger(__name__)
 
 
-class SessionMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: ASGIApp):
-        super().__init__(app)
+class SessionMiddleware:
+    def __init__(self, app):
+        self.app = app
         self.session_cookie_name = "session_id"
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
         session_id = self._get_session_id(request)
         session = None
+        is_new_session = False
 
+        # Get or create session
         if session_id:
             session = session_service.get_session(session_id)
 
@@ -28,33 +31,34 @@ class SessionMiddleware(BaseHTTPMiddleware):
             session = await self._create_new_session(request)
             if session:
                 session_id = session.session_id
+                is_new_session = True
 
+        # Attach session to request state
         request.state.session = session
         request.state.session_id = session_id
 
-        response = await call_next(request)
+        # Create response wrapper to set cookies
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start" and is_new_session and session:
+                # Add Set-Cookie header
+                headers = message.get("headers", [])
+                cookie_value = f"{self.session_cookie_name}={session_id}; Max-Age=86400; HttpOnly; SameSite=lax"
+                if not request.app.debug:
+                    cookie_value += "; Secure"
+                headers.append([b"set-cookie", cookie_value.encode()])
+                message["headers"] = headers
+                logger.info(f"✅ Set session cookie for new {session.session_type.value} session: {session_id}")
+            await send(message)
 
-        if session and not self._get_session_id(request):
-            response.set_cookie(
-                key=self.session_cookie_name,
-                value=session_id,
-                max_age=86400,
-                httponly=True,
-                secure=not getattr(request.app, 'debug', True),
-                samesite="lax"
-            )
-
-        return response
+        await self.app(scope, receive, send_wrapper)
 
     def _get_session_id(self, request: Request) -> Optional[str]:
         session_id = request.cookies.get(self.session_cookie_name)
         if session_id:
             return session_id
-
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Session "):
             return auth_header[8:]
-
         return None
 
     async def _create_new_session(self, request: Request) -> Optional[SessionData]:
@@ -82,10 +86,13 @@ class SessionMiddleware(BaseHTTPMiddleware):
                 'cart_items': {}
             }
 
-            return session_service.create_session(session_data)
+            session = session_service.create_session(session_data)
+            if session:
+                logger.info(f"✅ Created new {session_type.value} session: {session.session_id}")
+            return session
 
         except Exception as e:
-            logger.error(f"Failed to create new session: {e}")
+            logger.error(f"❌ Failed to create new session: {e}")
             return None
 
 

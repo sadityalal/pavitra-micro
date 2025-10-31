@@ -41,7 +41,7 @@ def publish_product_event(product_data: dict, event_type: str):
 def cache_product(product_id: int, product_data: dict, expire: int = 1800):
     try:
         key = f"product:{product_id}"
-        redis_client.redis_client.setex(key, expire, json.dumps(product_data))
+        redis_client.setex(key, expire, json.dumps(product_data))
         logger.info(f"Cached product {product_id}")
     except Exception as e:
         logger.error(f"Failed to cache product: {e}")
@@ -50,7 +50,7 @@ def cache_product(product_id: int, product_data: dict, expire: int = 1800):
 def get_cached_product(product_id: int) -> Optional[dict]:
     try:
         key = f"product:{product_id}"
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -62,7 +62,7 @@ def get_cached_product(product_id: int) -> Optional[dict]:
 def cache_categories(categories_data: List[dict], expire: int = 3600):
     try:
         key = "categories:all"
-        redis_client.redis_client.setex(key, expire, json.dumps(categories_data))
+        redis_client.setex(key, expire, json.dumps(categories_data))
         logger.info("Cached categories")
     except Exception as e:
         logger.error(f"Failed to cache categories: {e}")
@@ -71,7 +71,7 @@ def cache_categories(categories_data: List[dict], expire: int = 3600):
 def get_cached_categories() -> Optional[List[dict]]:
     try:
         key = "categories:all"
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -87,7 +87,7 @@ def invalidate_product_cache(product_id: int):
             "categories:all"
         ]
         for key in keys:
-            redis_client.redis_client.delete(key)
+            redis_client.delete(key)
         logger.info(f"Invalidated cache for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to invalidate product cache: {e}")
@@ -113,28 +113,23 @@ def normalize_image_urls(image_data):
     return image_data
 
 
-def update_session_product_views(session, product_id: int):
+def update_session_product_views(session, product_id: int, session_id: str):
     """Update session with product view history"""
     try:
-        if not session:
-            return
-
-        session_id = get_session_id(Request)
-        if not session_id:
+        if not session or not session_id:
             return
 
         # Initialize viewed_products if not exists
-        if not hasattr(session, 'viewed_products'):
-            session.viewed_products = []
+        viewed_products = getattr(session, 'viewed_products', [])
 
         # Add product to viewed products (limit to 50 most recent)
-        if product_id not in session.viewed_products:
-            session.viewed_products.insert(0, product_id)
-            session.viewed_products = session.viewed_products[:50]  # Keep only 50 most recent
+        if product_id not in viewed_products:
+            viewed_products.insert(0, product_id)
+            viewed_products = viewed_products[:50]  # Keep only 50 most recent
 
         # Update session data
         session_service.update_session_data(session_id, {
-            'viewed_products': session.viewed_products
+            'viewed_products': viewed_products
         })
 
     except Exception as e:
@@ -158,20 +153,19 @@ def update_session_wishlist(session, session_id: str, product_id: int, action: s
         if not session or not session_id:
             return False
 
-        # Initialize wishlist_items if not exists
-        if not hasattr(session, 'wishlist_items'):
-            session.wishlist_items = []
+        # Get current wishlist items
+        wishlist_items = getattr(session, 'wishlist_items', [])
 
         if action == 'add':
-            if product_id not in session.wishlist_items:
-                session.wishlist_items.append(product_id)
+            if product_id not in wishlist_items:
+                wishlist_items.append(product_id)
         elif action == 'remove':
-            if product_id in session.wishlist_items:
-                session.wishlist_items.remove(product_id)
+            if product_id in wishlist_items:
+                wishlist_items.remove(product_id)
 
         # Update session data
         return session_service.update_session_data(session_id, {
-            'wishlist_items': session.wishlist_items
+            'wishlist_items': wishlist_items
         })
 
     except Exception as e:
@@ -284,14 +278,18 @@ async def get_frontend_settings():
             'currency_symbol': config.currency_symbol,
             'min_order_amount': config.min_order_amount,
             'free_shipping_min_amount': config.free_shipping_min_amount,
-            'free_shipping_threshold': config.free_shipping_threshold,
-            'return_period_days': config.return_period_days,
+            'free_shipping_threshold': getattr(config, 'free_shipping_threshold', 999),
+            'return_period_days': getattr(config, 'return_period_days', 10),
             'enable_reviews': config.enable_reviews,
             'enable_wishlist': config.enable_wishlist,
             'enable_guest_checkout': config.enable_guest_checkout,
-            'site_phone': config.site_phone,
-            'site_email': config.site_email,
-            'business_hours': config.business_hours
+            'site_phone': getattr(config, 'site_phone', '+91-9711317009'),
+            'site_email': getattr(config, 'site_email', 'support@pavitraenterprises.com'),
+            'business_hours': getattr(config, 'business_hours', {
+                'monday_friday': '9am-6pm',
+                'saturday': '10am-4pm',
+                'sunday': 'Closed'
+            })
         }
         return frontend_settings
     except Exception as e:
@@ -331,7 +329,6 @@ async def get_products(
             )
 
         # SESSION: Update session activity
-        session = get_session(request)
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -874,7 +871,7 @@ async def get_product(product_id: int, request: Request):
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
-            update_session_product_views(session, product_id)
+            update_session_product_views(session, product_id, session_id)
 
         cached_product = get_cached_product(product_id)
         if cached_product:
@@ -962,7 +959,7 @@ async def get_product(product_id: int, request: Request):
                 updated_at=product['updated_at']
             )
 
-            cache_product(product_id, product_response.model_dump())
+            cache_product(product_id, product_response.dict())
             return product_response
 
     except HTTPException:
@@ -1018,7 +1015,7 @@ async def get_product_by_slug(product_slug: str, request: Request):
 
             # SESSION: Update product views
             if session_id:
-                update_session_product_views(session, product['id'])
+                update_session_product_views(session, product['id'], session_id)
 
             specification = None
             image_gallery = None
@@ -1147,7 +1144,7 @@ async def get_categories(
                 for cat in categories
             ]
             if parent_id is None and featured is None:
-                cache_categories([cat.model_dump() for cat in category_list])
+                cache_categories([cat.dict() for cat in category_list])
             return category_list
     except Exception as e:
         logger.error(f"Failed to fetch categories: {e}")
@@ -1744,140 +1741,6 @@ async def create_product(
             detail="Failed to create product"
         )
 
-@router.post("/admin/products", response_model=ProductResponse)
-async def create_product(
-        product_data: ProductCreate,
-        request: Request,
-        background_tasks: BackgroundTasks
-):
-    try:
-        config.refresh_cache()
-        if config.maintenance_mode:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Service is under maintenance. Please try again later."
-            )
-        current_user = await require_roles(['admin', 'vendor'], request)
-        user_id = int(current_user.get('sub'))
-        with db.get_cursor() as cursor:
-            cursor.execute("SELECT id FROM products WHERE sku = %s", (product_data.sku,))
-            if cursor.fetchone():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="SKU already exists"
-                )
-            cursor.execute("SELECT id FROM products WHERE slug = %s", (product_data.slug,))
-            if cursor.fetchone():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Slug already exists"
-                )
-            cursor.execute("SELECT id FROM categories WHERE id = %s AND is_active = 1", (product_data.category_id,))
-            if not cursor.fetchone():
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Category not found"
-                )
-            if product_data.brand_id:
-                cursor.execute("SELECT id FROM brands WHERE id = %s AND is_active = 1", (product_data.brand_id,))
-                if not cursor.fetchone():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Brand not found"
-                    )
-            cursor.execute("""
-                INSERT INTO products (
-                    sku, name, slug, short_description, description, specification,
-                    base_price, compare_price, category_id, brand_id, gst_rate,
-                    track_inventory, stock_quantity, product_type, is_featured,
-                    status, stock_status, low_stock_threshold
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """, (
-                product_data.sku,
-                sanitize_input(product_data.name),
-                sanitize_input(product_data.slug),
-                sanitize_input(product_data.short_description) if product_data.short_description else None,
-                sanitize_input(product_data.description) if product_data.description else None,
-                str(product_data.specification) if product_data.specification else None,
-                product_data.base_price,
-                product_data.compare_price,
-                product_data.category_id,
-                product_data.brand_id,
-                product_data.gst_rate,
-                product_data.track_inventory,
-                product_data.stock_quantity,
-                product_data.product_type.value,
-                product_data.is_featured,
-                'active',
-                'in_stock' if product_data.stock_quantity > 0 else 'out_of_stock',
-                5
-            ))
-            product_id = cursor.lastrowid
-            cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
-            product = cursor.fetchone()
-            specification = None
-            if product['specification']:
-                try:
-                    if isinstance(product['specification'], str):
-                        specification = ast.literal_eval(product['specification'])
-                    else:
-                        specification = product['specification']
-                except:
-                    specification = None
-            # FIXED: Normalize image URLs for new product
-            main_image_url = normalize_image_urls(product['main_image_url'])
-            image_gallery = normalize_image_urls(product['image_gallery'])
-
-            product_response = ProductResponse(
-                id=product['id'],
-                uuid=product['uuid'],
-                name=product['name'],
-                sku=product['sku'],
-                slug=product['slug'],
-                short_description=product['short_description'],
-                description=product['description'],
-                base_price=float(product['base_price']),
-                compare_price=float(product['compare_price']) if product['compare_price'] else None,
-                category_id=product['category_id'],
-                brand_id=product['brand_id'],
-                specification=specification,
-                gst_rate=float(product['gst_rate']),
-                is_gst_inclusive=bool(product['is_gst_inclusive']),
-                track_inventory=bool(product['track_inventory']),
-                stock_quantity=product['stock_quantity'],
-                low_stock_threshold=product['low_stock_threshold'],
-                stock_status=product['stock_status'],
-                product_type=product['product_type'],
-                weight_grams=float(product['weight_grams']) if product['weight_grams'] else None,
-                main_image_url=main_image_url,
-                image_gallery=image_gallery,
-                status=product['status'],
-                is_featured=bool(product['is_featured']),
-                is_trending=bool(product['is_trending']),
-                is_bestseller=bool(product['is_bestseller']),
-                view_count=product['view_count'],
-                wishlist_count=product['wishlist_count'],
-                total_sold=product['total_sold'],
-                created_at=product['created_at'],
-                updated_at=product['updated_at']
-            )
-            if background_tasks:
-                background_tasks.add_task(
-                    publish_product_event,
-                    product,
-                    'created'
-                )
-            logger.info(f"Product created successfully: {product_data.name}")
-            return product_response
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to create product: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create product"
-        )
-
 
 @router.put("/admin/products/{product_id}", response_model=ProductResponse)
 async def update_product(
@@ -1893,6 +1756,12 @@ async def update_product(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         current_user = await require_roles(['admin', 'vendor'], request)
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id FROM products WHERE id = %s", (product_id,))
@@ -2013,6 +1882,12 @@ async def upload_product_images(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, image_gallery FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
@@ -2104,6 +1979,12 @@ async def delete_product(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
+        # SESSION: Update session activity
+        session_id = get_session_id(request)
+        if session_id:
+            session_service.update_session_activity(session_id)
+
         current_user = await require_roles(['admin'], request)
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, name FROM products WHERE id = %s", (product_id,))

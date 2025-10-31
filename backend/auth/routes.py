@@ -244,7 +244,7 @@ async def register_user(
                         'session_type': SessionType.USER,
                         'user_id': user_id,
                         'guest_id': None,
-                        'ip_address': request.client.host,
+                        'ip_address': request.client.host if request.client else 'unknown',
                         'user_agent': request.headers.get("user-agent"),
                         'cart_items': current_session.cart_items if current_session else {}
                     }
@@ -356,7 +356,7 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             'smtp_username': config.smtp_username,
             'smtp_password': config.smtp_password,
             'email_from': config.email_from,
-            'free_shipping_threshold': getattr(config, 'free_shipping_threshold'),
+            'free_shipping_threshold': getattr(config, 'free_shipping_threshold', 0),
             'return_period_days': getattr(config, 'return_period_days', 10),
             'site_phone': getattr(config, 'site_phone', '+91-9711317009'),
             'site_email': getattr(config, 'site_email', 'support@pavitraenterprises.com'),
@@ -385,14 +385,18 @@ async def get_frontend_settings():
             'currency_symbol': config.currency_symbol,
             'min_order_amount': config.min_order_amount,
             'free_shipping_min_amount': config.free_shipping_min_amount,
-            'free_shipping_threshold': config.free_shipping_threshold,
-            'return_period_days': config.return_period_days,
+            'free_shipping_threshold': getattr(config, 'free_shipping_threshold', 0),
+            'return_period_days': getattr(config, 'return_period_days', 10),
             'enable_reviews': config.enable_reviews,
             'enable_wishlist': config.enable_wishlist,
             'enable_guest_checkout': config.enable_guest_checkout,
-            'site_phone': config.site_phone,
-            'site_email': config.site_email,
-            'business_hours': config.business_hours
+            'site_phone': getattr(config, 'site_phone', '+91-9711317009'),
+            'site_email': getattr(config, 'site_email', 'support@pavitraenterprises.com'),
+            'business_hours': getattr(config, 'business_hours', {
+                'monday_friday': '9am-6pm',
+                'saturday': '10am-4pm',
+                'sunday': 'Closed'
+            })
         }
         return frontend_settings
     except Exception as e:
@@ -502,7 +506,7 @@ async def login_user(
                         'session_type': SessionType.USER,
                         'user_id': user['id'],
                         'guest_id': None,
-                        'ip_address': request.client.host,
+                        'ip_address': request.client.host if request.client else 'unknown',
                         'user_agent': request.headers.get("user-agent"),
                         'cart_items': current_session.cart_items if current_session else {}
                     }
@@ -654,7 +658,7 @@ async def forgot_password(email: str = Form(...)):
                     expires_delta=timedelta(hours=1)
                 )
                 # Store reset token in Redis with expiration
-                redis_client.redis_client.setex(
+                redis_client.setex(
                     f"password_reset:{user['id']}",
                     3600,
                     reset_token
@@ -689,7 +693,7 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
             )
 
         user_id = int(payload['sub'])
-        stored_token = redis_client.redis_client.get(f"password_reset:{user_id}")
+        stored_token = redis_client.get(f"password_reset:{user_id}")
         if not stored_token or stored_token != token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -714,7 +718,7 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
                 (user_id, new_password_hash)
             )
             # Remove used reset token
-            redis_client.redis_client.delete(f"password_reset:{user_id}")
+            redis_client.delete(f"password_reset:{user_id}")
             logger.info(f"Password reset successful for user {user_id} using Argon2")
             return {"message": "Password reset successfully"}
     except HTTPException:
@@ -817,7 +821,7 @@ async def get_session_info(request: Request, current_user: dict = Depends(get_cu
             "created_at": session.created_at,
             "last_activity": session.last_activity,
             "expires_at": session.expires_at,
-            "cart_items_count": len(session.cart_items)
+            "cart_items_count": len(session.cart_items) if session.cart_items else 0
         }
     except Exception as e:
         logger.error(f"Failed to get session info: {e}")

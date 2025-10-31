@@ -40,13 +40,19 @@ class SessionService:
                 expires_at=expires_at
             )
 
+            # Convert datetime objects to ISO strings for JSON serialization
+            session_dict = session.model_dump()
+            session_dict['created_at'] = session_dict['created_at'].isoformat()
+            session_dict['last_activity'] = session_dict['last_activity'].isoformat()
+            session_dict['expires_at'] = session_dict['expires_at'].isoformat()
+
             # Store session in Redis
             key = f"session:{session_id}"
             redis_client.redis_client.setex(
                 key,
                 self.user_session_duration if session_data.get(
                     'session_type') == SessionType.USER else self.guest_session_duration,
-                json.dumps(session.model_dump())
+                json.dumps(session_dict)  # Now this will work!
             )
 
             # Also store user/guest to session mapping
@@ -76,16 +82,13 @@ class SessionService:
             data = redis_client.redis_client.get(key)
             if data:
                 session_dict = json.loads(data)
-                # Convert string dates back to datetime objects
+                # Convert ISO string dates back to datetime objects
                 session_dict['created_at'] = datetime.fromisoformat(session_dict['created_at'])
                 session_dict['last_activity'] = datetime.fromisoformat(session_dict['last_activity'])
                 session_dict['expires_at'] = datetime.fromisoformat(session_dict['expires_at'])
 
                 session = SessionData(**session_dict)
-
-                # Update last activity
                 self.update_session_activity(session_id)
-
                 return session
             return None
         except Exception as e:
