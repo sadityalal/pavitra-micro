@@ -11,10 +11,11 @@ const Hero = () => {
   const handleAddToCart = async (product) => {
     try {
       await addToCart(product.id, 1);
-      // You can add a toast notification here
       console.log('Product added to cart:', product.name);
+      // You can add a toast notification here later
     } catch (error) {
       console.error('Failed to add to cart:', error);
+      // You can add error handling/notification here
     }
   };
 
@@ -89,12 +90,13 @@ const Hero = () => {
                     )}
                   </div>
                   <button
-                    className="cart-btn"
-                    onClick={() => handleAddToCart(mainProduct)}
-                    disabled={mainProduct.stock_status !== 'in_stock'}
-                  >
-                    {mainProduct.stock_status === 'in_stock' ? 'Add to Cart' : 'Out of Stock'}
-                  </button>
+                      className="btn btn-dark"
+                      onClick={() => handleAddToCart(mainProduct)}
+                      disabled={mainProduct.stock_status !== 'in_stock'}
+                    >
+                      <i className="bi bi-cart-plus me-2"></i>
+                      {mainProduct.stock_status === 'in_stock' ? 'Add to Cart' : 'Out of Stock'}
+                    </button>
                 </div>
               </div>
             ) : (
@@ -106,9 +108,10 @@ const Hero = () => {
                   <div className="price">
                     <span className="sale-price">Explore Now</span>
                   </div>
-                  <button className="cart-btn" onClick={() => window.location.href = '/products'}>
-                    Shop Now
-                  </button>
+                  <button className="btn btn-dark" onClick={() => window.location.href = '/products'}>
+                      <i className="bi bi-cart-plus me-2"></i>
+                      Shop Now
+                    </button>
                 </div>
               </div>
             )}
@@ -133,7 +136,7 @@ const Hero = () => {
                   <span className="mini-price">{frontendSettings.currency_symbol}{product.base_price}</span>
                 </div>
               ))}
-              {/* Fill remaining spots if needed */}
+              {/* Add placeholder products if needed */}
               {Array.from({ length: 2 - secondaryProducts.length }).map((_, index) => (
                 <div
                   key={`placeholder-${index}`}

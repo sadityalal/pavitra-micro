@@ -5,15 +5,6 @@ import ProductCard from '../common/ProductCard';
 const BestSellers = () => {
   const { products: bestSellers, loading, error } = useProducts('best-sellers');
 
-  const handleAddToCart = async (product) => {
-    try {
-      console.log('Adding to cart:', product);
-      // Implement cart functionality here
-    } catch (error) {
-      console.error('Failed to add to cart:', error);
-    }
-  };
-
   const handleAddToWishlist = async (product) => {
     try {
       console.log('Adding to wishlist:', product);
@@ -77,7 +68,6 @@ const BestSellers = () => {
               <div key={product.id} className="col-lg-3 col-md-6 col-sm-6">
                 <ProductCard
                   product={product}
-                  onAddToCart={handleAddToCart}
                   onAddToWishlist={handleAddToWishlist}
                 />
               </div>

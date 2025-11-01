@@ -5,6 +5,8 @@ import { AuthProvider } from './contexts/AuthContext.js';
 import { SettingsProvider } from './contexts/SettingsContext.js';
 import Layout from './components/layout/Layout.js';
 import HomePage from './pages/HomePage.js';
+import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 
 function App() {
   useEffect(() => {
@@ -257,8 +259,9 @@ function App() {
               {/* <Route path="/cart" element={<CartPage />} /> */}
               {/* <Route path="/checkout" element={<CheckoutPage />} /> */}
               {/* <Route path="/account" element={<AccountPage />} /> */}
-              {/* <Route path="/login" element={<LoginPage />} /> */}
-              {/* <Route path="/register" element={<RegisterPage />} /> */}
+              <Route path="/auth" element={<AuthPage />} />
+              <Route path="/login" element={<AuthPage />} />
+              <Route path="/register" element={<AuthPage />} />
             </Routes>
           </Layout>
         </Router>

@@ -1,7 +1,37 @@
 import React from 'react';
 import { formatCurrency, getStockStatusBadge, calculateSavings } from '../../utils/helpers';
+import { useCart } from '../../hooks/useCart';
 
 const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false }) => {
+  const { addToCart } = useCart();
+
+  const handleAddToCart = async (product) => {
+    try {
+      await addToCart(product.id, 1);
+      console.log('Product added to cart:', product.name);
+      // Call the parent handler if provided
+      if (onAddToCart) {
+        onAddToCart(product);
+      }
+    } catch (error) {
+      console.error('Failed to add to cart:', error);
+    }
+  };
+
+  const handleAddToWishlist = async (product) => {
+    try {
+      // Call the parent handler if provided
+      if (onAddToWishlist) {
+        await onAddToWishlist(product);
+      } else {
+        console.log('Add to wishlist functionality not implemented');
+        // You can implement wishlist functionality here
+      }
+    } catch (error) {
+      console.error('Failed to add to wishlist:', error);
+    }
+  };
+
   if (loading) {
     return (
       <div className="product-item">
@@ -37,21 +67,17 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
   const savings = calculateSavings(compare_price, base_price);
   const hasDiscount = compare_price && compare_price > base_price;
 
-  // Handle image URL
   const getImageUrl = (imagePath) => {
     if (!imagePath || imagePath === 'null' || imagePath === 'undefined') {
       return '/assets/img/product/placeholder.jpg';
     }
-
     if (imagePath.startsWith('http')) {
       return imagePath;
     }
-
     if (imagePath.startsWith('/uploads/')) {
       const backendUrl = process.env.REACT_APP_PRODUCT_URL || 'http://localhost:8002';
       return `${backendUrl}${imagePath}`;
     }
-
     return imagePath;
   };
 
@@ -60,7 +86,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
   return (
     <div className="product-item">
       <div className="product-image">
-        {/* Product Badges */}
+        {/* Product badges */}
         <div className="product-badges">
           {hasDiscount && (
             <span className="badge-sale">
@@ -74,7 +100,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           )}
         </div>
 
-        {/* Product Image */}
+        {/* Product image */}
         <img
           src={imageUrl}
           alt={name}
@@ -85,13 +111,12 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           }}
         />
 
-        {/* Product Actions */}
+        {/* Product actions */}
         <div className="product-actions">
           <button
             className="action-btn wishlist-btn"
-            onClick={() => onAddToWishlist && onAddToWishlist(product)}
+            onClick={() => handleAddToWishlist(product)}
             title="Add to Wishlist"
-            disabled={!onAddToWishlist}
           >
             <i className="bi bi-heart"></i>
           </button>
@@ -110,28 +135,27 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           </button>
         </div>
 
-        {/* Add to Cart Button - Fixed positioning */}
+        {/* Add to cart button */}
         <button
           className={`cart-btn ${stock_status !== 'in_stock' ? 'disabled' : ''}`}
-          onClick={() => onAddToCart && onAddToCart(product)}
-          disabled={stock_status !== 'in_stock' || !onAddToCart}
+          onClick={() => handleAddToCart(product)}
+          disabled={stock_status !== 'in_stock'}
         >
           {stock_status === 'in_stock' ? 'Add to Cart' : 'Out of Stock'}
         </button>
       </div>
-
       <div className="product-info">
-        {/* Product Category */}
+        {/* Product category */}
         <div className="product-category">
           {is_featured ? 'Featured' : is_bestseller ? 'Best Seller' : 'Premium'}
         </div>
 
-        {/* Product Name */}
+        {/* Product name */}
         <h4 className="product-name">
           <a href={`/product/${slug}`}>{name}</a>
         </h4>
 
-        {/* Product Rating */}
+        {/* Product rating */}
         <div className="product-rating">
           <div className="stars">
             <i className="bi bi-star-fill"></i>
@@ -143,7 +167,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           <span className="rating-count">(24)</span>
         </div>
 
-        {/* Product Price */}
+        {/* Product price */}
         <div className="product-price">
           {hasDiscount ? (
             <>
@@ -155,7 +179,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           )}
         </div>
 
-        {/* Color Swatches */}
+        {/* Color swatches */}
         <div className="color-swatches">
           <span className="swatch active" style={{ backgroundColor: '#2563eb' }}></span>
           <span className="swatch" style={{ backgroundColor: '#059669' }}></span>

@@ -465,3 +465,132 @@
     margin-bottom: 2rem;
   }
 }
+
+/* Auth Page Styles - Minimal additions to match existing design */
+.auth-section {
+  background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+}
+
+.auth-container {
+  background: white;
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  position: relative;
+  min-height: 600px;
+  display: flex;
+}
+
+.auth-form {
+  flex: 1;
+  padding: 3rem;
+  transition: transform 0.6s ease-in-out;
+}
+
+.auth-container.active .login-form {
+  transform: translateX(-100%);
+}
+
+.auth-container:not(.active) .register-form {
+  transform: translateX(100%);
+}
+
+.toggle-panel {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 50%;
+  height: 100%;
+  background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
+  color: white;
+  transition: transform 0.6s ease-in-out;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 2rem;
+}
+
+.toggle-content {
+  position: absolute;
+  width: 100%;
+  padding: 2rem;
+  transition: opacity 0.3s ease;
+}
+
+.toggle-right {
+  opacity: 0;
+}
+
+.auth-container.active .toggle-panel {
+  transform: translateX(-100%);
+}
+
+.auth-container.active .toggle-left {
+  opacity: 0;
+}
+
+.auth-container.active .toggle-right {
+  opacity: 1;
+}
+
+.auth-container:not(.active) .toggle-left {
+  opacity: 1;
+}
+
+.auth-container:not(.active) .toggle-right {
+  opacity: 0;
+}
+
+.social-icons {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.social-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid #dee2e6;
+  border-radius: 50%;
+  color: #6c757d;
+  text-decoration: none;
+  transition: all 0.3s ease;
+}
+
+.social-icon:hover {
+  background-color: #f8f9fa;
+  color: #007bff;
+  transform: translateY(-2px);
+}
+
+.divider {
+  text-align: center;
+  position: relative;
+  margin: 1.5rem 0;
+}
+
+.divider::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: #dee2e6;
+}
+
+.divider span {
+  background: white;
+  padding: 0 1rem;
+  color: #6c757d;
+  font-size: 0.875rem;
+}
+
