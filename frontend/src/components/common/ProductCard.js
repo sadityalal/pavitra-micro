@@ -1,31 +1,36 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { formatCurrency, getStockStatusBadge, calculateSavings } from '../../utils/helpers';
 import { useCart } from '../../hooks/useCart';
 
 const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false }) => {
-  const { addToCart } = useCart();
+  const { addToCart, loading: cartLoading } = useCart();
+  const [addingToCart, setAddingToCart] = useState(false);
 
   const handleAddToCart = async (product) => {
+    if (product.stock_status !== 'in_stock') return;
+
     try {
+      setAddingToCart(true);
       await addToCart(product.id, 1);
       console.log('Product added to cart:', product.name);
-      // Call the parent handler if provided
+
       if (onAddToCart) {
         onAddToCart(product);
       }
     } catch (error) {
       console.error('Failed to add to cart:', error);
+      alert('Failed to add product to cart. Please try again.');
+    } finally {
+      setAddingToCart(false);
     }
   };
 
   const handleAddToWishlist = async (product) => {
     try {
-      // Call the parent handler if provided
       if (onAddToWishlist) {
         await onAddToWishlist(product);
       } else {
         console.log('Add to wishlist functionality not implemented');
-        // You can implement wishlist functionality here
       }
     } catch (error) {
       console.error('Failed to add to wishlist:', error);
@@ -86,7 +91,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
   return (
     <div className="product-item">
       <div className="product-image">
-        {/* Product badges */}
+        {}
         <div className="product-badges">
           {hasDiscount && (
             <span className="badge-sale">
@@ -99,8 +104,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             <span className="badge-out-of-stock">Out of Stock</span>
           )}
         </div>
-
-        {/* Product image */}
+        {}
         <img
           src={imageUrl}
           alt={name}
@@ -110,8 +114,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             e.target.src = '/assets/img/product/placeholder.jpg';
           }}
         />
-
-        {/* Product actions */}
+        {}
         <div className="product-actions">
           <button
             className="action-btn wishlist-btn"
@@ -134,28 +137,34 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             <i className="bi bi-zoom-in"></i>
           </button>
         </div>
-
-        {/* Add to cart button */}
+        {}
         <button
           className={`cart-btn ${stock_status !== 'in_stock' ? 'disabled' : ''}`}
           onClick={() => handleAddToCart(product)}
-          disabled={stock_status !== 'in_stock'}
+          disabled={stock_status !== 'in_stock' || addingToCart || cartLoading}
         >
-          {stock_status === 'in_stock' ? 'Add to Cart' : 'Out of Stock'}
+          {addingToCart ? (
+            <>
+              <span className="spinner-border spinner-border-sm me-2"></span>
+              Adding...
+            </>
+          ) : stock_status === 'in_stock' ? (
+            'Add to Cart'
+          ) : (
+            'Out of Stock'
+          )}
         </button>
       </div>
       <div className="product-info">
-        {/* Product category */}
+        {}
         <div className="product-category">
           {is_featured ? 'Featured' : is_bestseller ? 'Best Seller' : 'Premium'}
         </div>
-
-        {/* Product name */}
+        {}
         <h4 className="product-name">
           <a href={`/product/${slug}`}>{name}</a>
         </h4>
-
-        {/* Product rating */}
+        {}
         <div className="product-rating">
           <div className="stars">
             <i className="bi bi-star-fill"></i>
@@ -166,8 +175,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           </div>
           <span className="rating-count">(24)</span>
         </div>
-
-        {/* Product price */}
+        {}
         <div className="product-price">
           {hasDiscount ? (
             <>
@@ -178,8 +186,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             <span className="current-price">{formatCurrency(base_price)}</span>
           )}
         </div>
-
-        {/* Color swatches */}
+        {}
         <div className="color-swatches">
           <span className="swatch active" style={{ backgroundColor: '#2563eb' }}></span>
           <span className="swatch" style={{ backgroundColor: '#059669' }}></span>

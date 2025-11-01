@@ -17,6 +17,9 @@ const MainHeader = () => {
     }
   };
 
+  // Calculate total items in cart
+  const totalCartItems = cart?.total_items || cart?.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0;
+
   return (
     <div className="main-header">
       <div className="container-fluid container-xl">
@@ -107,9 +110,9 @@ const MainHeader = () => {
 
             <Link to="/cart" className="header-action-btn position-relative">
               <i className="bi bi-cart3"></i>
-              {!cartLoading && cart.total_items > 0 && (
+              {!cartLoading && totalCartItems > 0 && (
                 <span className="badge bg-primary position-absolute top-0 start-100 translate-middle">
-                  {cart.total_items}
+                  {totalCartItems}
                 </span>
               )}
             </Link>

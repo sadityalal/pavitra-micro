@@ -14,7 +14,6 @@ const Hero = () => {
       console.log('Adding product to cart:', product.id);
       await addToCart(product.id, 1);
       console.log('Product added to cart successfully:', product.name);
-      // Show success message
       alert(`${product.name} added to cart!`);
     } catch (error) {
       console.error('Failed to add to cart:', error);
@@ -28,6 +27,9 @@ const Hero = () => {
       searchInput.focus();
     }
   };
+
+  // Calculate total items in cart
+  const totalCartItems = cart?.total_items || cart?.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0;
 
   if (productsLoading) {
     return (
@@ -188,9 +190,9 @@ const Hero = () => {
               data-aos-delay="600"
             >
               <i className="bi bi-cart3"></i>
-              {!cartLoading && cart.total_items > 0 && (
+              {!cartLoading && totalCartItems > 0 && (
                 <span className="notification-dot position-absolute top-0 start-100 translate-middle badge bg-primary rounded-pill">
-                  {cart.total_items}
+                  {totalCartItems}
                 </span>
               )}
             </Link>
