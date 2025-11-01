@@ -35,10 +35,10 @@ const ProductCards = () => {
                 {featuredItems.map((product) => (
                   <div key={product.id} className="product-card">
                     <div className="product-image">
-                      <img 
-                        src={product.main_image_url || '/assets/img/product/placeholder.jpg'} 
-                        alt={product.name} 
-                        className="img-fluid" 
+                      <img
+                        src={product.main_image_url || '/assets/img/product/placeholder.jpg'}
+                        alt={product.name}
+                        className="img-fluid"
                       />
                     </div>
                     <div className="product-info">
@@ -65,10 +65,10 @@ const ProductCards = () => {
                 {trendingItems.map((product) => (
                   <div key={product.id} className="product-card">
                     <div className="product-image">
-                      <img 
-                        src={product.main_image_url || '/assets/img/product/placeholder.jpg'} 
-                        alt={product.name} 
-                        className="img-fluid" 
+                      <img
+                        src={product.main_image_url || '/assets/img/product/placeholder.jpg'}
+                        alt={product.name}
+                        className="img-fluid"
                       />
                     </div>
                     <div className="product-info">
@@ -95,10 +95,10 @@ const ProductCards = () => {
                 {bestSellerItems.map((product) => (
                   <div key={product.id} className="product-card">
                     <div className="product-image">
-                      <img 
-                        src={product.main_image_url || '/assets/img/product/placeholder.jpg'} 
-                        alt={product.name} 
-                        className="img-fluid" 
+                      <img
+                        src={product.main_image_url || '/assets/img/product/placeholder.jpg'}
+                        alt={product.name}
+                        className="img-fluid"
                       />
                     </div>
                     <div className="product-info">

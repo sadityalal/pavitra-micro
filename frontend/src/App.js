@@ -6,6 +6,7 @@ import { SettingsProvider } from './contexts/SettingsContext.js';
 import Layout from './components/layout/Layout.js';
 import HomePage from './pages/HomePage.js';
 import AuthPage from './pages/AuthPage.js';
+import CartPage from './pages/CartPage.js';
 
 function App() {
   useEffect(() => {
@@ -255,7 +256,7 @@ function App() {
               {/* <Route path="/products" element={<ProductsPage />} /> */}
               {/* <Route path="/category/:id" element={<CategoryPage />} /> */}
               {/* <Route path="/product/:slug" element={<ProductDetailPage />} /> */}
-              {/* <Route path="/cart" element={<CartPage />} /> */}
+              <Route path="/cart" element={<CartPage />} />
               {/* <Route path="/checkout" element={<CheckoutPage />} /> */}
               {/* <Route path="/account" element={<AccountPage />} /> */}
               <Route path="/auth" element={<AuthPage />} />

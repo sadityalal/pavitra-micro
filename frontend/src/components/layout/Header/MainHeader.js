@@ -1,11 +1,13 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { useSettings } from '../../../contexts/SettingsContext';
 import { useAuth } from '../../../contexts/AuthContext';
-import { Link } from 'react-router-dom';
+import { useCart } from '../../../hooks/useCart';
 
 const MainHeader = () => {
   const { frontendSettings } = useSettings();
   const { isAuthenticated, user, logout } = useAuth();
+  const { cart, loading: cartLoading } = useCart();
 
   const handleLogout = async () => {
     try {
@@ -19,12 +21,10 @@ const MainHeader = () => {
     <div className="main-header">
       <div className="container-fluid container-xl">
         <div className="d-flex py-3 align-items-center justify-content-between">
-          {/* Logo */}
-          <a href="/" className="logo d-flex align-items-center">
+          <Link to="/" className="logo d-flex align-items-center">
             <h1 className="sitename">{frontendSettings.site_name || 'Pavitra Trading'}</h1>
-          </a>
+          </Link>
 
-          {/* Search Form */}
           <form className="search-form desktop-search-form">
             <div className="input-group">
               <input type="text" className="form-control" placeholder="Search for products" />
@@ -34,43 +34,39 @@ const MainHeader = () => {
             </div>
           </form>
 
-          {/* Header Actions */}
           <div className="header-actions d-flex align-items-center justify-content-end">
-            {/* Mobile Search Toggle */}
             <button className="header-action-btn mobile-search-toggle d-xl-none" type="button" data-bs-toggle="collapse" data-bs-target="#mobileSearch" aria-expanded="false" aria-controls="mobileSearch">
               <i className="bi bi-search"></i>
             </button>
 
-            {/* User Account Dropdown */}
             <div className="dropdown account-dropdown">
               <button className="header-action-btn" data-bs-toggle="dropdown">
                 <i className="bi bi-person"></i>
               </button>
               <div className="dropdown-menu">
                 {isAuthenticated ? (
-                  /* Logged In State - Show User Menu */
                   <>
                     <div className="dropdown-header">
                       <h6>Welcome, {user?.first_name || 'User'}!</h6>
                       <p className="mb-0 text-muted">{user?.email}</p>
                     </div>
                     <div className="dropdown-body">
-                      <a className="dropdown-item d-flex align-items-center" href="/account">
+                      <Link className="dropdown-item d-flex align-items-center" to="/account">
                         <i className="bi bi-person-circle me-2"></i>
                         <span>My Profile</span>
-                      </a>
-                      <a className="dropdown-item d-flex align-items-center" href="/orders">
+                      </Link>
+                      <Link className="dropdown-item d-flex align-items-center" to="/orders">
                         <i className="bi bi-bag-check me-2"></i>
                         <span>My Orders</span>
-                      </a>
-                      <a className="dropdown-item d-flex align-items-center" href="/wishlist">
+                      </Link>
+                      <Link className="dropdown-item d-flex align-items-center" to="/wishlist">
                         <i className="bi bi-heart me-2"></i>
                         <span>My Wishlist</span>
-                      </a>
-                      <a className="dropdown-item d-flex align-items-center" href="/settings">
+                      </Link>
+                      <Link className="dropdown-item d-flex align-items-center" to="/settings">
                         <i className="bi bi-gear me-2"></i>
                         <span>Settings</span>
-                      </a>
+                      </Link>
                     </div>
                     <div className="dropdown-footer">
                       <button className="btn btn-outline-danger w-100" onClick={handleLogout}>
@@ -80,7 +76,6 @@ const MainHeader = () => {
                     </div>
                   </>
                 ) : (
-                  /* Logged Out State - Show Login/Register */
                   <>
                     <div className="dropdown-header">
                       <h6>Welcome to <span className="sitename">{frontendSettings.site_name || 'Pavitra Trading'}</span></h6>
@@ -105,19 +100,20 @@ const MainHeader = () => {
               </div>
             </div>
 
-            {/* Wishlist */}
-            <a href="/wishlist" className="header-action-btn d-none d-md-block">
+            <Link to="/wishlist" className="header-action-btn d-none d-md-block">
               <i className="bi bi-heart"></i>
               <span className="badge">0</span>
-            </a>
+            </Link>
 
-            {/* Cart */}
-            <a href="/cart" className="header-action-btn">
+            <Link to="/cart" className="header-action-btn position-relative">
               <i className="bi bi-cart3"></i>
-              <span className="badge">3</span>
-            </a>
+              {!cartLoading && cart.total_items > 0 && (
+                <span className="badge bg-primary position-absolute top-0 start-100 translate-middle">
+                  {cart.total_items}
+                </span>
+              )}
+            </Link>
 
-            {/* Mobile Nav Toggle */}
             <i className="mobile-nav-toggle d-xl-none bi bi-list me-0"></i>
           </div>
         </div>

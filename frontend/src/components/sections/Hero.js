@@ -2,28 +2,34 @@ import React from 'react';
 import { useProducts } from '../../hooks/useProducts';
 import { useSettings } from '../../contexts/SettingsContext';
 import { useCart } from '../../hooks/useCart';
+import { Link } from 'react-router-dom';
 
 const Hero = () => {
-  const { products: featuredProducts, loading } = useProducts('featured');
+  const { products: featuredProducts, loading: productsLoading } = useProducts('featured');
   const { frontendSettings } = useSettings();
-  const { addToCart } = useCart();
+  const { cart, loading: cartLoading, addToCart } = useCart();
 
   const handleAddToCart = async (product) => {
     try {
+      console.log('Adding product to cart:', product.id);
       await addToCart(product.id, 1);
-      console.log('Product added to cart:', product.name);
-      // You can add a toast notification here later
+      console.log('Product added to cart successfully:', product.name);
+      // Show success message
+      alert(`${product.name} added to cart!`);
     } catch (error) {
       console.error('Failed to add to cart:', error);
-      // You can add error handling/notification here
+      alert('Failed to add product to cart. Please try again.');
     }
   };
 
   const toggleSearch = () => {
-    console.log('Toggle search');
+    const searchInput = document.querySelector('.search-form input');
+    if (searchInput) {
+      searchInput.focus();
+    }
   };
 
-  if (loading) {
+  if (productsLoading) {
     return (
       <section id="hero" className="hero section">
         <div className="container text-center py-5">
@@ -38,6 +44,20 @@ const Hero = () => {
   const mainProduct = featuredProducts[0];
   const secondaryProducts = featuredProducts.slice(1, 3);
 
+  const getImageUrl = (imagePath) => {
+    if (!imagePath || imagePath === 'null' || imagePath === 'undefined') {
+      return '/assets/img/product/placeholder.jpg';
+    }
+    if (imagePath.startsWith('http')) {
+      return imagePath;
+    }
+    if (imagePath.startsWith('/uploads/')) {
+      const backendUrl = process.env.REACT_APP_PRODUCT_URL || 'http://localhost:8002';
+      return `${backendUrl}${imagePath}`;
+    }
+    return imagePath;
+  };
+
   return (
     <section id="hero" className="hero section">
       <div className="hero-container">
@@ -49,8 +69,8 @@ const Hero = () => {
               From electronics to fashion, find everything you need with exclusive deals and fast shipping.
             </p>
             <div className="hero-actions" data-aos="fade-up" data-aos-delay="200">
-              <a href="/products" className="btn-primary">Shop Now</a>
-              <a href="/products?featured=true" className="btn-secondary">Featured Products</a>
+              <Link to="/products" className="btn-primary">Shop Now</Link>
+              <Link to="/products?featured=true" className="btn-secondary">Featured Products</Link>
             </div>
             <div className="features-list" data-aos="fade-up" data-aos-delay="300">
               <div className="feature-item">
@@ -73,7 +93,7 @@ const Hero = () => {
             {mainProduct ? (
               <div className="product-card featured">
                 <img
-                  src={mainProduct.main_image_url || '/assets/img/product/placeholder.jpg'}
+                  src={getImageUrl(mainProduct.main_image_url)}
                   alt={mainProduct.name}
                   className="img-fluid"
                   onError={(e) => {
@@ -90,13 +110,22 @@ const Hero = () => {
                     )}
                   </div>
                   <button
-                      className="btn btn-dark"
-                      onClick={() => handleAddToCart(mainProduct)}
-                      disabled={mainProduct.stock_status !== 'in_stock'}
-                    >
-                      <i className="bi bi-cart-plus me-2"></i>
-                      {mainProduct.stock_status === 'in_stock' ? 'Add to Cart' : 'Out of Stock'}
-                    </button>
+                    className="btn btn-dark"
+                    onClick={() => handleAddToCart(mainProduct)}
+                    disabled={mainProduct.stock_status !== 'in_stock' || cartLoading}
+                  >
+                    {cartLoading ? (
+                      <>
+                        <span className="spinner-border spinner-border-sm me-2"></span>
+                        Adding...
+                      </>
+                    ) : (
+                      <>
+                        <i className="bi bi-cart-plus me-2"></i>
+                        {mainProduct.stock_status === 'in_stock' ? 'Add to Cart' : 'Out of Stock'}
+                      </>
+                    )}
+                  </button>
                 </div>
               </div>
             ) : (
@@ -108,10 +137,10 @@ const Hero = () => {
                   <div className="price">
                     <span className="sale-price">Explore Now</span>
                   </div>
-                  <button className="btn btn-dark" onClick={() => window.location.href = '/products'}>
-                      <i className="bi bi-cart-plus me-2"></i>
-                      Shop Now
-                    </button>
+                  <Link to="/products" className="btn btn-dark">
+                    <i className="bi bi-cart-plus me-2"></i>
+                    Shop Now
+                  </Link>
                 </div>
               </div>
             )}
@@ -126,7 +155,7 @@ const Hero = () => {
                   style={{ cursor: 'pointer' }}
                 >
                   <img
-                    src={product.main_image_url || '/assets/img/product/placeholder.jpg'}
+                    src={getImageUrl(product.main_image_url)}
                     alt={product.name}
                     className="img-fluid"
                     onError={(e) => {
@@ -136,7 +165,6 @@ const Hero = () => {
                   <span className="mini-price">{frontendSettings.currency_symbol}{product.base_price}</span>
                 </div>
               ))}
-              {/* Add placeholder products if needed */}
               {Array.from({ length: 2 - secondaryProducts.length }).map((_, index) => (
                 <div
                   key={`placeholder-${index}`}
@@ -153,25 +181,27 @@ const Hero = () => {
             </div>
           </div>
           <div className="floating-elements">
-            <div
-              className="floating-icon cart"
+            <Link
+              to="/cart"
+              className="floating-icon cart position-relative"
               data-aos="fade-up"
               data-aos-delay="600"
-              style={{ cursor: 'pointer' }}
-              onClick={() => window.location.href = '/cart'}
             >
               <i className="bi bi-cart3"></i>
-              <span className="notification-dot">0</span>
-            </div>
-            <div
+              {!cartLoading && cart.total_items > 0 && (
+                <span className="notification-dot position-absolute top-0 start-100 translate-middle badge bg-primary rounded-pill">
+                  {cart.total_items}
+                </span>
+              )}
+            </Link>
+            <Link
+              to="/wishlist"
               className="floating-icon wishlist"
               data-aos="fade-up"
               data-aos-delay="700"
-              style={{ cursor: 'pointer' }}
-              onClick={() => window.location.href = '/account?tab=wishlist'}
             >
               <i className="bi bi-heart"></i>
-            </div>
+            </Link>
             <div
               className="floating-icon search"
               data-aos="fade-up"
