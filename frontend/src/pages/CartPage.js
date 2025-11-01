@@ -13,6 +13,7 @@ const CartPage = () => {
       await updateCartItem(cartItemId, newQuantity);
     } catch (error) {
       console.error('Failed to update quantity:', error);
+      alert(error.message || 'Failed to update quantity');
     }
   };
 
@@ -21,6 +22,7 @@ const CartPage = () => {
       await removeFromCart(cartItemId);
     } catch (error) {
       console.error('Failed to remove item:', error);
+      alert(error.message || 'Failed to remove item from cart');
     }
   };
 
@@ -30,6 +32,7 @@ const CartPage = () => {
         await clearCart();
       } catch (error) {
         console.error('Failed to clear cart:', error);
+        alert(error.message || 'Failed to clear cart');
       }
     }
   };
@@ -53,7 +56,6 @@ const CartPage = () => {
           <h1 className="mb-4">Shopping Cart</h1>
         </div>
       </div>
-
       {cart.items.length === 0 ? (
         <div className="text-center py-5">
           <i className="bi bi-cart-x display-1 text-muted"></i>
@@ -96,7 +98,7 @@ const CartPage = () => {
                       </div>
                       <div className="col-md-2">
                         <span className="fw-bold">
-                          {frontendSettings.currency_symbol}{item.unit_price}
+                          {frontendSettings.currency_symbol}{item.product_price || item.unit_price}
                         </span>
                       </div>
                       <div className="col-md-2">
@@ -127,7 +129,7 @@ const CartPage = () => {
                       </div>
                       <div className="col-md-2">
                         <span className="fw-bold">
-                          {frontendSettings.currency_symbol}{item.total_price}
+                          {frontendSettings.currency_symbol}{item.total_price || (item.product_price * item.quantity)}
                         </span>
                         <button
                           className="btn btn-outline-danger btn-sm ms-2"
@@ -142,7 +144,6 @@ const CartPage = () => {
               </div>
             </div>
           </div>
-
           <div className="col-lg-4">
             <div className="card">
               <div className="card-header">
@@ -151,12 +152,12 @@ const CartPage = () => {
               <div className="card-body">
                 <div className="d-flex justify-content-between mb-2">
                   <span>Subtotal:</span>
-                  <span>{frontendSettings.currency_symbol}{cart.total}</span>
+                  <span>{frontendSettings.currency_symbol}{cart.subtotal || cart.total}</span>
                 </div>
                 <div className="d-flex justify-content-between mb-2">
                   <span>Shipping:</span>
                   <span className="text-success">
-                    {cart.total >= frontendSettings.free_shipping_min_amount
+                    {cart.subtotal >= frontendSettings.free_shipping_min_amount
                       ? 'FREE'
                       : `Calculated at checkout`
                     }
@@ -167,7 +168,6 @@ const CartPage = () => {
                   <strong>Total:</strong>
                   <strong>{frontendSettings.currency_symbol}{cart.total}</strong>
                 </div>
-
                 <Link to="/checkout" className="btn btn-primary w-100 mb-2">
                   Proceed to Checkout
                 </Link>

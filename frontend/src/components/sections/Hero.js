@@ -10,14 +10,28 @@ const Hero = () => {
   const { cart, loading: cartLoading, addToCart } = useCart();
 
   const handleAddToCart = async (product) => {
+    if (product.stock_status !== 'in_stock') {
+      alert('This product is out of stock');
+      return;
+    }
+
     try {
       console.log('Adding product to cart:', product.id);
       await addToCart(product.id, 1);
       console.log('Product added to cart successfully:', product.name);
-      alert(`${product.name} added to cart!`);
+
+      // Show success message
+      const event = new CustomEvent('showToast', {
+        detail: {
+          message: `${product.name} added to cart!`,
+          type: 'success'
+        }
+      });
+      document.dispatchEvent(event);
+
     } catch (error) {
       console.error('Failed to add to cart:', error);
-      alert('Failed to add product to cart. Please try again.');
+      alert(error.message || 'Failed to add product to cart. Please try again.');
     }
   };
 
@@ -28,7 +42,6 @@ const Hero = () => {
     }
   };
 
-  // Calculate total items in cart
   const totalCartItems = cart?.total_items || cart?.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0;
 
   if (productsLoading) {

@@ -4,12 +4,9 @@ import { cartService } from '../services/cartService';
 export const useCart = () => {
   const [cart, setCart] = useState({
     items: [],
-    total: 0,
-    total_items: 0,
     subtotal: 0,
-    shipping_cost: 0
+    total_items: 0
   });
-
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -20,18 +17,15 @@ export const useCart = () => {
       const cartData = await cartService.getCart();
       console.log('Fetched cart data:', cartData);
 
-      // Ensure cart data has proper structure
+      // Use the data exactly as it comes from backend
       setCart({
         items: cartData.items || [],
-        total: cartData.total || 0,
-        total_items: cartData.total_items || 0,
         subtotal: cartData.subtotal || 0,
-        shipping_cost: cartData.shipping_cost || 0
+        total_items: cartData.total_items || 0
       });
     } catch (error) {
       console.error('Error fetching cart:', error);
       setError(error.message);
-      // Don't reset cart on error to prevent UI flickering
     } finally {
       setLoading(false);
     }
@@ -41,13 +35,9 @@ export const useCart = () => {
     try {
       setLoading(true);
       setError(null);
-
       await cartService.addToCart(productId, quantity, variationId);
-
-      // Refresh cart after adding item
+      // Refresh cart after successful add
       await fetchCart();
-
-      return true;
     } catch (error) {
       console.error('Error adding to cart:', error);
       setError(error.message);
@@ -102,7 +92,6 @@ export const useCart = () => {
     }
   };
 
-  // Initialize cart on component mount
   useEffect(() => {
     fetchCart();
   }, []);

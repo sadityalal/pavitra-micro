@@ -17,8 +17,8 @@ const MainHeader = () => {
     }
   };
 
-  // Calculate total items in cart
-  const totalCartItems = cart?.total_items || cart?.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0;
+  // Use the total_items from backend response directly
+  const totalCartItems = cart?.total_items || 0;
 
   return (
     <div className="main-header">
@@ -38,7 +38,7 @@ const MainHeader = () => {
           </form>
 
           <div className="header-actions d-flex align-items-center justify-content-end">
-            <button className="header-action-btn mobile-search-toggle d-xl-none" type="button" data-bs-toggle="collapse" data-bs-target="#mobileSearch" aria-expanded="false" aria-controls="mobileSearch">
+            <button className="header-action-btn mobile-search-toggle d-xl-none" type="button">
               <i className="bi bi-search"></i>
             </button>
 
@@ -54,26 +54,12 @@ const MainHeader = () => {
                       <p className="mb-0 text-muted">{user?.email}</p>
                     </div>
                     <div className="dropdown-body">
-                      <Link className="dropdown-item d-flex align-items-center" to="/account">
-                        <i className="bi bi-person-circle me-2"></i>
-                        <span>My Profile</span>
-                      </Link>
-                      <Link className="dropdown-item d-flex align-items-center" to="/orders">
-                        <i className="bi bi-bag-check me-2"></i>
-                        <span>My Orders</span>
-                      </Link>
-                      <Link className="dropdown-item d-flex align-items-center" to="/wishlist">
-                        <i className="bi bi-heart me-2"></i>
-                        <span>My Wishlist</span>
-                      </Link>
-                      <Link className="dropdown-item d-flex align-items-center" to="/settings">
-                        <i className="bi bi-gear me-2"></i>
-                        <span>Settings</span>
-                      </Link>
+                      <Link className="dropdown-item" to="/account">My Profile</Link>
+                      <Link className="dropdown-item" to="/orders">My Orders</Link>
+                      <Link className="dropdown-item" to="/wishlist">My Wishlist</Link>
                     </div>
                     <div className="dropdown-footer">
                       <button className="btn btn-outline-danger w-100" onClick={handleLogout}>
-                        <i className="bi bi-box-arrow-right me-2"></i>
                         Logout
                       </button>
                     </div>
@@ -81,22 +67,12 @@ const MainHeader = () => {
                 ) : (
                   <>
                     <div className="dropdown-header">
-                      <h6>Welcome to <span className="sitename">{frontendSettings.site_name || 'Pavitra Trading'}</span></h6>
-                      <p className="mb-0">Access account &amp; manage orders</p>
+                      <h6>Welcome</h6>
+                      <p className="mb-0">Access account & manage orders</p>
                     </div>
                     <div className="dropdown-body">
-                      <Link className="dropdown-item d-flex align-items-center" to="/auth?form=login">
-                        <i className="bi bi-box-arrow-in-right me-2"></i>
-                        <span>Sign In</span>
-                      </Link>
-                      <Link className="dropdown-item d-flex align-items-center" to="/auth?form=register">
-                        <i className="bi bi-person-plus me-2"></i>
-                        <span>Create Account</span>
-                      </Link>
-                    </div>
-                    <div className="dropdown-footer">
-                      <Link to="/auth?form=login" className="btn btn-dark w-100 mb-2">Sign In</Link>
-                      <Link to="/auth?form=register" className="btn btn-outline-dark w-100">Create Account</Link>
+                      <Link className="dropdown-item" to="/auth?form=login">Sign In</Link>
+                      <Link className="dropdown-item" to="/auth?form=register">Create Account</Link>
                     </div>
                   </>
                 )}
@@ -105,19 +81,16 @@ const MainHeader = () => {
 
             <Link to="/wishlist" className="header-action-btn d-none d-md-block">
               <i className="bi bi-heart"></i>
-              <span className="badge">0</span>
             </Link>
 
             <Link to="/cart" className="header-action-btn position-relative">
               <i className="bi bi-cart3"></i>
               {!cartLoading && totalCartItems > 0 && (
                 <span className="badge bg-primary position-absolute top-0 start-100 translate-middle">
-                  {totalCartItems}
+                  {totalCartItems > 99 ? '99+' : totalCartItems}
                 </span>
               )}
             </Link>
-
-            <i className="mobile-nav-toggle d-xl-none bi bi-list me-0"></i>
           </div>
         </div>
       </div>

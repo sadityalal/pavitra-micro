@@ -1,18 +1,25 @@
 import React, { useState } from 'react';
-import { formatCurrency, getStockStatusBadge, calculateSavings } from '../../utils/helpers';
+import { formatCurrency } from '../../utils/helpers';
 import { useCart } from '../../hooks/useCart';
 
 const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false }) => {
-  const { addToCart, loading: cartLoading } = useCart();
+  const { addToCart } = useCart();
   const [addingToCart, setAddingToCart] = useState(false);
 
   const handleAddToCart = async (product) => {
-    if (product.stock_status !== 'in_stock') return;
+    if (product.stock_status !== 'in_stock') {
+      alert('This product is out of stock');
+      return;
+    }
 
     try {
       setAddingToCart(true);
+      console.log('Attempting to add product to cart:', product.id);
+
       await addToCart(product.id, 1);
-      console.log('Product added to cart:', product.name);
+      console.log('Product added to cart successfully');
+
+      alert(`${product.name} added to cart!`);
 
       if (onAddToCart) {
         onAddToCart(product);
@@ -25,18 +32,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
     }
   };
 
-  const handleAddToWishlist = async (product) => {
-    try {
-      if (onAddToWishlist) {
-        await onAddToWishlist(product);
-      } else {
-        console.log('Add to wishlist functionality not implemented');
-      }
-    } catch (error) {
-      console.error('Failed to add to wishlist:', error);
-    }
-  };
-
+  // ... rest of the component remains the same
   if (loading) {
     return (
       <div className="product-item">
@@ -54,22 +50,16 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
   }
 
   const {
-    id,
     name,
     slug,
-    short_description,
     base_price,
     compare_price,
     main_image_url,
     stock_status,
-    stock_quantity,
     is_featured,
-    is_bestseller,
-    is_trending
+    is_bestseller
   } = product;
 
-  const stockInfo = getStockStatusBadge(stock_status);
-  const savings = calculateSavings(compare_price, base_price);
   const hasDiscount = compare_price && compare_price > base_price;
 
   const getImageUrl = (imagePath) => {
@@ -91,7 +81,6 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
   return (
     <div className="product-item">
       <div className="product-image">
-        {}
         <div className="product-badges">
           {hasDiscount && (
             <span className="badge-sale">
@@ -104,7 +93,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             <span className="badge-out-of-stock">Out of Stock</span>
           )}
         </div>
-        {}
+
         <img
           src={imageUrl}
           alt={name}
@@ -114,34 +103,23 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             e.target.src = '/assets/img/product/placeholder.jpg';
           }}
         />
-        {}
+
         <div className="product-actions">
-          <button
-            className="action-btn wishlist-btn"
-            onClick={() => handleAddToWishlist(product)}
-            title="Add to Wishlist"
-          >
+          <button className="action-btn wishlist-btn" title="Add to Wishlist">
             <i className="bi bi-heart"></i>
           </button>
-          <button
-            className="action-btn compare-btn"
-            title="Compare"
-          >
+          <button className="action-btn compare-btn" title="Compare">
             <i className="bi bi-arrow-left-right"></i>
           </button>
-          <button
-            className="action-btn quickview-btn"
-            title="Quick View"
-            onClick={() => window.location.href = `/product/${slug}`}
-          >
+          <button className="action-btn quickview-btn" title="Quick View">
             <i className="bi bi-zoom-in"></i>
           </button>
         </div>
-        {}
+
         <button
           className={`cart-btn ${stock_status !== 'in_stock' ? 'disabled' : ''}`}
           onClick={() => handleAddToCart(product)}
-          disabled={stock_status !== 'in_stock' || addingToCart || cartLoading}
+          disabled={stock_status !== 'in_stock' || addingToCart}
         >
           {addingToCart ? (
             <>
@@ -155,16 +133,16 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           )}
         </button>
       </div>
+
       <div className="product-info">
-        {}
         <div className="product-category">
           {is_featured ? 'Featured' : is_bestseller ? 'Best Seller' : 'Premium'}
         </div>
-        {}
+
         <h4 className="product-name">
           <a href={`/product/${slug}`}>{name}</a>
         </h4>
-        {}
+
         <div className="product-rating">
           <div className="stars">
             <i className="bi bi-star-fill"></i>
@@ -175,7 +153,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           </div>
           <span className="rating-count">(24)</span>
         </div>
-        {}
+
         <div className="product-price">
           {hasDiscount ? (
             <>
@@ -185,12 +163,6 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           ) : (
             <span className="current-price">{formatCurrency(base_price)}</span>
           )}
-        </div>
-        {}
-        <div className="color-swatches">
-          <span className="swatch active" style={{ backgroundColor: '#2563eb' }}></span>
-          <span className="swatch" style={{ backgroundColor: '#059669' }}></span>
-          <span className="swatch" style={{ backgroundColor: '#dc2626' }}></span>
         </div>
       </div>
     </div>
