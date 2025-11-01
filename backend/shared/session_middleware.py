@@ -38,15 +38,28 @@ class SessionMiddleware:
 
         async def session_send_wrapper(message):
             if message["type"] == "http.response.start":
-                if is_new_session and session:
+                # ✅ CRITICAL FIX: Set cookie for ALL new sessions (both guest and user)
+                # and also refresh cookie for existing guest sessions
+                should_set_cookie = (
+                        is_new_session or
+                        (session and session.session_type == SessionType.GUEST) or
+                        (session and not self._get_session_id(request))
+                )
+
+                if should_set_cookie and session:
                     headers = message.get("headers", [])
-                    # Ensure cookie is set for all origins that need it
-                    cookie_value = f"{self.session_cookie_name}={session_id}; Max-Age=86400; HttpOnly; SameSite=lax; Path=/"
-                    if not config.debug_mode:
-                        cookie_value += "; Secure"
+                    cookie_value = self._build_cookie_value(session_id)
+
+                    # Remove any existing session cookie to avoid duplicates
+                    headers = [header for header in headers
+                               if not (header[0] == b"set-cookie" and
+                                       self.session_cookie_name.encode() in header[1])]
+
                     headers.append([b"set-cookie", cookie_value.encode()])
                     message["headers"] = headers
-                    logger.info(f"✅ Set session cookie: {session_id}")
+                    logger.info(
+                        f"✅ Set session cookie: {session_id} (guest: {session.session_type == SessionType.GUEST})")
+
             await send(message)
 
         try:
@@ -56,17 +69,19 @@ class SessionMiddleware:
             await self.app(scope, receive, send)
 
     def _get_session_id(self, request: Request) -> Optional[str]:
-        # Check cookies first
         session_id = request.cookies.get(self.session_cookie_name)
         if session_id:
             return session_id
-
-        # Check Authorization header as fallback
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Session "):
             return auth_header[8:]
-
         return None
+
+    def _build_cookie_value(self, session_id: str) -> str:
+        cookie_value = f"{self.session_cookie_name}={session_id}; Max-Age=86400; HttpOnly; SameSite=lax; Path=/"
+        if not config.debug_mode:
+            cookie_value += "; Secure"
+        return cookie_value
 
     async def _create_new_session(self, request: Request) -> Optional[SessionData]:
         try:
@@ -74,7 +89,7 @@ class SessionMiddleware:
             user_id = None
             guest_id = str(uuid.uuid4())
 
-            # Check if we have an auth token
+            # ✅ FIX: Check for authenticated users first
             auth_header = request.headers.get("Authorization")
             if auth_header and auth_header.startswith("Bearer "):
                 from .auth_middleware import verify_token
@@ -84,12 +99,12 @@ class SessionMiddleware:
                     session_type = SessionType.USER
                     user_id = int(payload['sub'])
                     guest_id = None
-                    # Check for existing user session
                     existing_session = session_service.get_session_by_user_id(user_id)
                     if existing_session:
                         return existing_session
 
-            # Create session data
+            # ✅ FIX: Always create session for guest users
+            # This ensures anonymous users get sessions too
             session_data = {
                 'session_type': session_type,
                 'user_id': user_id,
@@ -98,14 +113,14 @@ class SessionMiddleware:
                 'user_agent': request.headers.get("user-agent", ""),
                 'cart_items': {}
             }
-
             session = session_service.create_session(session_data)
+
             if session:
                 logger.info(f"✅ Created new {session_type.value} session: {session.session_id}")
             else:
                 logger.error("❌ Failed to create session")
-
             return session
+
         except Exception as e:
             logger.error(f"❌ Failed to create new session: {e}")
             return None
