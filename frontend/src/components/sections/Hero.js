@@ -1,32 +1,58 @@
+// frontend/src/components/sections/Hero.js
 import React from 'react';
+import { useProducts } from '../../hooks/useProducts';
+import { useSettings } from '../../contexts/SettingsContext';
 
 const Hero = () => {
+  const { products: featuredProducts, loading } = useProducts('featured');
+  const { frontendSettings } = useSettings();
+
+  const toggleSearch = () => {
+    // Implement search toggle functionality
+    console.log('Toggle search');
+  };
+
+  if (loading) {
+    return (
+      <section id="hero" className="hero section">
+        <div className="container text-center py-5">
+          <div className="spinner-border" role="status">
+            <span className="visually-hidden">Loading...</span>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  const mainProduct = featuredProducts[0];
+  const secondaryProducts = featuredProducts.slice(1, 3);
+
   return (
     <section id="hero" className="hero section">
       <div className="hero-container">
         <div className="hero-content">
           <div className="content-wrapper" data-aos="fade-up" data-aos-delay="100">
-            <h1 className="hero-title">Discover Amazing Products</h1>
+            <h1 className="hero-title">Welcome to {frontendSettings.site_name || 'Pavitra Enterprises'}</h1>
             <p className="hero-description">
-              Explore our curated collection of premium items designed to enhance your lifestyle. 
-              From fashion to tech, find everything you need with exclusive deals and fast shipping.
+              Discover our curated collection of premium products designed to enhance your lifestyle. 
+              From electronics to fashion, find everything you need with exclusive deals and fast shipping.
             </p>
             <div className="hero-actions" data-aos="fade-up" data-aos-delay="200">
-              <a href="#products" className="btn-primary">Shop Now</a>
-              <a href="#categories" className="btn-secondary">Browse Categories</a>
+              <a href="/products" className="btn-primary">Shop Now</a>
+              <a href="/products?featured=true" className="btn-secondary">Featured Products</a>
             </div>
             <div className="features-list" data-aos="fade-up" data-aos-delay="300">
               <div className="feature-item">
                 <i className="bi bi-truck"></i>
-                <span>Free Shipping</span>
+                <span>Free Shipping Over {frontendSettings.currency_symbol}{frontendSettings.free_shipping_min_amount || '500'}</span>
               </div>
               <div className="feature-item">
-                <i className="bi bi-award"></i>
-                <span>Quality Guarantee</span>
+                <i className="bi bi-arrow-clockwise"></i>
+                <span>{frontendSettings.return_period_days || '10'}-Day Returns</span>
               </div>
               <div className="feature-item">
-                <i className="bi bi-headset"></i>
-                <span>24/7 Support</span>
+                <i className="bi bi-shield-check"></i>
+                <span>Secure Payment</span>
               </div>
             </div>
           </div>
@@ -34,39 +60,116 @@ const Hero = () => {
 
         <div className="hero-visuals">
           <div className="product-showcase" data-aos="fade-left" data-aos-delay="200">
-            <div className="product-card featured">
-              <img src="assets/img/product/product-2.webp" alt="Featured Product" className="img-fluid" />
-              <div className="product-badge">Best Seller</div>
-              <div className="product-info">
-                <h4>Premium Wireless Headphones</h4>
-                <div className="price">
-                  <span className="sale-price">$299</span>
-                  <span className="original-price">$399</span>
+            {mainProduct ? (
+              <div 
+                className="product-card featured" 
+                style={{ cursor: 'pointer' }} 
+                onClick={() => window.location.href = `/product/${mainProduct.slug}`}
+              >
+                <img 
+                  src={mainProduct.main_image_url || '/assets/img/product/placeholder.jpg'} 
+                  alt={mainProduct.name} 
+                  className="img-fluid" 
+                />
+                <div className="product-badge">Best Seller</div>
+                <div className="product-info">
+                  <h4>
+                    <a href={`/product/${mainProduct.slug}`} onClick={(e) => e.stopPropagation()}>
+                      {mainProduct.name}
+                    </a>
+                  </h4>
+                  <div className="price">
+                    <span className="sale-price">{frontendSettings.currency_symbol}{mainProduct.base_price}</span>
+                    {mainProduct.compare_price && mainProduct.compare_price > mainProduct.base_price && (
+                      <span className="original-price">{frontendSettings.currency_symbol}{mainProduct.compare_price}</span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
+            ) : (
+              <div 
+                className="product-card featured" 
+                style={{ cursor: 'pointer' }} 
+                onClick={() => window.location.href = '/products'}
+              >
+                <img src="/assets/img/product/placeholder.jpg" alt="Featured Product" className="img-fluid" />
+                <div className="product-badge">Coming Soon</div>
+                <div className="product-info">
+                  <h4>
+                    <a href="/products" onClick={(e) => e.stopPropagation()}>New Arrivals Coming Soon</a>
+                  </h4>
+                  <div className="price">
+                    <span className="sale-price">{frontendSettings.currency_symbol}0.00</span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div className="product-grid">
-              <div className="product-mini" data-aos="zoom-in" data-aos-delay="400">
-                <img src="assets/img/product/product-3.webp" alt="Product" className="img-fluid" />
-                <span className="mini-price">$89</span>
-              </div>
-              <div className="product-mini" data-aos="zoom-in" data-aos-delay="500">
-                <img src="assets/img/product/product-5.webp" alt="Product" className="img-fluid" />
-                <span className="mini-price">$149</span>
-              </div>
+              {secondaryProducts.map((product, index) => (
+                <div 
+                  key={product.id}
+                  className="product-mini" 
+                  data-aos="zoom-in" 
+                  data-aos-delay={400 + index * 100}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => window.location.href = `/product/${product.slug}`}
+                >
+                  <img 
+                    src={product.main_image_url || '/assets/img/product/placeholder.jpg'} 
+                    alt={product.name} 
+                    className="img-fluid" 
+                  />
+                  <span className="mini-price">{frontendSettings.currency_symbol}{product.base_price}</span>
+                </div>
+              ))}
+              
+              {/* Fill remaining spots if less than 2 products */}
+              {Array.from({ length: 2 - secondaryProducts.length }).map((_, index) => (
+                <div 
+                  key={`placeholder-${index}`}
+                  className="product-mini" 
+                  data-aos="zoom-in" 
+                  data-aos-delay={400 + (secondaryProducts.length + index) * 100}
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => window.location.href = '/products'}
+                >
+                  <img src="/assets/img/product/placeholder.jpg" alt="Product" className="img-fluid" />
+                  <span className="mini-price">{frontendSettings.currency_symbol}0.00</span>
+                </div>
+              ))}
             </div>
           </div>
 
           <div className="floating-elements">
-            <div className="floating-icon cart" data-aos="fade-up" data-aos-delay="600">
+            <div 
+              className="floating-icon cart" 
+              data-aos="fade-up" 
+              data-aos-delay="600" 
+              style={{ cursor: 'pointer' }} 
+              onClick={() => window.location.href = '/cart'}
+            >
               <i className="bi bi-cart3"></i>
-              <span className="notification-dot">3</span>
+              <span className="notification-dot">0</span>
             </div>
-            <div className="floating-icon wishlist" data-aos="fade-up" data-aos-delay="700">
+
+            <div 
+              className="floating-icon wishlist" 
+              data-aos="fade-up" 
+              data-aos-delay="700" 
+              style={{ cursor: 'pointer' }} 
+              onClick={() => window.location.href = '/account?tab=wishlist'}
+            >
               <i className="bi bi-heart"></i>
             </div>
-            <div className="floating-icon search" data-aos="fade-up" data-aos-delay="800">
+
+            <div 
+              className="floating-icon search" 
+              data-aos="fade-up" 
+              data-aos-delay="800" 
+              style={{ cursor: 'pointer' }} 
+              onClick={toggleSearch}
+            >
               <i className="bi bi-search"></i>
             </div>
           </div>

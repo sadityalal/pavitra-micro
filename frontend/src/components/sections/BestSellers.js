@@ -4,13 +4,12 @@ import { useProducts } from '../../hooks/useProducts';
 import ProductCard from '../common/ProductCard';
 
 const BestSellers = () => {
-  const { products, loading, error } = useProducts('best-sellers');
+  const { products: bestSellers, loading, error } = useProducts('best-sellers');
 
   const handleAddToCart = async (product) => {
     try {
-      // You'll need to implement cart service integration
       console.log('Adding to cart:', product);
-      // await cartService.addToCart(product.id, 1);
+      // TODO: Implement cart service integration
     } catch (error) {
       console.error('Failed to add to cart:', error);
     }
@@ -19,7 +18,7 @@ const BestSellers = () => {
   const handleAddToWishlist = async (product) => {
     try {
       console.log('Adding to wishlist:', product);
-      // await userService.addToWishlist(product.id);
+      // TODO: Implement wishlist service integration
     } catch (error) {
       console.error('Failed to add to wishlist:', error);
     }
@@ -65,15 +64,15 @@ const BestSellers = () => {
         <h2>Best Sellers</h2>
         <p>Discover our most popular products loved by customers</p>
       </div>
-      
+
       <div className="container" data-aos="fade-up" data-aos-delay="100">
-        {products.length === 0 ? (
+        {bestSellers.length === 0 ? (
           <div className="text-center py-5">
-            <p className="text-muted">No products available at the moment.</p>
+            <p className="text-muted">No best sellers available at the moment.</p>
           </div>
         ) : (
           <div className="row g-4">
-            {products.map((product) => (
+            {bestSellers.map((product) => (
               <div key={product.id} className="col-lg-3 col-md-6 col-sm-6">
                 <ProductCard
                   product={product}
