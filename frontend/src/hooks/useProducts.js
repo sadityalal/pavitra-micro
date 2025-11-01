@@ -1,7 +1,8 @@
+// frontend/src/hooks/useProducts.js
 import { useState, useEffect } from 'react';
 import { productService } from '../services/productService';
 
-export const useProducts = (type = 'featured') => {
+export const useProducts = (type = 'featured', options = {}) => {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -10,8 +11,9 @@ export const useProducts = (type = 'featured') => {
     const fetchProducts = async () => {
       try {
         setLoading(true);
-        let data;
+        setError(null);
         
+        let data;
         switch (type) {
           case 'featured':
             data = await productService.getFeaturedProducts();
@@ -19,46 +21,29 @@ export const useProducts = (type = 'featured') => {
           case 'best-sellers':
             data = await productService.getBestSellers();
             break;
+          case 'category':
+            data = await productService.getProductsByCategory(options.categoryId);
+            break;
+          case 'search':
+            data = await productService.searchProducts(options.query);
+            break;
           default:
             data = await productService.getFeaturedProducts();
         }
         
-        setProducts(data);
+        setProducts(Array.isArray(data) ? data : []);
       } catch (err) {
+        console.error('Error fetching products:', err);
         setError(err.message);
-        // Fallback to mock data if API fails
-        setProducts(getMockProducts());
+        // Fallback to empty array instead of mock data
+        setProducts([]);
       } finally {
         setLoading(false);
       }
     };
 
     fetchProducts();
-  }, [type]);
+  }, [type, options.categoryId, options.query]);
 
-  return { products, loading, error };
+  return { products, loading, error, refetch: () => fetchProducts() };
 };
-
-// Mock data fallback
-const getMockProducts = () => [
-  {
-    id: 1,
-    name: 'Premium Headphones',
-    price: 129.99,
-    image: 'product-1.webp',
-    rating: 4.5,
-    reviewCount: 24,
-    currency: 'INR',
-    currency_symbol: '₹'
-  },
-  {
-    id: 2,
-    name: 'Smart Watch',
-    price: 199.99,
-    image: 'product-2.webp',
-    rating: 4.8,
-    reviewCount: 38,
-    currency: 'INR',
-    currency_symbol: '₹'
-  }
-];

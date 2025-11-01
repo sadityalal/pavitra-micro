@@ -1,8 +1,9 @@
+// frontend/src/components/layout/Header/MainHeader.js
 import React from 'react';
-import { useSettingsContext } from '../../../contexts/SettingsContext.js';
+import { useSettings } from '../../../contexts/SettingsContext';
 
 const MainHeader = () => {
-  const { frontendSettings } = useSettingsContext();
+  const { frontendSettings } = useSettings();
 
   return (
     <div className="main-header">
@@ -10,10 +11,10 @@ const MainHeader = () => {
         <div className="d-flex py-3 align-items-center justify-content-between">
           {/* Logo */}
           <a href="/" className="logo d-flex align-items-center">
-            <h1 className="sitename">{frontendSettings?.site_name || 'Pavitra Trading'}</h1>
+            <h1 className="sitename">{frontendSettings.site_name || 'Pavitra Trading'}</h1>
           </a>
-
-          {/* Search */}
+          
+          {/* Search Form */}
           <form className="search-form desktop-search-form">
             <div className="input-group">
               <input type="text" className="form-control" placeholder="Search for products" />
@@ -22,22 +23,22 @@ const MainHeader = () => {
               </button>
             </div>
           </form>
-
-          {/* Actions */}
+          
+          {/* Header Actions */}
           <div className="header-actions d-flex align-items-center justify-content-end">
             {/* Mobile Search Toggle */}
             <button className="header-action-btn mobile-search-toggle d-xl-none" type="button" data-bs-toggle="collapse" data-bs-target="#mobileSearch" aria-expanded="false" aria-controls="mobileSearch">
               <i className="bi bi-search"></i>
             </button>
-
-            {/* Account */}
+            
+            {/* Account Dropdown */}
             <div className="dropdown account-dropdown">
               <button className="header-action-btn" data-bs-toggle="dropdown">
                 <i className="bi bi-person"></i>
               </button>
               <div className="dropdown-menu">
                 <div className="dropdown-header">
-                  <h6>Welcome to <span className="sitename">{frontendSettings?.site_name || 'Pavitra Trading'}</span></h6>
+                  <h6>Welcome to <span className="sitename">{frontendSettings.site_name || 'Pavitra Trading'}</span></h6>
                   <p className="mb-0">Access account &amp; manage orders</p>
                 </div>
                 <div className="dropdown-body">
@@ -64,20 +65,20 @@ const MainHeader = () => {
                 </div>
               </div>
             </div>
-
+            
             {/* Wishlist */}
             <a href="/account" className="header-action-btn d-none d-md-block">
               <i className="bi bi-heart"></i>
               <span className="badge">0</span>
             </a>
-
+            
             {/* Cart */}
             <a href="/cart" className="header-action-btn">
               <i className="bi bi-cart3"></i>
               <span className="badge">3</span>
             </a>
-
-            {/* Mobile Navigation Toggle */}
+            
+            {/* Mobile Nav Toggle */}
             <i className="mobile-nav-toggle d-xl-none bi bi-list me-0"></i>
           </div>
         </div>

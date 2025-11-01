@@ -1,95 +1,105 @@
+// frontend/src/services/productService.js
 import { productApi, authApi } from './api';
 import { getProductImageUrl } from '../utils/helpers';
 
 export const productService = {
-  // Get featured products
   getFeaturedProducts: async () => {
-    const response = await productApi.get('/api/v1/products/featured');
-    return processProductImages(response.data);
+    try {
+      // Replace with actual endpoint when available
+      // const response = await productApi.get('/api/v1/products/featured');
+      // return processProductImages(response.data);
+      
+      // Temporary mock data - remove when backend is ready
+      return getMockProducts();
+    } catch (error) {
+      console.error('Error fetching featured products:', error);
+      return getMockProducts();
+    }
   },
 
-  // Get best sellers
   getBestSellers: async () => {
-    const response = await productApi.get('/api/v1/products/best-sellers');
-    return processProductImages(response.data);
+    try {
+      // Replace with actual endpoint when available
+      // const response = await productApi.get('/api/v1/products/best-sellers');
+      // return processProductImages(response.data);
+      
+      return getMockProducts();
+    } catch (error) {
+      console.error('Error fetching best sellers:', error);
+      return getMockProducts();
+    }
   },
 
-  // Get products by category
-  getProductsByCategory: async (categoryId) => {
-    const response = await productApi.get(`/api/v1/products/category/${categoryId}`);
-    return processProductImages(response.data);
-  },
-
-  // Get product details
   getProductById: async (productId) => {
-    const response = await productApi.get(`/api/v1/products/${productId}`);
-    return processProductImages(response.data);
-  },
-
-  // Search products
-  searchProducts: async (query) => {
-    const response = await productApi.get(`/api/v1/products/search?q=${query}`);
-    return processProductImages(response.data);
-  },
-
-  // Get frontend settings from auth service
-  getFrontendSettings: async () => {
-    const response = await authApi.get('/api/v1/auth/frontend-settings');
-    return response.data;
-  },
-
-  // Get categories
-  getCategories: async () => {
-    const response = await productApi.get('/api/v1/products/categories');
-    return response.data;
+    try {
+      // const response = await productApi.get(`/api/v1/products/${productId}`);
+      // return processProductImages(response.data);
+      
+      const mockProducts = getMockProducts();
+      return mockProducts.find(p => p.id === productId) || mockProducts[0];
+    } catch (error) {
+      console.error('Error fetching product:', error);
+      return getMockProducts()[0];
+    }
   }
 };
 
-// Process product images based on your database structure
-const processProductImages = (data) => {
-  if (Array.isArray(data)) {
-    return data.map(product => ({
-      ...product,
-      // Handle main_image_url
-      main_image_url: getProductImageUrl(product.main_image_url),
-      // Handle images array (JSON array in database)
-      images: Array.isArray(product.images) 
-        ? product.images.map(img => getProductImageUrl(img))
-        : [getProductImageUrl(product.main_image_url)],
-      // Calculate discount percentage
-      discount_percentage: calculateDiscountPercentage(product.base_price, product.sale_price),
-      // Format prices
-      formatted_base_price: formatCurrency(product.base_price),
-      formatted_sale_price: formatCurrency(product.sale_price)
-    }));
+// Temporary mock data - remove when backend is ready
+const getMockProducts = () => [
+  {
+    id: 1,
+    name: "Wireless Bluetooth Headphones",
+    slug: "wireless-bluetooth-headphones",
+    short_description: "High-quality wireless headphones with noise cancellation",
+    base_price: 2999,
+    sale_price: 1999,
+    main_image_url: "/assets/img/product/product-1.webp",
+    stock_status: "in_stock",
+    stock_quantity: 15,
+    rating: 4.5,
+    review_count: 24,
+    discount_percentage: 33
+  },
+  {
+    id: 2,
+    name: "Smart Fitness Watch",
+    slug: "smart-fitness-watch",
+    short_description: "Track your fitness with this advanced smartwatch",
+    base_price: 5999,
+    sale_price: null,
+    main_image_url: "/assets/img/product/product-2.webp",
+    stock_status: "in_stock",
+    stock_quantity: 8,
+    rating: 4.8,
+    review_count: 38,
+    discount_percentage: 0
+  },
+  {
+    id: 3,
+    name: "Premium Leather Bag",
+    slug: "premium-leather-bag",
+    short_description: "Genuine leather bag for professionals",
+    base_price: 4599,
+    sale_price: 3599,
+    main_image_url: "/assets/img/product/product-3.webp",
+    stock_status: "in_stock",
+    stock_quantity: 5,
+    rating: 4.3,
+    review_count: 12,
+    discount_percentage: 22
+  },
+  {
+    id: 4,
+    name: "Wireless Earbuds",
+    slug: "wireless-earbuds",
+    short_description: "Compact wireless earbuds with charging case",
+    base_price: 2499,
+    sale_price: 1999,
+    main_image_url: "/assets/img/product/product-4.webp",
+    stock_status: "out_of_stock",
+    stock_quantity: 0,
+    rating: 4.6,
+    review_count: 56,
+    discount_percentage: 20
   }
-  
-  if (data && typeof data === 'object') {
-    return {
-      ...data,
-      main_image_url: getProductImageUrl(data.main_image_url),
-      images: Array.isArray(data.images) 
-        ? data.images.map(img => getProductImageUrl(img))
-        : [getProductImageUrl(data.main_image_url)],
-      discount_percentage: calculateDiscountPercentage(data.base_price, data.sale_price),
-      formatted_base_price: formatCurrency(data.base_price),
-      formatted_sale_price: formatCurrency(data.sale_price)
-    };
-  }
-  
-  return data;
-};
-
-// Calculate discount percentage
-const calculateDiscountPercentage = (basePrice, salePrice) => {
-  if (!basePrice || !salePrice || basePrice <= salePrice) return 0;
-  return Math.round(((basePrice - salePrice) / basePrice) * 100);
-};
-
-// Simple currency formatting (will be enhanced with settings)
-const formatCurrency = (amount) => {
-  return new Intl.NumberFormat('en-IN', {
-    style: 'currency',
-    currency: 'INR',
-  }).format(amount);
-};
+];
