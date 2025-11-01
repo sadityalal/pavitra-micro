@@ -169,7 +169,6 @@ async def register_user(
                 detail="Service is under maintenance. Registration is temporarily unavailable."
             )
 
-        # Use form data if provided, otherwise use UserCreate object
         if user_data:
             email = user_data.email
             phone = user_data.phone
@@ -180,8 +179,6 @@ async def register_user(
             country_id = user_data.country_id or 1
 
         logger.info(f"🔄 Processing registration for: {email or phone or username}")
-
-        # Sanitize inputs
         first_name = sanitize_input(first_name)
         last_name = sanitize_input(last_name)
 
@@ -215,7 +212,6 @@ async def register_user(
                 detail="Password must be at least 8 characters long"
             )
 
-        # Check for common passwords (basic security)
         common_passwords = ['password', '12345678', 'qwerty', 'admin', 'letmein']
         if password.lower() in common_passwords:
             raise HTTPException(
@@ -224,9 +220,7 @@ async def register_user(
             )
 
         logger.info(f"🔄 Processing registration with Argon2 hashing")
-
         with db.get_cursor() as cursor:
-            # Check for existing user
             if email:
                 cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
                 if cursor.fetchone():
@@ -253,8 +247,6 @@ async def register_user(
 
             password_hash = get_password_hash(password)
             logger.info(f"🔐 Password hashed successfully")
-
-            # Insert user
             cursor.execute("""
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
@@ -262,7 +254,6 @@ async def register_user(
             user_id = cursor.lastrowid
             logger.info(f"✅ User created with ID: {user_id}")
 
-            # Assign customer role by default
             cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
             role = cursor.fetchone()
             if role:
@@ -272,7 +263,6 @@ async def register_user(
                 """, (user_id, role['id'], user_id))
                 logger.info(f"✅ Customer role assigned to user {user_id}")
 
-            # Enable email notifications by default
             cursor.execute("""
                 INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
                 VALUES (%s, 'email', TRUE)
@@ -280,7 +270,6 @@ async def register_user(
             """, (user_id,))
             logger.info(f"✅ Email notifications enabled for user {user_id}")
 
-            # Get user roles and permissions
             cursor.execute("""
                 SELECT
                     ur.name as role_name,
@@ -291,6 +280,7 @@ async def register_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_id,))
+
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -299,11 +289,9 @@ async def register_user(
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
 
-            # Ensure customer role is present
             if not roles:
                 roles.add('customer')
 
-            # Create access token with secure expiration
             access_token = create_access_token(
                 data={
                     "sub": str(user_id),
@@ -314,62 +302,58 @@ async def register_user(
                 expires_delta=timedelta(hours=24)
             )
 
-            # Get user data for event publishing
-            cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-            user = cursor.fetchone()
-
-            # SESSION MANAGEMENT: Create user session
+            # SESSION MANAGEMENT: Create user session and transfer cart
             if request:
                 try:
-                    # Get current session (might be guest session)
                     current_session = get_session(request)
                     current_session_id = get_session_id(request)
 
-                    # Create new user session
+                    # Start with empty cart for the new user session
+                    user_cart_items = {}
+
+                    # If there's a guest session with cart items, transfer them to user session
+                    if current_session and current_session.session_type == SessionType.GUEST:
+                        if current_session.cart_items:
+                            user_cart_items = current_session.cart_items.copy()
+                            logger.info(
+                                f"✅ Migrated guest cart to user session during registration: {len(user_cart_items)} items")
+
+                    # Create new user session with the transferred cart
                     session_data = {
                         'session_type': SessionType.USER,
                         'user_id': user_id,
                         'guest_id': None,
                         'ip_address': request.client.host if request.client else 'unknown',
                         'user_agent': request.headers.get("user-agent"),
-                        'cart_items': current_session.cart_items if current_session else {}
+                        'cart_items': user_cart_items  # This preserves the cart
                     }
 
                     new_session = session_service.create_session(session_data)
 
                     if new_session and response:
-                        # Set session cookie
                         response.set_cookie(
                             key="session_id",
                             value=new_session.session_id,
-                            max_age=86400,  # 24 hours
+                            max_age=86400,
                             httponly=True,
                             secure=not config.debug_mode,
                             samesite="lax",
-                            path = "/"
+                            path="/"
                         )
-                        logger.info(f"✅ User session created for new user {user_id}")
+                        logger.info(
+                            f"✅ User session created for new user {user_id} with cart: {len(user_cart_items)} items")
 
-                    # Delete old guest session if it existed
+                    # Delete the old guest session after successful transfer
                     if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
-                        if current_session.cart_items:
-                            # Migrate guest cart to user session
-                            try:
-                                new_session.cart_items = current_session.cart_items
-                                session_service.update_session_data(new_session.session_id, {
-                                    "cart_items": current_session.cart_items
-                                })
-                                logger.info(f"✅ Migrated guest cart to user session during login")
-                            except Exception as e:
-                                logger.error(f"❌ Failed to migrate guest cart during login: {e}")
                         session_service.delete_session(current_session_id)
+                        logger.info(f"✅ Deleted guest session after successful registration migration")
 
                 except Exception as e:
                     logger.error(f"❌ Session creation failed during registration: {e}")
-                    # Continue without session - registration should still succeed
 
-            # Publish registration event in background
             if background_tasks:
+                cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+                user = cursor.fetchone()
                 background_tasks.add_task(
                     publish_user_registration_event,
                     user
@@ -519,18 +503,14 @@ async def login_user(
                 detail="Service is under maintenance. Please try again later."
             )
 
-        # FIX: Add rate limiting and brute force protection
         client_identifier = get_client_identifier(request)
-
-        # Check rate limit
         if not check_rate_limit(f"login:{client_identifier}", max_attempts=10,
-                                window_seconds=900):  # 10 attempts per 15 minutes
+                                window_seconds=900):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many login attempts. Please try again later."
             )
 
-        # Check brute force protection
         if not track_failed_login(client_identifier):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
@@ -553,6 +533,7 @@ async def login_user(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
+
             logger.info(f"✅ User found: {user['email']}, checking password...")
             if not verify_password(login_data.password, user['password_hash']):
                 logger.warning(f"❌ Invalid password for user: {user['email']}")
@@ -560,6 +541,7 @@ async def login_user(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
+
             if not user['is_active']:
                 logger.warning(f"❌ Account deactivated: {user['email']}")
                 raise HTTPException(
@@ -567,7 +549,6 @@ async def login_user(
                     detail="Account is deactivated"
                 )
 
-            # FIX: Reset failed login attempts on successful login
             reset_failed_login(client_identifier)
 
             cursor.execute("""
@@ -580,6 +561,7 @@ async def login_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user['id'],))
+
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -587,9 +569,11 @@ async def login_user(
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
+
             if not roles:
                 roles.add('customer')
                 logger.info(f"✅ Assigned default customer role to user {user['id']}")
+
             access_token = create_access_token(
                 data={
                     "sub": str(user['id']),
@@ -599,19 +583,35 @@ async def login_user(
                 },
                 expires_delta=timedelta(hours=24)
             )
+
+            # SESSION MANAGEMENT: Create user session and transfer cart
             if request:
                 try:
                     current_session = get_session(request)
                     current_session_id = get_session_id(request)
+
+                    # Start with empty cart for the new user session
+                    user_cart_items = {}
+
+                    # If there's a guest session with cart items, transfer them to user session
+                    if current_session and current_session.session_type == SessionType.GUEST:
+                        if current_session.cart_items:
+                            user_cart_items = current_session.cart_items.copy()
+                            logger.info(
+                                f"✅ Migrated guest cart to user session during login: {len(user_cart_items)} items")
+
+                    # Create new user session with the transferred cart
                     session_data = {
                         'session_type': SessionType.USER,
                         'user_id': user['id'],
                         'guest_id': None,
                         'ip_address': request.client.host if request.client else 'unknown',
                         'user_agent': request.headers.get("user-agent"),
-                        'cart_items': current_session.cart_items if current_session and current_session.cart_items else {}
+                        'cart_items': user_cart_items  # This preserves the cart
                     }
+
                     new_session = session_service.create_session(session_data)
+
                     if new_session and response:
                         response.set_cookie(
                             key="session_id",
@@ -620,25 +620,22 @@ async def login_user(
                             httponly=True,
                             secure=not config.debug_mode,
                             samesite="lax",
-                            path="/"  # FIX: Added path for proper cookie handling
+                            path="/"
                         )
-                        logger.info(f"✅ User session created for user {user['id']}")
+                        logger.info(
+                            f"✅ User session created for user {user['id']} with cart: {len(user_cart_items)} items")
+
+                    # Delete the old guest session after successful transfer
                     if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
-                        # FIX: Migrate guest cart to user session before deleting
-                        if current_session.cart_items:
-                            try:
-                                new_session.cart_items = current_session.cart_items
-                                session_service.update_session_data(new_session.session_id, {
-                                    "cart_items": current_session.cart_items
-                                })
-                                logger.info(f"✅ Migrated guest cart to user session during login")
-                            except Exception as e:
-                                logger.error(f"❌ Failed to migrate guest cart during login: {e}")
                         session_service.delete_session(current_session_id)
+                        logger.info(f"✅ Deleted guest session after successful login migration")
+
                 except Exception as e:
                     logger.error(f"❌ Session creation failed during login: {e}")
+
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
             logger.info(f"✅ Login successful for user: {user['email']}")
+
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -646,8 +643,8 @@ async def login_user(
                 user_roles=list(roles),
                 user_permissions=list(permissions)
             )
+
     except HTTPException:
-        # Don't reset failed attempts on HTTPException (invalid credentials)
         raise
     except Exception as e:
         logger.error(f"❌ Login failed: {str(e)}")
