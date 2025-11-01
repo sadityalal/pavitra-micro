@@ -7,19 +7,33 @@ export const authService = {
   },
 
   register: async (userData) => {
-    // Transform data to match backend expectations
-    const registerPayload = {
-      first_name: userData.first_name,
-      last_name: userData.last_name,
-      email: userData.email,
-      phone: userData.phone || null,
-      username: userData.username || null,
-      password: userData.password,
-      country_id: userData.country_id || 1,
-      auth_type: userData.email ? 'email' : 'mobile'
-    };
+    // Create FormData to match backend Form(...) expectations
+    const formData = new FormData();
 
-    const response = await authApi.post('/api/v1/auth/register', registerPayload);
+    // Add required fields
+    formData.append('first_name', userData.first_name.trim());
+    formData.append('last_name', userData.last_name.trim());
+    formData.append('password', userData.password);
+    formData.append('country_id', userData.country_id || 1);
+
+    // Add optional fields only if they exist
+    if (userData.email && userData.email.trim()) {
+      formData.append('email', userData.email.trim());
+    }
+    if (userData.phone && userData.phone.trim()) {
+      formData.append('phone', userData.phone.trim());
+    }
+    if (userData.username && userData.username.trim()) {
+      formData.append('username', userData.username.trim());
+    }
+
+    console.log('Sending registration form data:', Object.fromEntries(formData));
+
+    const response = await authApi.post('/api/v1/auth/register', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
     return response.data;
   },
 

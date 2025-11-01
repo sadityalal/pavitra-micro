@@ -21,11 +21,10 @@ export const AuthProvider = ({ children }) => {
       try {
         const token = localStorage.getItem('auth_token');
         if (token) {
-          // You might want to validate the token with the backend here
           setIsAuthenticated(true);
-          // Set basic user info from token (you might need to decode JWT)
+          // For now, set basic user info - you might want to fetch user profile
           setUser({
-            id: 'user_id_from_token', // This should be extracted from token
+            id: 'user_id', // This should come from token or API call
             email: 'user@example.com',
             roles: ['customer'],
             permissions: []
@@ -62,7 +61,15 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Login failed:', error);
-      throw error;
+
+      // Provide better error messages
+      if (error.response?.status === 401) {
+        throw new Error('Invalid credentials. Please check your email/username and password.');
+      } else if (error.response?.status === 422) {
+        throw new Error('Invalid input format. Please check your data.');
+      } else {
+        throw new Error('Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -83,6 +90,8 @@ export const AuthProvider = ({ children }) => {
   const register = async (userData) => {
     try {
       setLoading(true);
+      console.log('Registering user with data:', userData);
+
       const response = await authService.register(userData);
 
       if (response.access_token) {
@@ -102,7 +111,24 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Registration failed:', error);
-      throw error;
+
+      // Provide detailed error messages for 422 validation errors
+      if (error.response?.status === 422) {
+        const validationErrors = error.response.data.detail;
+        if (Array.isArray(validationErrors)) {
+          const errorMessages = validationErrors.map(err => err.msg || err).join(', ');
+          throw new Error(`Validation failed: ${errorMessages}`);
+        } else if (typeof validationErrors === 'string') {
+          throw new Error(validationErrors);
+        } else if (validationErrors && typeof validationErrors === 'object') {
+          const errorMessage = Object.values(validationErrors).flat().join(', ');
+          throw new Error(`Validation failed: ${errorMessage}`);
+        }
+      } else if (error.response?.data?.detail) {
+        throw new Error(error.response.data.detail);
+      } else {
+        throw new Error('Registration failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
