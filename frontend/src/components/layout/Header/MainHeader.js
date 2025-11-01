@@ -1,6 +1,7 @@
 import React from 'react';
 import { useSettings } from '../../../contexts/SettingsContext';
 import { useAuth } from '../../../contexts/AuthContext';
+import { Link } from 'react-router-dom';
 
 const MainHeader = () => {
   const { frontendSettings } = useSettings();
@@ -86,18 +87,18 @@ const MainHeader = () => {
                       <p className="mb-0">Access account &amp; manage orders</p>
                     </div>
                     <div className="dropdown-body">
-                      <a className="dropdown-item d-flex align-items-center" href="/login">
+                      <Link className="dropdown-item d-flex align-items-center" to="/auth?form=login">
                         <i className="bi bi-box-arrow-in-right me-2"></i>
                         <span>Sign In</span>
-                      </a>
-                      <a className="dropdown-item d-flex align-items-center" href="/register">
+                      </Link>
+                      <Link className="dropdown-item d-flex align-items-center" to="/auth?form=register">
                         <i className="bi bi-person-plus me-2"></i>
                         <span>Create Account</span>
-                      </a>
+                      </Link>
                     </div>
                     <div className="dropdown-footer">
-                      <a href="/auth" className="btn btn-dark w-100 mb-2">Sign In</a>
-                      <a href="/auth" className="btn btn-outline-dark w-100">Create Account</a>
+                      <Link to="/auth?form=login" className="btn btn-dark w-100 mb-2">Sign In</Link>
+                      <Link to="/auth?form=register" className="btn btn-outline-dark w-100">Create Account</Link>
                     </div>
                   </>
                 )}

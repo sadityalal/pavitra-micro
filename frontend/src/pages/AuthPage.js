@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 const AuthPage = () => {
   const [isActive, setIsActive] = useState(false);
@@ -31,6 +31,19 @@ const AuthPage = () => {
 
   const { login, register } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // Handle URL parameters to show correct form
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const formType = searchParams.get('form');
+
+    if (formType === 'register') {
+      setIsActive(true); // Show register form
+    } else if (formType === 'login') {
+      setIsActive(false); // Show login form
+    }
+  }, [location]);
 
   const togglePanel = () => {
     setIsActive(!isActive);
@@ -50,7 +63,7 @@ const AuthPage = () => {
     }));
   };
 
-  const togglePasswordVisibility = (formType, field) => {
+  const togglePasswordVisibility = (field) => {
     setShowPassword(prev => ({
       ...prev,
       [field]: !prev[field]
@@ -105,279 +118,152 @@ const AuthPage = () => {
   };
 
   return (
-    <section className="auth-section section">
-      <div className="container">
-        <div className={`auth-container ${isActive ? 'active' : ''}`}>
-          {/* Sign Up Form */}
-          <div className="auth-form register-form">
-            <div className="form-header">
-              <h3>Create Account</h3>
-              <p>Join us today and get started</p>
-            </div>
+    <div className={`auth-container ${isActive ? 'active' : ''}`} id="container">
+      {/* Sign Up Form */}
+      <div className="form-container sign-up">
+        <form onSubmit={handleRegister}>
+          <h1>Create Account</h1>
+          <div className="social-icons">
+            <a href="#" className="icon"><i className="fa-brands fa-google-plus-g"></i></a>
+            <a href="#" className="icon"><i className="fa-brands fa-facebook-f"></i></a>
+            <a href="#" className="icon"><i className="fa-brands fa-github"></i></a>
+            <a href="#" className="icon"><i className="fa-brands fa-linkedin-in"></i></a>
+          </div>
+          <span>or use your email for registration</span>
 
-            <form className="auth-form-content" onSubmit={handleRegister}>
-              <div className="social-icons mb-3">
-                <a href="#" className="social-icon">
-                  <i className="bi bi-google"></i>
-                </a>
-                <a href="#" className="social-icon">
-                  <i className="bi bi-facebook"></i>
-                </a>
-                <a href="#" className="social-icon">
-                  <i className="bi bi-github"></i>
-                </a>
-                <a href="#" className="social-icon">
-                  <i className="bi bi-linkedin"></i>
-                </a>
-              </div>
-
-              <div className="divider mb-3">
-                <span>or use your email for registration</span>
-              </div>
-
-              <div className="row mb-3">
-                <div className="col-md-6">
-                  <div className="input-group">
-                    <span className="input-icon">
-                      <i className="bi bi-person"></i>
-                    </span>
-                    <input
-                      type="text"
-                      className="form-control"
-                      placeholder="First Name"
-                      required
-                      value={registerData.first_name}
-                      onChange={(e) => handleRegisterChange('first_name', e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="col-md-6">
-                  <div className="input-group">
-                    <span className="input-icon">
-                      <i className="bi bi-person"></i>
-                    </span>
-                    <input
-                      type="text"
-                      className="form-control"
-                      placeholder="Last Name"
-                      required
-                      value={registerData.last_name}
-                      onChange={(e) => handleRegisterChange('last_name', e.target.value)}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="input-group mb-3">
-                <span className="input-icon">
-                  <i className="bi bi-envelope"></i>
-                </span>
-                <input
-                  type="email"
-                  className="form-control"
-                  placeholder="Email address"
-                  required
-                  value={registerData.email}
-                  onChange={(e) => handleRegisterChange('email', e.target.value)}
-                />
-              </div>
-
-              <div className="input-group mb-3">
-                <span className="input-icon">
-                  <i className="bi bi-phone"></i>
-                </span>
-                <input
-                  type="tel"
-                  className="form-control"
-                  placeholder="Phone number (optional)"
-                  value={registerData.phone}
-                  onChange={(e) => handleRegisterChange('phone', e.target.value)}
-                />
-              </div>
-
-              <div className="input-group mb-3">
-                <span className="input-icon">
-                  <i className="bi bi-person-badge"></i>
-                </span>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="Username (optional)"
-                  value={registerData.username}
-                  onChange={(e) => handleRegisterChange('username', e.target.value)}
-                />
-              </div>
-
-              <div className="input-group mb-3">
-                <span className="input-icon">
-                  <i className="bi bi-lock"></i>
-                </span>
-                <input
-                  type={showPassword.register ? "text" : "password"}
-                  className="form-control"
-                  placeholder="Create password"
-                  required
-                  value={registerData.password}
-                  onChange={(e) => handleRegisterChange('password', e.target.value)}
-                />
-                <span
-                  className="password-toggle"
-                  onClick={() => togglePasswordVisibility('register', 'register')}
-                >
-                  <i className={`bi ${showPassword.register ? 'bi-eye-slash' : 'bi-eye'}`}></i>
-                </span>
-              </div>
-
-              <div className="input-group mb-3">
-                <span className="input-icon">
-                  <i className="bi bi-lock-fill"></i>
-                </span>
-                <input
-                  type={showPassword.confirm ? "text" : "password"}
-                  className="form-control"
-                  placeholder="Confirm password"
-                  required
-                  value={registerData.confirm_password}
-                  onChange={(e) => handleRegisterChange('confirm_password', e.target.value)}
-                />
-                <span
-                  className="password-toggle"
-                  onClick={() => togglePasswordVisibility('register', 'confirm')}
-                >
-                  <i className={`bi ${showPassword.confirm ? 'bi-eye-slash' : 'bi-eye'}`}></i>
-                </span>
-              </div>
-
-              <div className="terms-check mb-4">
-                <input type="checkbox" id="termsRegister" required />
-                <label htmlFor="termsRegister">
-                  I agree to the <a href="/terms">Terms of Service</a> and <a href="/privacy">Privacy Policy</a>
-                </label>
-              </div>
-
-              <button
-                type="submit"
-                className="btn btn-primary w-100 mb-3"
-                disabled={loading}
-              >
-                {loading ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm me-2"></span>
-                    Creating Account...
-                  </>
-                ) : (
-                  'Create Account'
-                )}
-              </button>
-            </form>
+          <div className="name-fields">
+            <input
+              type="text"
+              placeholder="First Name"
+              value={registerData.first_name}
+              onChange={(e) => handleRegisterChange('first_name', e.target.value)}
+              required
+            />
+            <input
+              type="text"
+              placeholder="Last Name"
+              value={registerData.last_name}
+              onChange={(e) => handleRegisterChange('last_name', e.target.value)}
+              required
+            />
           </div>
 
-          {/* Sign In Form */}
-          <div className="auth-form login-form">
-            <div className="form-header">
-              <h3>Welcome Back</h3>
-              <p>Sign in to your account</p>
-            </div>
+          <input
+            type="email"
+            placeholder="Email"
+            value={registerData.email}
+            onChange={(e) => handleRegisterChange('email', e.target.value)}
+            required
+          />
+          <input
+            type="text"
+            placeholder="Phone (optional)"
+            value={registerData.phone}
+            onChange={(e) => handleRegisterChange('phone', e.target.value)}
+          />
+          <input
+            type="text"
+            placeholder="Username (optional)"
+            value={registerData.username}
+            onChange={(e) => handleRegisterChange('username', e.target.value)}
+          />
 
-            <form className="auth-form-content" onSubmit={handleLogin}>
-              <div className="social-icons mb-3">
-                <a href="#" className="social-icon">
-                  <i className="bi bi-google"></i>
-                </a>
-                <a href="#" className="social-icon">
-                  <i className="bi bi-facebook"></i>
-                </a>
-                <a href="#" className="social-icon">
-                  <i className="bi bi-github"></i>
-                </a>
-                <a href="#" className="social-icon">
-                  <i className="bi bi-linkedin"></i>
-                </a>
-              </div>
-
-              <div className="divider mb-3">
-                <span>or use your email and password</span>
-              </div>
-
-              <div className="input-group mb-3">
-                <span className="input-icon">
-                  <i className="bi bi-envelope"></i>
-                </span>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="Email, phone, or username"
-                  required
-                  value={loginData.login_id}
-                  onChange={(e) => handleLoginChange('login_id', e.target.value)}
-                />
-              </div>
-
-              <div className="input-group mb-3">
-                <span className="input-icon">
-                  <i className="bi bi-lock"></i>
-                </span>
-                <input
-                  type={showPassword.login ? "text" : "password"}
-                  className="form-control"
-                  placeholder="Password"
-                  required
-                  value={loginData.password}
-                  onChange={(e) => handleLoginChange('password', e.target.value)}
-                />
-                <span
-                  className="password-toggle"
-                  onClick={() => togglePasswordVisibility('login', 'login')}
-                >
-                  <i className={`bi ${showPassword.login ? 'bi-eye-slash' : 'bi-eye'}`}></i>
-                </span>
-              </div>
-
-              <div className="form-options mb-4">
-                <div className="remember-me">
-                  <input type="checkbox" id="rememberLogin" />
-                  <label htmlFor="rememberLogin">Remember me</label>
-                </div>
-                <a href="#" className="forgot-password">Forgot password?</a>
-              </div>
-
-              <button
-                type="submit"
-                className="btn btn-primary w-100 mb-3"
-                disabled={loading}
-              >
-                {loading ? (
-                  <>
-                    <span className="spinner-border spinner-border-sm me-2"></span>
-                    Signing In...
-                  </>
-                ) : (
-                  'Sign In'
-                )}
-              </button>
-            </form>
+          <div className="password-field">
+            <input
+              type={showPassword.register ? "text" : "password"}
+              placeholder="Password"
+              value={registerData.password}
+              onChange={(e) => handleRegisterChange('password', e.target.value)}
+              required
+            />
+            <span
+              className="password-toggle"
+              onClick={() => togglePasswordVisibility('register')}
+            >
+              <i className={`fa-solid ${showPassword.register ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+            </span>
           </div>
 
-          {/* Toggle Panel */}
-          <div className="toggle-panel">
-            <div className="toggle-content toggle-left">
-              <h3>Welcome Back!</h3>
-              <p>Enter your personal details to use all of site features</p>
-              <button className="btn btn-outline-light" onClick={togglePanel}>
-                Sign In
-              </button>
-            </div>
-            <div className="toggle-content toggle-right">
-              <h3>Hello, Welcome!</h3>
-              <p>Register with your personal details to use all of site features</p>
-              <button className="btn btn-outline-light" onClick={togglePanel}>
-                Sign Up
-              </button>
-            </div>
+          <div className="password-field">
+            <input
+              type={showPassword.confirm ? "text" : "password"}
+              placeholder="Confirm Password"
+              value={registerData.confirm_password}
+              onChange={(e) => handleRegisterChange('confirm_password', e.target.value)}
+              required
+            />
+            <span
+              className="password-toggle"
+              onClick={() => togglePasswordVisibility('confirm')}
+            >
+              <i className={`fa-solid ${showPassword.confirm ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+            </span>
+          </div>
+
+          <button type="submit" disabled={loading}>
+            {loading ? 'Creating Account...' : 'Sign Up'}
+          </button>
+        </form>
+      </div>
+
+      {/* Sign In Form */}
+      <div className="form-container sign-in">
+        <form onSubmit={handleLogin}>
+          <h1>Sign In</h1>
+          <div className="social-icons">
+            <a href="#" className="icon"><i className="fa-brands fa-google-plus-g"></i></a>
+            <a href="#" className="icon"><i className="fa-brands fa-facebook-f"></i></a>
+            <a href="#" className="icon"><i className="fa-brands fa-github"></i></a>
+            <a href="#" className="icon"><i className="fa-brands fa-linkedin-in"></i></a>
+          </div>
+          <span>or use your email password</span>
+          <input
+            type="text"
+            placeholder="Email, Phone or Username"
+            value={loginData.login_id}
+            onChange={(e) => handleLoginChange('login_id', e.target.value)}
+            required
+          />
+
+          <div className="password-field">
+            <input
+              type={showPassword.login ? "text" : "password"}
+              placeholder="Password"
+              value={loginData.password}
+              onChange={(e) => handleLoginChange('password', e.target.value)}
+              required
+            />
+            <span
+              className="password-toggle"
+              onClick={() => togglePasswordVisibility('login')}
+            >
+              <i className={`fa-solid ${showPassword.login ? 'fa-eye-slash' : 'fa-eye'}`}></i>
+            </span>
+          </div>
+
+          <a href="#">Forget Your Password?</a>
+          <button type="submit" disabled={loading}>
+            {loading ? 'Signing In...' : 'Sign In'}
+          </button>
+        </form>
+      </div>
+
+      {/* Toggle Container */}
+      <div className="toggle-container">
+        <div className="toggle">
+          <div className="toggle-panel toggle-left">
+            <h1>Welcome Back!</h1>
+            <p>Enter your personal details to use all of site features</p>
+            <button className="hidden" onClick={togglePanel}>Sign In</button>
+          </div>
+          <div className="toggle-panel toggle-right">
+            <h1>Hello, Welcome!</h1>
+            <p>Register with your personal details to use all of site features</p>
+            <button className="hidden" onClick={togglePanel}>Sign Up</button>
           </div>
         </div>
       </div>
-    </section>
+    </div>
   );
 };
 

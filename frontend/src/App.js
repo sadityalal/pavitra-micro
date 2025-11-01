@@ -5,8 +5,7 @@ import { AuthProvider } from './contexts/AuthContext.js';
 import { SettingsProvider } from './contexts/SettingsContext.js';
 import Layout from './components/layout/Layout.js';
 import HomePage from './pages/HomePage.js';
-import LoginPage from './pages/LoginPage';
-import RegisterPage from './pages/RegisterPage';
+import AuthPage from './pages/AuthPage.js';
 
 function App() {
   useEffect(() => {
