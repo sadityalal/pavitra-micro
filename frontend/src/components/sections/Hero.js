@@ -1,13 +1,13 @@
 import React from 'react';
 import { useProducts } from '../../hooks/useProducts';
 import { useSettings } from '../../contexts/SettingsContext';
-import { useCart } from '../../hooks/useCart';
+import { useCartContext } from '../../contexts/CartContext'; // CHANGE THIS
 import { Link } from 'react-router-dom';
 
 const Hero = () => {
   const { products: featuredProducts, loading: productsLoading } = useProducts('featured');
   const { frontendSettings } = useSettings();
-  const { cart, loading: cartLoading, addToCart } = useCart();
+  const { cart, loading: cartLoading, addToCart } = useCartContext(); // CHANGE THIS
 
   const handleAddToCart = async (product) => {
     if (product.stock_status !== 'in_stock') {
@@ -16,21 +16,18 @@ const Hero = () => {
     }
 
     try {
-      console.log('Adding product to cart:', product.id);
+      console.log('Hero: Adding product to cart:', product.id);
       await addToCart(product.id, 1);
-      console.log('Product added to cart successfully:', product.name);
+      console.log('Hero: Product added to cart successfully:', product.name);
 
-      // Show success message
-      const event = new CustomEvent('showToast', {
-        detail: {
-          message: `${product.name} added to cart!`,
-          type: 'success'
-        }
+      // Dispatch event to notify all components
+      const event = new CustomEvent('cartUpdated', {
+        detail: { action: 'add', product }
       });
       document.dispatchEvent(event);
 
     } catch (error) {
-      console.error('Failed to add to cart:', error);
+      console.error('Hero: Failed to add to cart:', error);
       alert(error.message || 'Failed to add product to cart. Please try again.');
     }
   };

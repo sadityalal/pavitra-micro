@@ -1,10 +1,10 @@
 import React from 'react';
-import { useCart } from '../hooks/useCart';
+import { useCartContext } from '../contexts/CartContext'; // CHANGE THIS
 import { useSettings } from '../contexts/SettingsContext';
 import { Link } from 'react-router-dom';
 
 const CartPage = () => {
-  const { cart, loading, updateCartItem, removeFromCart, clearCart } = useCart();
+  const { cart, loading, updateCartItem, removeFromCart, clearCart } = useCartContext(); // CHANGE THIS
   const { frontendSettings } = useSettings();
 
   const handleQuantityChange = async (cartItemId, newQuantity) => {

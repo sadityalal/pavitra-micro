@@ -2,12 +2,12 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { useSettings } from '../../../contexts/SettingsContext';
 import { useAuth } from '../../../contexts/AuthContext';
-import { useCart } from '../../../hooks/useCart';
+import { useCartContext } from '../../../contexts/CartContext'; // CHANGE THIS
 
 const MainHeader = () => {
   const { frontendSettings } = useSettings();
   const { isAuthenticated, user, logout } = useAuth();
-  const { cart, loading: cartLoading } = useCart();
+  const { cart, loading: cartLoading } = useCartContext(); // CHANGE THIS
 
   const handleLogout = async () => {
     try {
@@ -17,7 +17,7 @@ const MainHeader = () => {
     }
   };
 
-  // Use the total_items from backend response directly
+  // Use the total_items from cart context
   const totalCartItems = cart?.total_items || 0;
 
   return (
@@ -85,9 +85,13 @@ const MainHeader = () => {
 
             <Link to="/cart" className="header-action-btn position-relative">
               <i className="bi bi-cart3"></i>
-              {!cartLoading && totalCartItems > 0 && (
+              {!cartLoading && totalCartItems > 0 ? (
                 <span className="badge bg-primary position-absolute top-0 start-100 translate-middle">
                   {totalCartItems > 99 ? '99+' : totalCartItems}
+                </span>
+              ) : (
+                <span className="badge bg-secondary position-absolute top-0 start-100 translate-middle" style={{opacity: 0.5}}>
+                  0
                 </span>
               )}
             </Link>

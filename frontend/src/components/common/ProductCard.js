@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { formatCurrency } from '../../utils/helpers';
-import { useCart } from '../../hooks/useCart';
+import { useCartContext } from '../../contexts/CartContext'; // CHANGE THIS
 
 const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false }) => {
-  const { addToCart } = useCart();
+  const { addToCart } = useCartContext(); // CHANGE THIS
   const [addingToCart, setAddingToCart] = useState(false);
 
   const handleAddToCart = async (product) => {
@@ -14,10 +14,16 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
 
     try {
       setAddingToCart(true);
-      console.log('Attempting to add product to cart:', product.id);
+      console.log('ProductCard: Adding product to cart:', product.id);
 
       await addToCart(product.id, 1);
-      console.log('Product added to cart successfully');
+      console.log('ProductCard: Product added to cart successfully');
+
+      // Dispatch event to notify all components
+      const event = new CustomEvent('cartUpdated', {
+        detail: { action: 'add', product }
+      });
+      document.dispatchEvent(event);
 
       alert(`${product.name} added to cart!`);
 
@@ -25,14 +31,14 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
         onAddToCart(product);
       }
     } catch (error) {
-      console.error('Failed to add to cart:', error);
+      console.error('ProductCard: Failed to add to cart:', error);
       alert('Failed to add product to cart. Please try again.');
     } finally {
       setAddingToCart(false);
     }
   };
 
-  // ... rest of the component remains the same
+
   if (loading) {
     return (
       <div className="product-item">
