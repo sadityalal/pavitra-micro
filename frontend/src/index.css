@@ -1,0 +1,91 @@
+/* Import Bootstrap */
+@import 'bootstrap/dist/css/bootstrap.min.css';
+@import 'bootstrap-icons/font/bootstrap-icons.css';
+
+/* Global styles */
+body {
+  font-family: 'Roboto', 'Montserrat', 'Poppins', sans-serif;
+  margin: 0;
+  padding: 0;
+  line-height: 1.6;
+}
+
+/* Custom styles will be added here */
+.product-item {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+  background: white;
+}
+
+.product-item:hover {
+  box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+  transform: translateY(-2px);
+}
+
+.product-image {
+  position: relative;
+  overflow: hidden;
+}
+
+.product-badges {
+  z-index: 2;
+}
+
+.product-actions {
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  background: linear-gradient(transparent, rgba(0,0,0,0.1));
+}
+
+.product-item:hover .product-actions {
+  opacity: 1;
+}
+
+.action-btn {
+  background: white;
+  border: none;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.action-btn:hover {
+  background: #007bff;
+  color: white;
+  transform: scale(1.1);
+}
+
+.cart-btn {
+  background: #007bff;
+  color: white;
+  border: none;
+  padding: 10px;
+  transition: all 0.3s ease;
+  opacity: 0;
+  transform: translateY(100%);
+}
+
+.product-item:hover .cart-btn {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.cart-btn:hover {
+  background: #0056b3;
+}
+
+.cart-btn.disabled {
+  background: #6c757d;
+  cursor: not-allowed;
+}
+
+.stars {
+  color: #ffc107;
+}
