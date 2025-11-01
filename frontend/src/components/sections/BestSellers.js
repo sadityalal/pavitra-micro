@@ -1,4 +1,3 @@
-// frontend/src/components/sections/BestSellers.js
 import React from 'react';
 import { useProducts } from '../../hooks/useProducts';
 import ProductCard from '../common/ProductCard';
@@ -9,7 +8,7 @@ const BestSellers = () => {
   const handleAddToCart = async (product) => {
     try {
       console.log('Adding to cart:', product);
-      // TODO: Implement cart service integration
+      // Implement cart functionality here
     } catch (error) {
       console.error('Failed to add to cart:', error);
     }
@@ -18,7 +17,7 @@ const BestSellers = () => {
   const handleAddToWishlist = async (product) => {
     try {
       console.log('Adding to wishlist:', product);
-      // TODO: Implement wishlist service integration
+      // Implement wishlist functionality here
     } catch (error) {
       console.error('Failed to add to wishlist:', error);
     }
@@ -32,10 +31,12 @@ const BestSellers = () => {
             <h2>Best Sellers</h2>
             <p>Discover our most popular products</p>
           </div>
-          <div className="text-center py-5">
-            <div className="spinner-border" role="status">
-              <span className="visually-hidden">Loading...</span>
-            </div>
+          <div className="row g-4">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="col-lg-3 col-md-6 col-sm-6">
+                <ProductCard loading={true} />
+              </div>
+            ))}
           </div>
         </div>
       </section>
@@ -51,7 +52,7 @@ const BestSellers = () => {
           </div>
           <div className="alert alert-warning text-center">
             <i className="bi bi-exclamation-triangle me-2"></i>
-            Unable to load products. Please try again later.
+            Unable to load best sellers. Please try again later.
           </div>
         </div>
       </section>
@@ -64,11 +65,11 @@ const BestSellers = () => {
         <h2>Best Sellers</h2>
         <p>Discover our most popular products loved by customers</p>
       </div>
-
       <div className="container" data-aos="fade-up" data-aos-delay="100">
         {bestSellers.length === 0 ? (
           <div className="text-center py-5">
             <p className="text-muted">No best sellers available at the moment.</p>
+            <a href="/products" className="btn btn-primary">Browse All Products</a>
           </div>
         ) : (
           <div className="row g-4">

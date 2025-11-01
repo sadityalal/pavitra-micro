@@ -1,18 +1,18 @@
-// frontend/src/components/common/ProductCard.js
 import React from 'react';
 import { formatCurrency, getStockStatusBadge, calculateSavings } from '../../utils/helpers';
 
 const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false }) => {
   if (loading) {
     return (
-      <div className="product-item loading">
+      <div className="product-item">
         <div className="product-image placeholder-glow">
-          <div className="placeholder" style={{ height: '200px' }}></div>
+          <div className="placeholder" style={{ height: '250px' }}></div>
         </div>
-        <div className="product-info p-3">
-          <div className="placeholder placeholder-xs col-8"></div>
-          <div className="placeholder placeholder-xs col-6 mt-2"></div>
-          <div className="placeholder placeholder-xs col-4 mt-2"></div>
+        <div className="product-info">
+          <div className="product-category placeholder placeholder-xs col-6"></div>
+          <h4 className="product-name placeholder placeholder-xs col-8"></h4>
+          <div className="product-rating placeholder placeholder-xs col-4"></div>
+          <div className="product-price placeholder placeholder-xs col-5"></div>
         </div>
       </div>
     );
@@ -24,25 +24,59 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
     slug,
     short_description,
     base_price,
-    sale_price,
+    compare_price,
     main_image_url,
     stock_status,
     stock_quantity,
-    rating,
-    review_count,
-    discount_percentage
+    is_featured,
+    is_bestseller,
+    is_trending
   } = product;
 
   const stockInfo = getStockStatusBadge(stock_status);
-  const savings = calculateSavings(base_price, sale_price);
-  const finalPrice = sale_price || base_price;
-  const hasDiscount = sale_price && sale_price < base_price;
+  const savings = calculateSavings(compare_price, base_price);
+  const hasDiscount = compare_price && compare_price > base_price;
+
+  // Handle image URL
+  const getImageUrl = (imagePath) => {
+    if (!imagePath || imagePath === 'null' || imagePath === 'undefined') {
+      return '/assets/img/product/placeholder.jpg';
+    }
+
+    if (imagePath.startsWith('http')) {
+      return imagePath;
+    }
+
+    if (imagePath.startsWith('/uploads/')) {
+      const backendUrl = process.env.REACT_APP_PRODUCT_URL || 'http://localhost:8002';
+      return `${backendUrl}${imagePath}`;
+    }
+
+    return imagePath;
+  };
+
+  const imageUrl = getImageUrl(main_image_url);
 
   return (
-    <div className="product-item" data-aos="fade-up">
-      <div className="product-image position-relative">
+    <div className="product-item">
+      <div className="product-image">
+        {/* Product Badges */}
+        <div className="product-badges">
+          {hasDiscount && (
+            <span className="badge-sale">
+              -{Math.round(((compare_price - base_price) / compare_price) * 100)}%
+            </span>
+          )}
+          {is_featured && <span className="badge-new">New</span>}
+          {is_bestseller && <span className="badge-trending">Trending</span>}
+          {stock_status === 'out_of_stock' && (
+            <span className="badge-out-of-stock">Out of Stock</span>
+          )}
+        </div>
+
+        {/* Product Image */}
         <img
-          src={main_image_url || '/assets/img/product/placeholder.jpg'}
+          src={imageUrl}
           alt={name}
           className="img-fluid"
           loading="lazy"
@@ -50,100 +84,83 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             e.target.src = '/assets/img/product/placeholder.jpg';
           }}
         />
-        
-        <div className="product-badges position-absolute top-0 start-0 p-2">
-          {hasDiscount && (
-            <span className="badge bg-danger me-1">-{discount_percentage}%</span>
-          )}
-          {stock_status === 'in_stock' && stock_quantity < 10 && (
-            <span className="badge bg-warning">Low Stock</span>
-          )}
+
+        {/* Product Actions */}
+        <div className="product-actions">
+          <button
+            className="action-btn wishlist-btn"
+            onClick={() => onAddToWishlist && onAddToWishlist(product)}
+            title="Add to Wishlist"
+            disabled={!onAddToWishlist}
+          >
+            <i className="bi bi-heart"></i>
+          </button>
+          <button
+            className="action-btn compare-btn"
+            title="Compare"
+          >
+            <i className="bi bi-arrow-left-right"></i>
+          </button>
+          <button
+            className="action-btn quickview-btn"
+            title="Quick View"
+            onClick={() => window.location.href = `/product/${slug}`}
+          >
+            <i className="bi bi-zoom-in"></i>
+          </button>
         </div>
-        
-        <div className="position-absolute top-0 end-0 p-2">
-          <span className={`badge ${stockInfo.class}`}>
-            {stockInfo.text}
-          </span>
-        </div>
-        
-        <div className="product-actions position-absolute bottom-0 start-0 end-0 p-2">
-          <div className="d-flex justify-content-center gap-2">
-            <button
-              className="action-btn wishlist-btn"
-              onClick={() => onAddToWishlist && onAddToWishlist(product)}
-              title="Add to Wishlist"
-              disabled={!onAddToWishlist}
-            >
-              <i className="bi bi-heart"></i>
-            </button>
-            <button
-              className="action-btn quickview-btn"
-              title="Quick View"
-            >
-              <i className="bi bi-zoom-in"></i>
-            </button>
-          </div>
-        </div>
-        
+
+        {/* Add to Cart Button - Fixed positioning */}
         <button
-          className={`cart-btn w-100 ${stock_status !== 'in_stock' ? 'disabled' : ''}`}
+          className={`cart-btn ${stock_status !== 'in_stock' ? 'disabled' : ''}`}
           onClick={() => onAddToCart && onAddToCart(product)}
           disabled={stock_status !== 'in_stock' || !onAddToCart}
         >
           {stock_status === 'in_stock' ? 'Add to Cart' : 'Out of Stock'}
         </button>
       </div>
-      
-      <div className="product-info p-3">
-        <h4 className="product-name h6 mb-2">
-          <a href={`/product/${slug}`} className="text-decoration-none text-dark">
-            {name}
-          </a>
+
+      <div className="product-info">
+        {/* Product Category */}
+        <div className="product-category">
+          {is_featured ? 'Featured' : is_bestseller ? 'Best Seller' : 'Premium'}
+        </div>
+
+        {/* Product Name */}
+        <h4 className="product-name">
+          <a href={`/product/${slug}`}>{name}</a>
         </h4>
-        
-        {rating > 0 && (
-          <div className="product-rating d-flex align-items-center mb-2">
-            <div className="stars text-warning">
-              {[1, 2, 3, 4, 5].map((star) => (
-                <i
-                  key={star}
-                  className={`bi ${star <= rating ? 'bi-star-fill' : 'bi-star'}`}
-                ></i>
-              ))}
-            </div>
-            <span className="rating-count text-muted small ms-1">
-              ({review_count || 0})
-            </span>
+
+        {/* Product Rating */}
+        <div className="product-rating">
+          <div className="stars">
+            <i className="bi bi-star-fill"></i>
+            <i className="bi bi-star-fill"></i>
+            <i className="bi bi-star-fill"></i>
+            <i className="bi bi-star-fill"></i>
+            <i className="bi bi-star"></i>
           </div>
-        )}
-        
-        <div className="product-price mb-2">
+          <span className="rating-count">(24)</span>
+        </div>
+
+        {/* Product Price */}
+        <div className="product-price">
           {hasDiscount ? (
             <>
-              <span className="current-price fw-bold text-dark fs-5">
-                {formatCurrency(sale_price)}
-              </span>
-              <span className="old-price text-muted text-decoration-line-through ms-2">
-                {formatCurrency(base_price)}
-              </span>
-              {savings > 0 && (
-                <div className="savings text-success small">
-                  Save {formatCurrency(savings)}
-                </div>
-              )}
+              <span className="old-price">{formatCurrency(compare_price)}</span>
+              <span className="current-price">{formatCurrency(base_price)}</span>
             </>
           ) : (
-            <span className="current-price fw-bold text-dark fs-5">
-              {formatCurrency(base_price)}
-            </span>
+            <span className="current-price">{formatCurrency(base_price)}</span>
           )}
         </div>
-        
-        {short_description && (
-          <p className="product-short-desc small text-muted mb-0">
-            {short_description}
-          </p>
-        )}
+
+        {/* Color Swatches */}
+        <div className="color-swatches">
+          <span className="swatch active" style={{ backgroundColor: '#2563eb' }}></span>
+          <span className="swatch" style={{ backgroundColor: '#059669' }}></span>
+          <span className="swatch" style={{ backgroundColor: '#dc2626' }}></span>
+        </div>
       </div>
     </div>
   );

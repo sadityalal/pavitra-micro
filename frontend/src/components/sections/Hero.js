@@ -1,14 +1,24 @@
-// frontend/src/components/sections/Hero.js
 import React from 'react';
 import { useProducts } from '../../hooks/useProducts';
 import { useSettings } from '../../contexts/SettingsContext';
+import { useCart } from '../../hooks/useCart';
 
 const Hero = () => {
   const { products: featuredProducts, loading } = useProducts('featured');
   const { frontendSettings } = useSettings();
+  const { addToCart } = useCart();
+
+  const handleAddToCart = async (product) => {
+    try {
+      await addToCart(product.id, 1);
+      // You can add a toast notification here
+      console.log('Product added to cart:', product.name);
+    } catch (error) {
+      console.error('Failed to add to cart:', error);
+    }
+  };
 
   const toggleSearch = () => {
-    // Implement search toggle functionality
     console.log('Toggle search');
   };
 
@@ -34,7 +44,7 @@ const Hero = () => {
           <div className="content-wrapper" data-aos="fade-up" data-aos-delay="100">
             <h1 className="hero-title">Welcome to {frontendSettings.site_name || 'Pavitra Enterprises'}</h1>
             <p className="hero-description">
-              Discover our curated collection of premium products designed to enhance your lifestyle. 
+              Discover our curated collection of premium products designed to enhance your lifestyle.
               From electronics to fashion, find everything you need with exclusive deals and fast shipping.
             </p>
             <div className="hero-actions" data-aos="fade-up" data-aos-delay="200">
@@ -57,117 +67,113 @@ const Hero = () => {
             </div>
           </div>
         </div>
-
         <div className="hero-visuals">
           <div className="product-showcase" data-aos="fade-left" data-aos-delay="200">
             {mainProduct ? (
-              <div 
-                className="product-card featured" 
-                style={{ cursor: 'pointer' }} 
-                onClick={() => window.location.href = `/product/${mainProduct.slug}`}
-              >
-                <img 
-                  src={mainProduct.main_image_url || '/assets/img/product/placeholder.jpg'} 
-                  alt={mainProduct.name} 
-                  className="img-fluid" 
+              <div className="product-card featured">
+                <img
+                  src={mainProduct.main_image_url || '/assets/img/product/placeholder.jpg'}
+                  alt={mainProduct.name}
+                  className="img-fluid"
+                  onError={(e) => {
+                    e.target.src = '/assets/img/product/placeholder.jpg';
+                  }}
                 />
                 <div className="product-badge">Best Seller</div>
                 <div className="product-info">
-                  <h4>
-                    <a href={`/product/${mainProduct.slug}`} onClick={(e) => e.stopPropagation()}>
-                      {mainProduct.name}
-                    </a>
-                  </h4>
+                  <h4>{mainProduct.name}</h4>
                   <div className="price">
                     <span className="sale-price">{frontendSettings.currency_symbol}{mainProduct.base_price}</span>
                     {mainProduct.compare_price && mainProduct.compare_price > mainProduct.base_price && (
                       <span className="original-price">{frontendSettings.currency_symbol}{mainProduct.compare_price}</span>
                     )}
                   </div>
+                  <button
+                    className="cart-btn"
+                    onClick={() => handleAddToCart(mainProduct)}
+                    disabled={mainProduct.stock_status !== 'in_stock'}
+                  >
+                    {mainProduct.stock_status === 'in_stock' ? 'Add to Cart' : 'Out of Stock'}
+                  </button>
                 </div>
               </div>
             ) : (
-              <div 
-                className="product-card featured" 
-                style={{ cursor: 'pointer' }} 
-                onClick={() => window.location.href = '/products'}
-              >
+              <div className="product-card featured">
                 <img src="/assets/img/product/placeholder.jpg" alt="Featured Product" className="img-fluid" />
-                <div className="product-badge">Coming Soon</div>
+                <div className="product-badge">Featured</div>
                 <div className="product-info">
-                  <h4>
-                    <a href="/products" onClick={(e) => e.stopPropagation()}>New Arrivals Coming Soon</a>
-                  </h4>
+                  <h4>Featured Products</h4>
                   <div className="price">
-                    <span className="sale-price">{frontendSettings.currency_symbol}0.00</span>
+                    <span className="sale-price">Explore Now</span>
                   </div>
+                  <button className="cart-btn" onClick={() => window.location.href = '/products'}>
+                    Shop Now
+                  </button>
                 </div>
               </div>
             )}
-
             <div className="product-grid">
               {secondaryProducts.map((product, index) => (
-                <div 
+                <div
                   key={product.id}
-                  className="product-mini" 
-                  data-aos="zoom-in" 
+                  className="product-mini"
+                  data-aos="zoom-in"
                   data-aos-delay={400 + index * 100}
+                  onClick={() => handleAddToCart(product)}
                   style={{ cursor: 'pointer' }}
-                  onClick={() => window.location.href = `/product/${product.slug}`}
                 >
-                  <img 
-                    src={product.main_image_url || '/assets/img/product/placeholder.jpg'} 
-                    alt={product.name} 
-                    className="img-fluid" 
+                  <img
+                    src={product.main_image_url || '/assets/img/product/placeholder.jpg'}
+                    alt={product.name}
+                    className="img-fluid"
+                    onError={(e) => {
+                      e.target.src = '/assets/img/product/placeholder.jpg';
+                    }}
                   />
                   <span className="mini-price">{frontendSettings.currency_symbol}{product.base_price}</span>
                 </div>
               ))}
-              
-              {/* Fill remaining spots if less than 2 products */}
+              {/* Fill remaining spots if needed */}
               {Array.from({ length: 2 - secondaryProducts.length }).map((_, index) => (
-                <div 
+                <div
                   key={`placeholder-${index}`}
-                  className="product-mini" 
-                  data-aos="zoom-in" 
+                  className="product-mini"
+                  data-aos="zoom-in"
                   data-aos-delay={400 + (secondaryProducts.length + index) * 100}
                   style={{ cursor: 'pointer' }}
                   onClick={() => window.location.href = '/products'}
                 >
                   <img src="/assets/img/product/placeholder.jpg" alt="Product" className="img-fluid" />
-                  <span className="mini-price">{frontendSettings.currency_symbol}0.00</span>
+                  <span className="mini-price">View More</span>
                 </div>
               ))}
             </div>
           </div>
-
           <div className="floating-elements">
-            <div 
-              className="floating-icon cart" 
-              data-aos="fade-up" 
-              data-aos-delay="600" 
-              style={{ cursor: 'pointer' }} 
+            <div
+              className="floating-icon cart"
+              data-aos="fade-up"
+              data-aos-delay="600"
+              style={{ cursor: 'pointer' }}
               onClick={() => window.location.href = '/cart'}
             >
               <i className="bi bi-cart3"></i>
               <span className="notification-dot">0</span>
             </div>
-
-            <div 
-              className="floating-icon wishlist" 
-              data-aos="fade-up" 
-              data-aos-delay="700" 
-              style={{ cursor: 'pointer' }} 
+            <div
+              className="floating-icon wishlist"
+              data-aos="fade-up"
+              data-aos-delay="700"
+              style={{ cursor: 'pointer' }}
               onClick={() => window.location.href = '/account?tab=wishlist'}
             >
               <i className="bi bi-heart"></i>
             </div>
-
-            <div 
-              className="floating-icon search" 
-              data-aos="fade-up" 
-              data-aos-delay="800" 
-              style={{ cursor: 'pointer' }} 
+            <div
+              className="floating-icon search"
+              data-aos="fade-up"
+              data-aos-delay="800"
+              style={{ cursor: 'pointer' }}
               onClick={toggleSearch}
             >
               <i className="bi bi-search"></i>
