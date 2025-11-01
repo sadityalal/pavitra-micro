@@ -23,14 +23,17 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1
 app.add_middleware(SessionMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config.cors_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_origins=config.cors_origins,  # Make sure this includes your frontend URL
+    allow_credentials=True,  # This is crucial
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=[
         "Content-Type",
         "Authorization",
-        "X-Requested-With"
+        "X-Requested-With",
+        "X-Guest-Id",  # Add this if you're using guest IDs
+        "Cookie"  # Allow cookie headers
     ],
+    expose_headers=["set-cookie"],  # Important for session cookies
     max_age=600,
 )
 

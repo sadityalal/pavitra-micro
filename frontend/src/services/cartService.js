@@ -3,12 +3,13 @@ import { userApi } from './api';
 export const cartService = {
   getCart: async () => {
     try {
+      console.log('🛒 GET CART - Fetching cart data');
       const response = await userApi.get('/api/v1/users/cart');
-      console.log('Cart response:', response.data);
+      console.log('🛒 GET CART - Success:', response.data);
       return response.data;
     } catch (error) {
-      console.error('Error fetching cart:', error);
-      // Return empty cart structure on error
+      console.error('🛒 GET CART - Error:', error);
+      // For guest users, return empty cart structure
       return {
         items: [],
         subtotal: 0,
@@ -19,7 +20,7 @@ export const cartService = {
 
   addToCart: async (productId, quantity = 1, variationId = null) => {
     try {
-      console.log('Adding to cart - product:', productId, 'qty:', quantity);
+      console.log('🛒 ADD TO CART - Starting:', { productId, quantity, variationId });
 
       const payload = {
         quantity: parseInt(quantity)
@@ -30,11 +31,21 @@ export const cartService = {
       }
 
       const response = await userApi.post(`/api/v1/users/cart/${productId}`, payload);
-      console.log('Add to cart success:', response.data);
+      console.log('🛒 ADD TO CART - Success:', response.data);
       return response.data;
     } catch (error) {
-      console.error('Add to cart error:', error);
-      throw error;
+      console.error('🛒 ADD TO CART - Error:', error);
+      console.error('🛒 Error response:', error.response?.data);
+
+      if (error.response?.status === 401) {
+        throw new Error('Session issue. Please refresh the page.');
+      } else if (error.response?.status === 404) {
+        throw new Error('Product not found.');
+      } else if (error.response?.status === 400) {
+        throw new Error(error.response.data.detail || 'Cannot add to cart.');
+      } else {
+        throw new Error('Failed to add to cart. Please try again.');
+      }
     }
   },
 

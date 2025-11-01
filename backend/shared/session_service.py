@@ -13,9 +13,17 @@ class SessionService:
         self.inactivity_timeout = 1200
         self.guest_session_duration = 86400
         self.user_session_duration = 86400
+        # Redis key prefix used consistently everywhere
+        self._redis_session_prefix = "session:"
+        self._redis_user_session_prefix = "user_session:"
+        self._redis_guest_session_prefix = "guest_session:"
 
     def generate_session_id(self) -> str:
-        return f"session:{uuid.uuid4().hex}"
+        # RETURN plain uuid hex (no "session:" prefix) so session_id is easy to use in cookie
+        return uuid.uuid4().hex
+
+    def _session_key(self, session_id: str) -> str:
+        return f"{self._redis_session_prefix}{session_id}"
 
     def create_session(self, session_data: Dict[str, Any]) -> Optional[SessionData]:
         try:
@@ -40,29 +48,38 @@ class SessionService:
                 expires_at=expires_at
             )
 
-            # FIX: Properly serialize datetime objects for Redis
+            # normalize for Redis: use plain serializable types
             session_dict = session.model_dump()
+
+            # Ensure session_type is stored as a lowercase string ('user' or 'guest')
+            if isinstance(session_dict.get('session_type'), SessionType):
+                session_dict['session_type'] = session_dict['session_type'].value
+            else:
+                session_dict['session_type'] = str(session_dict.get('session_type')).lower()
+
             session_dict['created_at'] = session_dict['created_at'].isoformat()
             session_dict['last_activity'] = session_dict['last_activity'].isoformat()
             session_dict['expires_at'] = session_dict['expires_at'].isoformat()
 
-            key = f"session:{session_id}"
+            key = self._session_key(session_id)
+            # expiry seconds for this session
+            expiry_seconds = self.user_session_duration if session_dict['session_type'] == SessionType.USER.value else self.guest_session_duration
+
             redis_client.redis_client.setex(
                 key,
-                self.user_session_duration if session_data.get(
-                    'session_type') == SessionType.USER else self.guest_session_duration,
+                expiry_seconds,
                 json.dumps(session_dict)
             )
 
             if session.user_id:
                 redis_client.redis_client.setex(
-                    f"user_session:{session.user_id}",
+                    f"{self._redis_user_session_prefix}{session.user_id}",
                     self.user_session_duration,
-                    session_id
+                    session_id  # store plain session_id (no redis prefix)
                 )
             elif session.guest_id:
                 redis_client.redis_client.setex(
-                    f"guest_session:{session.guest_id}",
+                    f"{self._redis_guest_session_prefix}{session.guest_id}",
                     self.guest_session_duration,
                     session_id
                 )
@@ -75,20 +92,40 @@ class SessionService:
 
     def get_session(self, session_id: str) -> Optional[SessionData]:
         try:
-            key = f"session:{session_id}"
-            data = redis_client.redis_client.get(key)
-            if data:
-                session_dict = json.loads(data)
-                # FIX: Properly deserialize datetime objects from Redis
-                session_dict['created_at'] = datetime.fromisoformat(session_dict['created_at'])
-                session_dict['last_activity'] = datetime.fromisoformat(session_dict['last_activity'])
-                session_dict['expires_at'] = datetime.fromisoformat(session_dict['expires_at'])
+            if not session_id:
+                return None
 
-                session = SessionData(**session_dict)
-                # FIX: Remove the recursive call - update activity separately
-                self._update_session_activity_only(session_id)
-                return session
-            return None
+            # session_id should be plain str (uuid hex). Build redis key consistently.
+            key = self._session_key(session_id)
+            data = redis_client.redis_client.get(key)
+            if not data:
+                return None
+
+            # decode bytes -> str before json loads (redis returns bytes)
+            if isinstance(data, (bytes, bytearray)):
+                data = data.decode()
+
+            session_dict = json.loads(data)
+
+            # deserialize datetimes
+            session_dict['created_at'] = datetime.fromisoformat(session_dict['created_at'])
+            session_dict['last_activity'] = datetime.fromisoformat(session_dict['last_activity'])
+            session_dict['expires_at'] = datetime.fromisoformat(session_dict['expires_at'])
+
+            # Ensure session_type maps to SessionType enum
+            st = session_dict.get('session_type')
+            if isinstance(st, str):
+                if st.lower() == SessionType.USER.value:
+                    session_dict['session_type'] = SessionType.USER
+                else:
+                    session_dict['session_type'] = SessionType.GUEST
+
+            session_dict['session_id'] = session_id  # ensure the session_id attribute is plain id
+            session = SessionData(**session_dict)
+
+            # update last_activity (non-recursive)
+            self._update_session_activity_only(session_id)
+            return session
         except Exception as e:
             logger.error(f"Failed to get session {session_id}: {e}")
             return None
@@ -96,16 +133,20 @@ class SessionService:
     def _update_session_activity_only(self, session_id: str) -> bool:
         """Update session activity without recursion"""
         try:
-            key = f"session:{session_id}"
+            key = self._session_key(session_id)
             data = redis_client.redis_client.get(key)
             if not data:
                 return False
 
+            if isinstance(data, (bytes, bytearray)):
+                data = data.decode()
+
             session_dict = json.loads(data)
             session_dict['last_activity'] = datetime.utcnow().isoformat()
 
-            # Determine expiry based on session type
-            if session_dict.get('session_type') == 'user':
+            session_type_val = session_dict.get('session_type')
+            # normalize and compare as lower-case string
+            if isinstance(session_type_val, str) and session_type_val.lower() == SessionType.USER.value:
                 expiry = self.user_session_duration
             else:
                 expiry = self.guest_session_duration
@@ -122,20 +163,24 @@ class SessionService:
 
     def get_session_by_user_id(self, user_id: int) -> Optional[SessionData]:
         try:
-            session_id = redis_client.redis_client.get(f"user_session:{user_id}")
-            if session_id:
-                return self.get_session(session_id)
-            return None
+            raw = redis_client.redis_client.get(f"{self._redis_user_session_prefix}{user_id}")
+            if not raw:
+                return None
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode()
+            return self.get_session(raw)
         except Exception as e:
             logger.error(f"Failed to get session for user {user_id}: {e}")
             return None
 
     def get_session_by_guest_id(self, guest_id: str) -> Optional[SessionData]:
         try:
-            session_id = redis_client.redis_client.get(f"guest_session:{guest_id}")
-            if session_id:
-                return self.get_session(session_id)
-            return None
+            raw = redis_client.redis_client.get(f"{self._redis_guest_session_prefix}{guest_id}")
+            if not raw:
+                return None
+            if isinstance(raw, (bytes, bytearray)):
+                raw = raw.decode()
+            return self.get_session(raw)
         except Exception as e:
             logger.error(f"Failed to get session for guest {guest_id}: {e}")
             return None
@@ -148,8 +193,13 @@ class SessionService:
 
             session.last_activity = datetime.utcnow()
 
-            # FIX: Properly serialize for Redis storage
             session_dict = session.model_dump()
+            # session_type -> store as lowercase string
+            if isinstance(session_dict.get('session_type'), SessionType):
+                session_dict['session_type'] = session_dict['session_type'].value
+            else:
+                session_dict['session_type'] = str(session_dict.get('session_type')).lower()
+
             session_dict['created_at'] = session_dict['created_at'].isoformat()
             session_dict['last_activity'] = session_dict['last_activity'].isoformat()
             session_dict['expires_at'] = session_dict['expires_at'].isoformat()
@@ -159,7 +209,7 @@ class SessionService:
             else:
                 new_expiry = self.guest_session_duration
 
-            key = f"session:{session_id}"
+            key = self._session_key(session_id)
             redis_client.redis_client.setex(
                 key,
                 new_expiry,
@@ -182,13 +232,17 @@ class SessionService:
 
             session.last_activity = datetime.utcnow()
 
-            # FIX: Proper serialization
             session_dict = session.model_dump()
+            if isinstance(session_dict.get('session_type'), SessionType):
+                session_dict['session_type'] = session_dict['session_type'].value
+            else:
+                session_dict['session_type'] = str(session_dict.get('session_type')).lower()
+
             session_dict['created_at'] = session_dict['created_at'].isoformat()
             session_dict['last_activity'] = session_dict['last_activity'].isoformat()
             session_dict['expires_at'] = session_dict['expires_at'].isoformat()
 
-            key = f"session:{session_id}"
+            key = self._session_key(session_id)
             if session.session_type == SessionType.USER:
                 expiry = self.user_session_duration
             else:
@@ -208,11 +262,11 @@ class SessionService:
         try:
             session = self.get_session(session_id)
             if session:
-                redis_client.redis_client.delete(f"session:{session_id}")
+                redis_client.redis_client.delete(self._session_key(session_id))
                 if session.user_id:
-                    redis_client.redis_client.delete(f"user_session:{session.user_id}")
+                    redis_client.redis_client.delete(f"{self._redis_user_session_prefix}{session.user_id}")
                 if session.guest_id:
-                    redis_client.redis_client.delete(f"guest_session:{session.guest_id}")
+                    redis_client.redis_client.delete(f"{self._redis_guest_session_prefix}{session.guest_id}")
                 logger.info(f"Deleted session: {session_id}")
                 return True
             return False
@@ -222,20 +276,18 @@ class SessionService:
 
     def cleanup_expired_sessions(self):
         try:
-            # FIX: This would need a more sophisticated approach for production
-            # Currently relying on Redis TTL
+            # rely on Redis TTL
             pass
         except Exception as e:
             logger.error(f"Failed to cleanup expired sessions: {e}")
 
     def is_session_active(self, session_id: str) -> bool:
         try:
-            return redis_client.redis_client.exists(f"session:{session_id}") > 0
+            return redis_client.redis_client.exists(self._session_key(session_id)) > 0
         except Exception as e:
             logger.error(f"Failed to check session activity {session_id}: {e}")
             return False
 
-    # NEW: Added method for cart migration
     def merge_carts(self, source_session_id: str, target_session_id: str) -> bool:
         try:
             source_session = self.get_session(source_session_id)
@@ -247,7 +299,6 @@ class SessionService:
             source_cart = source_session.cart_items.copy() if source_session.cart_items else {}
             target_cart = target_session.cart_items.copy() if target_session.cart_items else {}
 
-            # Merge carts - for duplicate items, sum quantities
             for product_key, item_data in source_cart.items():
                 if product_key in target_cart:
                     target_cart[product_key]['quantity'] += item_data['quantity']
@@ -266,22 +317,19 @@ class SessionService:
             return False
 
     def validate_and_repair_session(self, session_id: str) -> bool:
-        """Validate session data and repair if necessary"""
         try:
             session = self.get_session(session_id)
             if not session:
                 return False
 
-            # Ensure cart_items is always a dict, never None
             if session.cart_items is None:
                 session.cart_items = {}
                 self.update_session_data(session_id, {"cart_items": {}})
                 logger.info(f"Repaired session {session_id}: cart_items was None")
 
-            # Ensure session_type is valid
             if session.session_type not in [SessionType.GUEST, SessionType.USER]:
                 session.session_type = SessionType.GUEST
-                self.update_session_data(session_id, {"session_type": SessionType.GUEST})
+                self.update_session_data(session_id, {"session_type": SessionType.GUEST.value})
                 logger.info(f"Repaired session {session_id}: invalid session_type")
 
             return True

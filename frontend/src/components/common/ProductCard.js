@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { formatCurrency } from '../../utils/helpers';
-import { useCartContext } from '../../contexts/CartContext'; // CHANGE THIS
+import { useCartContext } from '../../contexts/CartContext';
 
 const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false }) => {
-  const { addToCart } = useCartContext(); // CHANGE THIS
+  const { addToCart } = useCartContext();
   const [addingToCart, setAddingToCart] = useState(false);
 
   const handleAddToCart = async (product) => {
@@ -15,16 +15,16 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
     try {
       setAddingToCart(true);
       console.log('ProductCard: Adding product to cart:', product.id);
-
       await addToCart(product.id, 1);
       console.log('ProductCard: Product added to cart successfully');
 
-      // Dispatch event to notify all components
+      // Dispatch custom event for other components to listen to
       const event = new CustomEvent('cartUpdated', {
         detail: { action: 'add', product }
       });
       document.dispatchEvent(event);
 
+      // Show success message
       alert(`${product.name} added to cart!`);
 
       if (onAddToCart) {
@@ -32,12 +32,11 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
       }
     } catch (error) {
       console.error('ProductCard: Failed to add to cart:', error);
-      alert('Failed to add product to cart. Please try again.');
+      alert(error.message || 'Failed to add product to cart. Please try again.');
     } finally {
       setAddingToCart(false);
     }
   };
-
 
   if (loading) {
     return (
@@ -99,7 +98,6 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             <span className="badge-out-of-stock">Out of Stock</span>
           )}
         </div>
-
         <img
           src={imageUrl}
           alt={name}
@@ -109,7 +107,6 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             e.target.src = '/assets/img/product/placeholder.jpg';
           }}
         />
-
         <div className="product-actions">
           <button className="action-btn wishlist-btn" title="Add to Wishlist">
             <i className="bi bi-heart"></i>
@@ -121,7 +118,6 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             <i className="bi bi-zoom-in"></i>
           </button>
         </div>
-
         <button
           className={`cart-btn ${stock_status !== 'in_stock' ? 'disabled' : ''}`}
           onClick={() => handleAddToCart(product)}
@@ -139,16 +135,13 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           )}
         </button>
       </div>
-
       <div className="product-info">
         <div className="product-category">
           {is_featured ? 'Featured' : is_bestseller ? 'Best Seller' : 'Premium'}
         </div>
-
         <h4 className="product-name">
           <a href={`/product/${slug}`}>{name}</a>
         </h4>
-
         <div className="product-rating">
           <div className="stars">
             <i className="bi bi-star-fill"></i>
@@ -159,7 +152,6 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           </div>
           <span className="rating-count">(24)</span>
         </div>
-
         <div className="product-price">
           {hasDiscount ? (
             <>

@@ -27,6 +27,7 @@ export const CartProvider = ({ children }) => {
       const cartData = await cartService.getCart();
       console.log('CartContext: Fetched cart data:', cartData);
 
+      // Ensure proper cart structure
       setCart({
         items: cartData.items || [],
         subtotal: cartData.subtotal || 0,
@@ -35,6 +36,12 @@ export const CartProvider = ({ children }) => {
     } catch (error) {
       console.error('CartContext: Error fetching cart:', error);
       setError(error.message);
+      // Set empty cart on error
+      setCart({
+        items: [],
+        subtotal: 0,
+        total_items: 0
+      });
     } finally {
       setLoading(false);
     }
@@ -45,8 +52,7 @@ export const CartProvider = ({ children }) => {
       setLoading(true);
       setError(null);
       await cartService.addToCart(productId, quantity, variationId);
-      // Refresh cart after successful add
-      await fetchCart();
+      await fetchCart(); // Refresh cart after adding
     } catch (error) {
       console.error('CartContext: Error adding to cart:', error);
       setError(error.message);
@@ -115,7 +121,7 @@ export const CartProvider = ({ children }) => {
     };
   }, []);
 
-  // Initial cart fetch
+  // Fetch cart on component mount
   useEffect(() => {
     fetchCart();
   }, []);

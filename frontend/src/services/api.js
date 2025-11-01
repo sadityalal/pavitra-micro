@@ -3,16 +3,24 @@ import axios from 'axios';
 const createApiInstance = (baseURL) => {
   const instance = axios.create({
     baseURL,
-    withCredentials: true, // This is CRUCIAL for session cookies to work
+    withCredentials: true, // THIS IS CRITICAL - ensures cookies are sent
   });
 
   instance.interceptors.request.use(
     (config) => {
-      console.log(`Making ${config.method?.toUpperCase()} request to: ${config.url}`);
+      console.log(`🚀 Making ${config.method?.toUpperCase()} request to: ${config.url}`);
+      console.log(`🍪 Cookies being sent:`, document.cookie);
+
       const token = localStorage.getItem('auth_token');
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
+        console.log(`🔐 Using auth token`);
+      } else {
+        console.log(`👤 Guest user - relying on session cookie`);
       }
+
+      // Double ensure credentials are included
+      config.withCredentials = true;
 
       if (config.data instanceof FormData) {
         delete config.headers['Content-Type'];
@@ -25,9 +33,17 @@ const createApiInstance = (baseURL) => {
   );
 
   instance.interceptors.response.use(
-    (response) => response,
+    (response) => {
+      console.log(`✅ Response received from: ${response.config.url}`);
+      // Check if response has set-cookie headers
+      if (response.headers['set-cookie']) {
+        console.log(`🍪 Server set cookies:`, response.headers['set-cookie']);
+      }
+      return response;
+    },
     (error) => {
-      console.error('API Error:', error);
+      console.error('❌ API Error:', error);
+      console.error('❌ Error response:', error.response?.data);
       return Promise.reject(error);
     }
   );
