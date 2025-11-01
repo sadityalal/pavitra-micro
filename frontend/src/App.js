@@ -7,8 +7,10 @@ import Layout from './components/layout/Layout.js';
 import HomePage from './pages/HomePage.js';
 import AuthPage from './pages/AuthPage.js';
 import CartPage from './pages/CartPage.js';
+import { useSession } from './hooks/useSession';
 
 function App() {
+  useSession(); // Initialize session for guest users
   useEffect(() => {
     const initializeScripts = () => {
       if (typeof bootstrap !== 'undefined') {
