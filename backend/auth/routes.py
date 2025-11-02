@@ -417,10 +417,36 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
-
     try:
         config.refresh_cache()
         settings = {
+            # Store Configuration (Admin Only)
+            'site_name': config.site_name,
+            'site_description': config.site_description,
+            'currency': config.currency,
+            'currency_symbol': config.currency_symbol,
+            'default_gst_rate': config.default_gst_rate,
+            'enable_guest_checkout': config.enable_guest_checkout,
+            'maintenance_mode': config.maintenance_mode,
+            'enable_reviews': config.enable_reviews,
+            'enable_wishlist': config.enable_wishlist,
+            'min_order_amount': config.min_order_amount,
+            'free_shipping_min_amount': config.free_shipping_min_amount,
+            'default_currency': config.default_currency,
+            'supported_currencies': config.supported_currencies,
+            'default_country': config.default_country,
+            'free_shipping_threshold': config.free_shipping_threshold,
+            'return_period_days': config.return_period_days,
+            'site_phone': config.site_phone,
+            'site_email': config.site_email,
+            'business_hours': config.business_hours,
+
+            # Cart & Business Limits (Admin Only)
+            'max_cart_quantity_per_product': config.max_cart_quantity_per_product,
+            'max_cart_items_total': config.max_cart_items_total,
+            'cart_session_timeout_minutes': config.cart_session_timeout_minutes,
+
+            # Backend/Infrastructure Settings (Admin Only)
             'app_debug': config.app_debug,
             'log_level': config.log_level,
             'cors_origins': config.cors_origins,
@@ -436,20 +462,7 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             'refund_processing_fee': config.refund_processing_fee,
             'app_name': config.app_name,
             'app_description': config.app_description,
-            'debug_mode': config.debug_mode,
-            'redis_host': config.redis_host,
-            'redis_port': config.redis_port,
-            'redis_password': config.redis_password,
-            'redis_db': config.redis_db,
-            'rabbitmq_host': config.rabbitmq_host,
-            'rabbitmq_port': config.rabbitmq_port,
-            'rabbitmq_user': config.rabbitmq_user,
-            'rabbitmq_password': config.rabbitmq_password,
-            'smtp_host': config.smtp_host,
-            'smtp_port': config.smtp_port,
-            'smtp_username': config.smtp_username,
-            'smtp_password': config.smtp_password,
-            'email_from': config.email_from
+            'debug_mode': config.debug_mode
         }
         return settings
     except Exception as e:
@@ -465,29 +478,40 @@ async def get_frontend_settings():
     try:
         config.refresh_cache()
         frontend_settings = {
+            # Public Store Information
             'site_name': config.site_name,
             'site_description': config.site_description,
+
+            # Currency & Pricing (Public)
             'currency': config.currency,
             'currency_symbol': config.currency_symbol,
             'min_order_amount': config.min_order_amount,
+
+            # Shipping (Public)
             'free_shipping_min_amount': config.free_shipping_min_amount,
-            'free_shipping_threshold': getattr(config, 'free_shipping_threshold', 0),
-            'return_period_days': getattr(config, 'return_period_days', 10),
+            'free_shipping_threshold': config.free_shipping_threshold,
+
+            # Returns & Policies (Public)
+            'return_period_days': config.return_period_days,
+
+            # Features (Public)
             'enable_reviews': config.enable_reviews,
             'enable_wishlist': config.enable_wishlist,
             'enable_guest_checkout': config.enable_guest_checkout,
-            'site_phone': getattr(config, 'site_phone', '+91-9711317009'),
-            'site_email': getattr(config, 'site_email', 'support@pavitraenterprises.com'),
-            'business_hours': getattr(config, 'business_hours', {
-                'monday_friday': '9am-6pm',
-                'saturday': '10am-4pm',
-                'sunday': 'Closed'
-            }),
-            'default_gst_rate': config.default_gst_rate,
-            'maintenance_mode': config.maintenance_mode,
-            'default_currency': config.default_currency,
-            'supported_currencies': config.supported_currencies,
-            'default_country': config.default_country
+
+            # Contact Information (Public)
+            'site_phone': config.site_phone,
+            'site_email': config.site_email,
+
+            # Business Hours (Public)
+            'business_hours': config.business_hours,
+
+            # Cart Limits (Public - needed for UI validation)
+            'max_cart_quantity_per_product': config.max_cart_quantity_per_product,
+            'max_cart_items_total': config.max_cart_items_total,
+
+            # Maintenance Mode (Public - needed for UI messaging)
+            'maintenance_mode': config.maintenance_mode
         }
         return frontend_settings
     except Exception as e:

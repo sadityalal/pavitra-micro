@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { cartService } from '../services/cartService';
+import { useAuth } from './AuthContext';
 
 const CartContext = createContext();
 
@@ -20,16 +21,16 @@ export const CartProvider = ({ children }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [sessionInitialized, setSessionInitialized] = useState(false);
+  const [sessionIssue, setSessionIssue] = useState(false);
 
-  // Initialize session for guest users
+  const { isAuthenticated, user } = useAuth();
+
   const initializeSession = async () => {
     if (sessionInitialized || localStorage.getItem('auth_token')) {
       return;
     }
-
     try {
       console.log('🔄 Initializing guest session...');
-      // Make a simple API call to ensure session is created
       const response = await fetch(
         `${process.env.REACT_APP_PRODUCT_URL || 'http://localhost:8002'}/api/v1/products/featured?page_size=1`,
         {
@@ -39,13 +40,31 @@ export const CartProvider = ({ children }) => {
           },
         }
       );
-      
       if (response.ok) {
         console.log('✅ Guest session initialized successfully');
         setSessionInitialized(true);
+        setSessionIssue(false);
       }
     } catch (error) {
       console.error('❌ Failed to initialize guest session:', error);
+      setSessionIssue(true);
+    }
+  };
+
+  const recoverSession = async () => {
+    try {
+      console.log('🔄 Attempting session recovery...');
+      setSessionInitialized(false);
+      await initializeSession();
+      if (sessionInitialized) {
+        console.log('✅ Session recovered successfully');
+        setSessionIssue(false);
+        return true;
+      }
+    } catch (error) {
+      console.error('❌ Session recovery failed:', error);
+      setSessionIssue(true);
+      return false;
     }
   };
 
@@ -53,31 +72,28 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-      
-      // Ensure session is initialized for guest users
       if (!localStorage.getItem('auth_token') && !sessionInitialized) {
         await initializeSession();
       }
-
       const cartData = await cartService.getCart();
       console.log('🛒 CartContext: Fetched cart data:', cartData);
-      
       setCart({
         items: cartData.items || [],
         subtotal: cartData.subtotal || 0,
         total_items: cartData.total_items || 0
       });
+      setSessionIssue(false);
     } catch (error) {
       console.error('🛒 CartContext: Error fetching cart:', error);
-      
-      // Don't reset cart on session errors - try to reinitialize
       if (error.response?.status === 401 || error.message?.includes('session')) {
         console.log('🔄 Session may be expired, trying to reinitialize...');
+        setSessionIssue(true);
         setSessionInitialized(false);
-        // Don't set error for session issues to avoid UI disruption
+
+        // Try to recover session
+        await recoverSession();
       } else {
         setError(error.message);
-        // Reset cart only on non-session errors
         setCart({
           items: [],
           subtotal: 0,
@@ -89,44 +105,54 @@ export const CartProvider = ({ children }) => {
     }
   };
 
+  useEffect(() => {
+    console.log('🔄 Auth state changed, refreshing cart...', { isAuthenticated, userId: user?.id });
+    fetchCart();
+  }, [isAuthenticated, user?.id]);
+
   const addToCart = async (productId, quantity = 1, variationId = null) => {
     try {
       setLoading(true);
       setError(null);
       console.log('🛒 Adding to cart with session cookies...');
-      
-      // Ensure session is initialized for guest users
+
       if (!localStorage.getItem('auth_token') && !sessionInitialized) {
         await initializeSession();
       }
 
       const result = await cartService.addToCart(productId, quantity, variationId);
       console.log('🛒 Add to cart result:', result);
-      
-      // Refresh cart after successful addition
       await fetchCart();
-      
+
+      // Dispatch cart updated event for real-time updates
+      const event = new CustomEvent('cartUpdated', {
+        detail: {
+          action: 'add',
+          productId,
+          quantity
+        }
+      });
+      document.dispatchEvent(event);
+
       return result;
     } catch (error) {
       console.error('🛒 CartContext: Error adding to cart:', error);
-      
-      // If it's a session issue, try to reinitialize and retry once
+
+      // If session issue, try to recover and retry once
       if ((error.response?.status === 401 || error.message?.includes('session')) && !sessionInitialized) {
-        console.log('🔄 Session issue detected, reinitializing and retrying...');
-        setSessionInitialized(false);
-        
-        // Small delay before retry
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        try {
-          await initializeSession();
-          const retryResult = await cartService.addToCart(productId, quantity, variationId);
-          await fetchCart();
-          return retryResult;
-        } catch (retryError) {
-          console.error('🛒 Retry failed:', retryError);
-          setError(retryError.message);
-          throw retryError;
+        console.log('🔄 Session issue detected, attempting recovery and retry...');
+        const recovered = await recoverSession();
+        if (recovered) {
+          try {
+            console.log('🔄 Retrying add to cart after session recovery...');
+            const retryResult = await cartService.addToCart(productId, quantity, variationId);
+            await fetchCart();
+            return retryResult;
+          } catch (retryError) {
+            console.error('🛒 Retry failed after session recovery:', retryError);
+            setError(retryError.message);
+            throw retryError;
+          }
         }
       } else {
         setError(error.message);
@@ -141,22 +167,17 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-      
-      // Ensure session is initialized for guest users
       if (!localStorage.getItem('auth_token') && !sessionInitialized) {
         await initializeSession();
       }
-
       await cartService.updateCartItem(cartItemId, quantity);
       await fetchCart();
     } catch (error) {
       console.error('🛒 CartContext: Error updating cart:', error);
-      
-      // Handle session issues
       if (error.response?.status === 401 || error.message?.includes('session')) {
+        setSessionIssue(true);
         setSessionInitialized(false);
       }
-      
       setError(error.message);
       throw error;
     } finally {
@@ -168,22 +189,17 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-      
-      // Ensure session is initialized for guest users
       if (!localStorage.getItem('auth_token') && !sessionInitialized) {
         await initializeSession();
       }
-
       await cartService.removeFromCart(cartItemId);
       await fetchCart();
     } catch (error) {
       console.error('🛒 CartContext: Error removing from cart:', error);
-      
-      // Handle session issues
       if (error.response?.status === 401 || error.message?.includes('session')) {
+        setSessionIssue(true);
         setSessionInitialized(false);
       }
-      
       setError(error.message);
       throw error;
     } finally {
@@ -195,22 +211,17 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-      
-      // Ensure session is initialized for guest users
       if (!localStorage.getItem('auth_token') && !sessionInitialized) {
         await initializeSession();
       }
-
       await cartService.clearCart();
       await fetchCart();
     } catch (error) {
       console.error('🛒 CartContext: Error clearing cart:', error);
-      
-      // Handle session issues
       if (error.response?.status === 401 || error.message?.includes('session')) {
+        setSessionIssue(true);
         setSessionInitialized(false);
       }
-      
       setError(error.message);
       throw error;
     } finally {
@@ -218,7 +229,6 @@ export const CartProvider = ({ children }) => {
     }
   };
 
-  // Debug function to check session status
   const debugSession = async () => {
     try {
       const response = await fetch(
@@ -230,7 +240,6 @@ export const CartProvider = ({ children }) => {
           },
         }
       );
-      
       if (response.ok) {
         const sessionInfo = await response.json();
         console.log('🔍 CartContext Session Debug:', sessionInfo);
@@ -248,10 +257,25 @@ export const CartProvider = ({ children }) => {
       fetchCart();
     };
 
+    const handleAuthStateChange = (event) => {
+      console.log('🔐 CartContext: Auth state change event received:', event.detail);
+      if (event.detail.action === 'logout') {
+        // Clear cart immediately on logout
+        setCart({
+          items: [],
+          subtotal: 0,
+          total_items: 0
+        });
+      }
+      fetchCart();
+    };
+
     document.addEventListener('cartUpdated', handleCartUpdate);
-    
+    document.addEventListener('authStateChanged', handleAuthStateChange);
+
     return () => {
       document.removeEventListener('cartUpdated', handleCartUpdate);
+      document.removeEventListener('authStateChanged', handleAuthStateChange);
     };
   }, []);
 
@@ -264,13 +288,15 @@ export const CartProvider = ({ children }) => {
     loading,
     error,
     sessionInitialized,
+    sessionIssue,
     addToCart,
     updateCartItem,
     removeFromCart,
     clearCart,
     refreshCart: fetchCart,
     debugSession,
-    initializeSession
+    initializeSession,
+    recoverSession
   };
 
   return (

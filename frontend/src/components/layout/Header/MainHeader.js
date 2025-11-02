@@ -1,24 +1,50 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useSettings } from '../../../contexts/SettingsContext';
 import { useAuth } from '../../../contexts/AuthContext';
-import { useCartContext } from '../../../contexts/CartContext'; // CHANGE THIS
+import { useCartContext } from '../../../contexts/CartContext';
 
 const MainHeader = () => {
   const { frontendSettings } = useSettings();
   const { isAuthenticated, user, logout } = useAuth();
-  const { cart, loading: cartLoading } = useCartContext(); // CHANGE THIS
+  const { cart, loading: cartLoading } = useCartContext();
+  const [cartItemCount, setCartItemCount] = useState(0);
+
+  // Update cart count when cart changes
+  useEffect(() => {
+    const totalItems = cart?.total_items || cart?.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0;
+    setCartItemCount(totalItems);
+  }, [cart]);
+
+  // Listen for cart update events
+  useEffect(() => {
+    const handleCartUpdate = () => {
+      console.log('🛒 MainHeader: Cart update event received');
+      // Cart count will be updated via the cart context dependency above
+    };
+
+    const handleAuthStateChange = () => {
+      console.log('🔐 MainHeader: Auth state change event received');
+      // Cart count will be updated via the cart context dependency above
+    };
+
+    document.addEventListener('cartUpdated', handleCartUpdate);
+    document.addEventListener('authStateChanged', handleAuthStateChange);
+
+    return () => {
+      document.removeEventListener('cartUpdated', handleCartUpdate);
+      document.removeEventListener('authStateChanged', handleAuthStateChange);
+    };
+  }, []);
 
   const handleLogout = async () => {
     try {
       await logout();
+      // Cart will be cleared automatically via the authStateChanged event
     } catch (error) {
       console.error('Logout failed:', error);
     }
   };
-
-  // Use the total_items from cart context
-  const totalCartItems = cart?.total_items || 0;
 
   return (
     <div className="main-header">
@@ -27,7 +53,6 @@ const MainHeader = () => {
           <Link to="/" className="logo d-flex align-items-center">
             <h1 className="sitename">{frontendSettings.site_name || 'Pavitra Trading'}</h1>
           </Link>
-
           <form className="search-form desktop-search-form">
             <div className="input-group">
               <input type="text" className="form-control" placeholder="Search for products" />
@@ -36,12 +61,10 @@ const MainHeader = () => {
               </button>
             </div>
           </form>
-
           <div className="header-actions d-flex align-items-center justify-content-end">
             <button className="header-action-btn mobile-search-toggle d-xl-none" type="button">
               <i className="bi bi-search"></i>
             </button>
-
             <div className="dropdown account-dropdown">
               <button className="header-action-btn" data-bs-toggle="dropdown">
                 <i className="bi bi-person"></i>
@@ -78,16 +101,14 @@ const MainHeader = () => {
                 )}
               </div>
             </div>
-
             <Link to="/wishlist" className="header-action-btn d-none d-md-block">
               <i className="bi bi-heart"></i>
             </Link>
-
             <Link to="/cart" className="header-action-btn position-relative">
               <i className="bi bi-cart3"></i>
-              {!cartLoading && totalCartItems > 0 ? (
+              {!cartLoading && cartItemCount > 0 ? (
                 <span className="badge bg-primary position-absolute top-0 start-100 translate-middle">
-                  {totalCartItems > 99 ? '99+' : totalCartItems}
+                  {cartItemCount > 99 ? '99+' : cartItemCount}
                 </span>
               ) : (
                 <span className="badge bg-secondary position-absolute top-0 start-100 translate-middle" style={{opacity: 0.5}}>

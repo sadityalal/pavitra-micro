@@ -1,4 +1,3 @@
-// frontend/src/contexts/SettingsContext.js
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { authService } from '../services/authService';
 import { useAuth } from './AuthContext';
@@ -20,42 +19,34 @@ export const SettingsProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const { isAuthenticated, isAdmin } = useAuth();
 
-  // Fetch public frontend settings (no auth required)
   const fetchFrontendSettings = async () => {
     try {
       setLoading(true);
       setError(null);
-
       const frontendSettingsData = await authService.getFrontendSettings();
       setFrontendSettings(frontendSettingsData);
-
     } catch (err) {
       console.error('Failed to fetch frontend settings:', err);
       setError(err.message);
-      // Fallback to default frontend settings
       setFrontendSettings(getDefaultFrontendSettings());
     } finally {
       setLoading(false);
     }
   };
 
-  // Fetch admin site settings (requires authentication and admin role)
   const fetchSiteSettings = async () => {
     if (!isAuthenticated || !isAdmin()) {
       console.log('Skipping site settings fetch - user not admin');
       return;
     }
-
     try {
       const siteSettingsData = await authService.getSiteSettings();
       setSiteSettings(siteSettingsData);
     } catch (err) {
       console.error('Failed to fetch site settings:', err);
-      // Don't set error for site settings since it's admin-only
     }
   };
 
-  // Refresh all settings
   const refreshSettings = async () => {
     await fetchFrontendSettings();
     if (isAuthenticated && isAdmin()) {
@@ -67,7 +58,6 @@ export const SettingsProvider = ({ children }) => {
     fetchFrontendSettings();
   }, []);
 
-  // Fetch site settings when user becomes admin
   useEffect(() => {
     if (isAuthenticated && isAdmin()) {
       fetchSiteSettings();
@@ -75,24 +65,14 @@ export const SettingsProvider = ({ children }) => {
   }, [isAuthenticated, isAdmin]);
 
   const value = {
-    // Public frontend settings for all users
     frontendSettings,
-
-    // Admin-only site settings (empty object for non-admins)
     siteSettings,
-
-    // Combined settings for backward compatibility (only frontend settings for public)
-    settings: frontendSettings,
-
+    settings: frontendSettings, // Use frontend settings for public components
     loading,
     error,
-
-    // Refresh functions
     refreshFrontendSettings: fetchFrontendSettings,
     refreshSiteSettings: fetchSiteSettings,
     refreshSettings,
-
-    // Helper to check if user can access admin settings
     canAccessAdminSettings: isAuthenticated && isAdmin()
   };
 

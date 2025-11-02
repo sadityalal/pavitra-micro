@@ -60,13 +60,21 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.login(credentials);
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
-        setUser({
+        const userData = {
           id: 'user_id',
           email: credentials.login_id,
           roles: response.user_roles || [],
           permissions: response.user_permissions || []
-        });
+        };
+        setUser(userData);
         setIsAuthenticated(true);
+
+        // Trigger cart refresh after login
+        const cartEvent = new CustomEvent('authStateChanged', {
+          detail: { action: 'login', user: userData }
+        });
+        document.dispatchEvent(cartEvent);
+
         success('Login successful! Welcome back.');
         return response;
       }
@@ -94,6 +102,12 @@ export const AuthProvider = ({ children }) => {
       await authService.logout();
       success('You have been successfully logged out');
 
+      // Clear cart state immediately
+      const cartEvent = new CustomEvent('authStateChanged', {
+        detail: { action: 'logout' }
+      });
+      document.dispatchEvent(cartEvent);
+
       setTimeout(() => {
         navigate('/');
       }, 500);
@@ -101,10 +115,15 @@ export const AuthProvider = ({ children }) => {
       console.error('Logout error:', err);
       error('There was an issue during logout, but you have been logged out locally.');
 
+      // Still clear cart state even if logout API fails
+      const cartEvent = new CustomEvent('authStateChanged', {
+        detail: { action: 'logout' }
+      });
+      document.dispatchEvent(cartEvent);
+
       localStorage.removeItem('auth_token');
       setUser(null);
       setIsAuthenticated(false);
-
       setTimeout(() => {
         navigate('/');
       }, 1500);
@@ -122,15 +141,23 @@ export const AuthProvider = ({ children }) => {
       const response = await authService.register(userData);
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
-        setUser({
+        const userData = {
           id: 'user_id',
           email: userData.email,
           first_name: userData.first_name,
           last_name: userData.last_name,
           roles: response.user_roles || ['customer'],
           permissions: response.user_permissions || []
-        });
+        };
+        setUser(userData);
         setIsAuthenticated(true);
+
+        // Trigger cart refresh after registration
+        const cartEvent = new CustomEvent('authStateChanged', {
+          detail: { action: 'register', user: userData }
+        });
+        document.dispatchEvent(cartEvent);
+
         success('Registration successful! Welcome to our platform.');
         return response;
       }
@@ -207,6 +234,7 @@ export const AuthProvider = ({ children }) => {
   };
 
   const refreshUser = async () => {
+    // Implementation for refreshing user data
   };
 
   const value = {

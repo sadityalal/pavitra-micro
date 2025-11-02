@@ -18,21 +18,12 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
       await addToCart(product.id, 1);
       console.log('ProductCard: Product added to cart successfully');
 
-      // Dispatch custom event for other components to listen to
-      const event = new CustomEvent('cartUpdated', {
-        detail: { action: 'add', product }
-      });
-      document.dispatchEvent(event);
-
-      // Show success message
-//      alert(`${product.name} added to cart!`);
-
       if (onAddToCart) {
         onAddToCart(product);
       }
     } catch (error) {
       console.error('ProductCard: Failed to add to cart:', error);
-//      alert(error.message || 'Failed to add product to cart. Please try again.');
+      alert(error.message || 'Failed to add product to cart');
     } finally {
       setAddingToCart(false);
     }

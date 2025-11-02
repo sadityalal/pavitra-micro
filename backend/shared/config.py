@@ -48,7 +48,13 @@ class DatabaseConfig:
         try:
             connection = db.get_connection()
             cursor = connection.cursor(dictionary=True)
-            cursor.execute("SELECT MAX(updated_at) as last_update FROM site_settings")
+            # Check both tables for updates
+            cursor.execute("""
+                SELECT MAX(GREATEST(
+                    COALESCE((SELECT MAX(updated_at) FROM site_settings), '1970-01-01'),
+                    COALESCE((SELECT MAX(updated_at) FROM frontend_settings), '1970-01-01')
+                )) as last_update
+            """)
             result = cursor.fetchone()
             if result and result['last_update']:
                 # Convert timestamp to version number
@@ -65,6 +71,7 @@ class DatabaseConfig:
                 connection.close()
 
     def _get_setting(self, key: str, default: Any = None) -> Any:
+        """Get setting from site_settings table (admin/backend settings)"""
         self._check_settings_version()
         current_time = time.time()
 
@@ -97,7 +104,7 @@ class DatabaseConfig:
                 value = self._convert_value_by_type(result['setting_value'], db_type)
                 self._cache[key] = value
                 self._cache_timestamps[key] = current_time
-                logger.debug(f"Loaded setting {key} from database: {value}")
+                logger.debug(f"Loaded setting {key} from site_settings: {value}")
                 return value
 
             return default
@@ -105,14 +112,14 @@ class DatabaseConfig:
         except Exception as e:
             # FIX: Don't log warnings for expected database unavailability during startup
             if "connection" not in str(e).lower() or "not available" not in str(e).lower():
-                logger.warning(f"Failed to get {key} from database: {e}, using default: {default}")
+                logger.warning(f"Failed to get {key} from site_settings: {e}, using default: {default}")
             return default
         finally:
             if connection and connection.is_connected():
                 connection.close()
 
     def get_frontend_setting(self, key: str, default: Any = None) -> Any:
-        """Get frontend-specific settings (publicly accessible)"""
+        """Get setting from frontend_settings table (public settings)"""
         self._check_settings_version()
         current_time = time.time()
 
@@ -121,6 +128,15 @@ class DatabaseConfig:
                 cache_key in self._cache_timestamps and
                 current_time - self._cache_timestamps[cache_key] < self._cache_duration):
             return self._cache[cache_key]
+
+        # Check environment first
+        env_key = key.upper()
+        if env_key in os.environ:
+            value = os.environ[env_key]
+            value = self._convert_value(value, type(default))
+            self._cache[cache_key] = value
+            self._cache_timestamps[cache_key] = current_time
+            return value
 
         db = self._get_db()
         if not db:
@@ -141,6 +157,17 @@ class DatabaseConfig:
                 value = self._convert_value_by_type(result['setting_value'], result['setting_type'])
                 self._cache[cache_key] = value
                 self._cache_timestamps[cache_key] = current_time
+                logger.debug(f"Loaded frontend setting {key} from frontend_settings: {value}")
+                return value
+
+            # Fallback to site_settings if not found in frontend_settings
+            cursor.execute("SELECT setting_value, setting_type FROM site_settings WHERE setting_key = %s", (key,))
+            result = cursor.fetchone()
+            if result:
+                value = self._convert_value_by_type(result['setting_value'], result['setting_type'])
+                self._cache[cache_key] = value
+                self._cache_timestamps[cache_key] = current_time
+                logger.debug(f"Loaded frontend setting {key} from site_settings (fallback): {value}")
                 return value
 
             return default
@@ -218,6 +245,8 @@ class DatabaseConfig:
         self._settings_version = 0
         self._last_settings_check = 0
         logger.info("Configuration cache forcefully refreshed")
+
+    # ===== BACKEND/ADMIN SETTINGS (site_settings table) =====
 
     @property
     def db_host(self) -> str:
@@ -314,28 +343,12 @@ class DatabaseConfig:
         return self._get_setting('email_from_name', 'Pavitra Trading')
 
     @property
-    def site_name(self) -> str:
-        return self._get_setting('site_name', 'Pavitra Trading')
-
-    @property
-    def site_description(self) -> str:
-        return self._get_setting('site_description', 'Your trusted online shopping destination')
-
-    @property
     def app_name(self) -> str:
         return self._get_setting('app_name', 'Pavitra Trading')
 
     @property
     def app_description(self) -> str:
         return self._get_setting('app_description', 'E-commerce Platform')
-
-    @property
-    def currency(self) -> str:
-        return self._get_setting('currency', 'INR')
-
-    @property
-    def currency_symbol(self) -> str:
-        return self._get_setting('currency_symbol', '₹')
 
     @property
     def default_currency(self) -> str:
@@ -354,37 +367,12 @@ class DatabaseConfig:
         return self._get_setting('default_gst_rate', 18.0)
 
     @property
-    def enable_guest_checkout(self) -> bool:
-        return self.get_frontend_setting('enable_guest_checkout', True)
-
-    @property
-    def maintenance_mode(self) -> bool:
-        # IMPORTANT: Default should be False, not True
-        return self._get_setting('maintenance_mode', False)
-
-    @property
     def debug_mode(self) -> bool:
         return self._get_setting('debug_mode', False)
 
     @property
     def app_debug(self) -> bool:
         return self._get_setting('app_debug', False)
-
-    @property
-    def enable_reviews(self) -> bool:
-        return self.get_frontend_setting('enable_reviews', True)
-
-    @property
-    def enable_wishlist(self) -> bool:
-        return self.get_frontend_setting('enable_wishlist', True)
-
-    @property
-    def min_order_amount(self) -> float:
-        return self.get_frontend_setting('min_order_amount', 0.0)
-
-    @property
-    def free_shipping_min_amount(self) -> float:
-        return self.get_frontend_setting('free_shipping_min_amount', 500.0)
 
     @property
     def log_level(self) -> str:
@@ -463,30 +451,6 @@ class DatabaseConfig:
         return os.getenv('UPLOAD_PATH', '/app/uploads')
 
     @property
-    def free_shipping_threshold(self) -> float:
-        return self.get_frontend_setting('free_shipping_threshold', 999.0)
-
-    @property
-    def return_period_days(self) -> int:
-        return self.get_frontend_setting('return_period_days', 10)
-
-    @property
-    def site_phone(self) -> str:
-        return self._get_setting('site_phone', '+91-9711317009')
-
-    @property
-    def site_email(self) -> str:
-        return self._get_setting('site_email', 'support@pavitraenterprises.com')
-
-    @property
-    def business_hours(self) -> Dict[str, str]:
-        return self._get_setting('business_hours', {
-            'monday_friday': '9am-6pm',
-            'saturday': '10am-4pm',
-            'sunday': 'Closed'
-        })
-
-    @property
     def telegram_notifications(self) -> bool:
         return self._get_setting('telegram_notifications', False)
 
@@ -509,6 +473,86 @@ class DatabaseConfig:
     @property
     def whatsapp_api_token(self) -> str:
         return self._get_setting('whatsapp_api_token', '')
+
+    # ===== FRONTEND/PUBLIC SETTINGS (frontend_settings table) =====
+
+    @property
+    def site_name(self) -> str:
+        return self.get_frontend_setting('site_name', 'Pavitra Trading')
+
+    @property
+    def site_description(self) -> str:
+        return self.get_frontend_setting('site_description', 'Your trusted online shopping destination')
+
+    @property
+    def currency(self) -> str:
+        return self.get_frontend_setting('currency', 'INR')
+
+    @property
+    def currency_symbol(self) -> str:
+        return self.get_frontend_setting('currency_symbol', '₹')
+
+    @property
+    def maintenance_mode(self) -> bool:
+        return self.get_frontend_setting('maintenance_mode', False)
+
+    @property
+    def enable_reviews(self) -> bool:
+        return self.get_frontend_setting('enable_reviews', True)
+
+    @property
+    def enable_wishlist(self) -> bool:
+        return self.get_frontend_setting('enable_wishlist', True)
+
+    @property
+    def enable_guest_checkout(self) -> bool:
+        return self.get_frontend_setting('enable_guest_checkout', True)
+
+    @property
+    def min_order_amount(self) -> float:
+        return self.get_frontend_setting('min_order_amount', 0.0)
+
+    @property
+    def free_shipping_min_amount(self) -> float:
+        return self.get_frontend_setting('free_shipping_min_amount', 500.0)
+
+    @property
+    def free_shipping_threshold(self) -> float:
+        return self.get_frontend_setting('free_shipping_threshold', 999.0)
+
+    @property
+    def return_period_days(self) -> int:
+        return self.get_frontend_setting('return_period_days', 10)
+
+    @property
+    def site_phone(self) -> str:
+        return self.get_frontend_setting('site_phone', '+91-9711317009')
+
+    @property
+    def site_email(self) -> str:
+        return self.get_frontend_setting('site_email', 'support@pavitraenterprises.com')
+
+    @property
+    def business_hours(self) -> Dict[str, str]:
+        return self.get_frontend_setting('business_hours', {
+            'monday_friday': '9am-6pm',
+            'saturday': '10am-4pm',
+            'sunday': 'Closed'
+        })
+
+    # ===== CART LIMIT SETTINGS (frontend_settings table) =====
+
+    @property
+    def max_cart_quantity_per_product(self) -> int:
+        return self.get_frontend_setting('max_cart_quantity_per_product', 20)
+
+    @property
+    def max_cart_items_total(self) -> int:
+        return self.get_frontend_setting('max_cart_items_total', 50)
+
+    @property
+    def cart_session_timeout_minutes(self) -> int:
+        return self.get_frontend_setting('cart_session_timeout_minutes', 30)
 
 
 config = DatabaseConfig()

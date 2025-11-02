@@ -871,7 +871,6 @@ async def add_to_cart(
 ):
     try:
         await rate_limiter.check_rate_limit(request)
-
         if quantity < 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -885,7 +884,6 @@ async def add_to_cart(
                 WHERE id = %s AND status = 'active'
             """, (product_id,))
             product = cursor.fetchone()
-
             if not product:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -898,13 +896,21 @@ async def add_to_cart(
                     detail="Product is out of stock"
                 )
 
+            # Get max cart quantity from settings
+            config.refresh_cache()
+            max_cart_quantity = getattr(config, 'max_cart_quantity_per_product', 20)
+            product_max_quantity = product['max_cart_quantity']
+            if product_max_quantity:
+                max_quantity = min(product_max_quantity, max_cart_quantity)
+            else:
+                max_quantity = max_cart_quantity
+
             if quantity > product['stock_quantity'] and product['stock_status'] != 'on_backorder':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Only {product['stock_quantity']} items available in stock"
                 )
 
-            max_quantity = min(product['max_cart_quantity'] or 20, product['stock_quantity'])
             if quantity > max_quantity:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -914,8 +920,18 @@ async def add_to_cart(
         session = current_user_or_guest.get('session')
         session_id = get_session_id(request)
 
+        # If user is authenticated but session is still guest type, force refresh
+        if not current_user_or_guest.get('is_guest') and session and session.session_type == SessionType.GUEST:
+            logger.info("🔄 Force refreshing session type from GUEST to USER")
+            session_service.update_session_data(session_id, {
+                "session_type": SessionType.USER,
+                "user_id": current_user_or_guest['user_id'],
+                "guest_id": None
+            })
+            # Refresh session object
+            session = session_service.get_session(session_id)
+
         if session and current_user_or_guest.get('session_based') and session_id:
-            # Guest user with session - add to session cart
             try:
                 cart_items = session.cart_items.copy() if session.cart_items is not None else {}
                 item_key = f"{product_id}_{variation_id}" if variation_id else str(product_id)
@@ -939,26 +955,22 @@ async def add_to_cart(
                     "cart_items": cart_items,
                     "last_activity": datetime.utcnow()
                 })
-
                 if success:
                     logger.info(f"Product {product_id} added to session cart")
                     return {"message": "Product added to cart", "session_based": True}
                 else:
                     logger.warning("Failed to update session cart")
-
             except HTTPException:
                 raise
             except Exception as e:
                 logger.error(f"Session cart update failed: {e}")
 
         if current_user_or_guest.get('is_guest'):
-            # Guest user without session - use cached cart
             guest_id = current_user_or_guest['guest_id']
             guest_cart = get_cached_guest_cart(guest_id) or {"items": [], "subtotal": 0.0, "total_items": 0}
             cache_guest_cart(guest_id, guest_cart)
             return {"message": "Product added to cart", "guest_id": guest_id, "session_based": False}
         else:
-            # Logged in user - add to database cart
             user_id = current_user_or_guest['user_id']
             with db.get_cursor() as cursor:
                 cursor.execute("""
@@ -989,7 +1001,6 @@ async def add_to_cart(
                 redis_client.delete(f"user_cart:{user_id}")
                 logger.info(f"Product {product_id} added to database cart for user {user_id}")
                 return {"message": "Product added to cart", "session_based": False}
-
     except HTTPException:
         raise
     except Exception as e:
@@ -1248,13 +1259,21 @@ async def migrate_session_cart_to_user(
                     variation_id = item_data.get('variation_id')
                     quantity = item_data['quantity']
 
+                    # Validate product before migration
                     cursor.execute("SELECT id, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
                                    (product_id,))
                     product = cursor.fetchone()
                     if not product:
                         continue
 
-                    max_quantity = product['max_cart_quantity'] or 20
+                    # Get max cart quantity from settings
+                    config.refresh_cache()
+                    max_cart_quantity = getattr(config, 'max_cart_quantity_per_product', 20)
+                    product_max_quantity = product['max_cart_quantity']
+                    if product_max_quantity:
+                        max_quantity = min(product_max_quantity, max_cart_quantity)
+                    else:
+                        max_quantity = max_cart_quantity
 
                     cursor.execute("""
                         SELECT id, quantity FROM shopping_cart
@@ -1264,6 +1283,7 @@ async def migrate_session_cart_to_user(
                     existing_item = cursor.fetchone()
 
                     if existing_item:
+                        # Merge quantities, respecting maximum limits
                         new_quantity = min(existing_item['quantity'] + quantity, max_quantity)
                         cursor.execute("""
                             UPDATE shopping_cart
@@ -1271,19 +1291,31 @@ async def migrate_session_cart_to_user(
                             WHERE id = %s
                         """, (new_quantity, existing_item['id']))
                     else:
+                        # Add new item with quantity limit
                         cursor.execute("""
                             INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
                             VALUES (%s, %s, %s, %s)
                         """, (user_id, product_id, variation_id, min(quantity, max_quantity)))
 
                     migrated_count += 1
+
                 except Exception as e:
                     logger.error(f"Failed to migrate cart item {item_key}: {e}")
                     continue
 
         session_service.update_session_data(session_id, {"cart_items": {}})
+        refreshed_session = session_service.get_session(session_id)
+        if refreshed_session:
+            session_service.update_session_data(session_id, {
+                "session_type": SessionType.USER,
+                "user_id": user_id,
+                "guest_id": None,
+                "cart_items": {}
+            })
+
         redis_client.delete(f"user_cart:{user_id}")
         logger.info(f"Cart migrated to user database for user {user_id}, {migrated_count} items migrated")
+
         return {
             "message": "Cart migrated successfully",
             "items_migrated": migrated_count,

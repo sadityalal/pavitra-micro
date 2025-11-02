@@ -20,16 +20,11 @@ logger = get_logger(__name__)
 
 
 def validate_product_for_cart(product_id: int, quantity: int, variation_id: Optional[int] = None) -> dict:
-    """
-    Validate if a product can be added to cart with the given quantity
-    Returns product data if valid, raises HTTPException if not
-    """
     try:
         with db.get_cursor() as cursor:
-            # Get product details with inventory information
             query = """
-                SELECT 
-                    p.id, p.name, p.sku, p.base_price, p.stock_quantity, 
+                SELECT
+                    p.id, p.name, p.sku, p.base_price, p.stock_quantity,
                     p.stock_status, p.max_cart_quantity, p.status,
                     p.track_inventory, p.low_stock_threshold
                 FROM products p
@@ -37,64 +32,63 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
             """
             cursor.execute(query, (product_id,))
             product = cursor.fetchone()
-
             if not product:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found or not available"
                 )
+            config.refresh_cache()
+            max_cart_quantity = getattr(config, 'max_cart_quantity_per_product', 20)
 
-            # Check if product is active
+            # Use product-specific limit if available, otherwise use global setting
+            product_max_quantity = product['max_cart_quantity']
+            if product_max_quantity:
+                max_quantity = min(product_max_quantity, max_cart_quantity)
+            else:
+                max_quantity = max_cart_quantity
+
             if product['status'] != 'active':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Product is not available"
                 )
 
-            # Check stock status
             if product['stock_status'] == 'out_of_stock':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Product is out of stock"
                 )
 
-            # Check if we have enough stock
             if product['track_inventory'] and product['stock_status'] != 'on_backorder':
                 if quantity > product['stock_quantity'] and product['stock_status'] != 'on_backorder':
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Insufficient stock available"  # GENERIC MESSAGE
+                        detail="Insufficient stock available"
                     )
 
-            # Check maximum cart quantity
-            max_quantity = product['max_cart_quantity'] or 20  # Default to 20 if not set
             if quantity > max_quantity:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Maximum {max_quantity} items can be added to cart per order"
                 )
 
-            # For variable products, check variation stock if variation_id is provided
             if variation_id:
                 cursor.execute("""
                     SELECT stock_quantity, stock_status
-                    FROM product_variations 
+                    FROM product_variations
                     WHERE id = %s AND product_id = %s
                 """, (variation_id, product_id))
                 variation = cursor.fetchone()
-
                 if not variation:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Product variation not found"
                     )
-
                 if variation['stock_status'] == 'out_of_stock':
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Product variation is out of stock"
                     )
-
                 if quantity > variation['stock_quantity'] and variation['stock_status'] != 'on_backorder':
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -110,7 +104,6 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
                 'max_cart_quantity': max_quantity,
                 'track_inventory': bool(product['track_inventory'])
             }
-
     except HTTPException:
         raise
     except Exception as e:
@@ -538,6 +531,7 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
     try:
         config.refresh_cache()
         settings = {
+            # Store Configuration (Admin Only)
             'site_name': config.site_name,
             'site_description': config.site_description,
             'currency': config.currency,
@@ -552,6 +546,18 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             'default_currency': config.default_currency,
             'supported_currencies': config.supported_currencies,
             'default_country': config.default_country,
+            'free_shipping_threshold': config.free_shipping_threshold,
+            'return_period_days': config.return_period_days,
+            'site_phone': config.site_phone,
+            'site_email': config.site_email,
+            'business_hours': config.business_hours,
+
+            # Cart & Business Limits (Admin Only)
+            'max_cart_quantity_per_product': config.max_cart_quantity_per_product,
+            'max_cart_items_total': config.max_cart_items_total,
+            'cart_session_timeout_minutes': config.cart_session_timeout_minutes,
+
+            # Backend/Infrastructure Settings (Admin Only)
             'app_debug': config.app_debug,
             'log_level': config.log_level,
             'cors_origins': config.cors_origins,
@@ -567,16 +573,7 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             'refund_processing_fee': config.refund_processing_fee,
             'app_name': config.app_name,
             'app_description': config.app_description,
-            'debug_mode': config.debug_mode,
-            'free_shipping_threshold': getattr(config, 'free_shipping_threshold', 999),
-            'return_period_days': getattr(config, 'return_period_days', 10),
-            'site_phone': getattr(config, 'site_phone', '+91-9711317009'),
-            'site_email': getattr(config, 'site_email', 'support@pavitraenterprises.com'),
-            'business_hours': getattr(config, 'business_hours', {
-                'monday_friday': '9am-6pm',
-                'saturday': '10am-4pm',
-                'sunday': 'Closed'
-            })
+            'debug_mode': config.debug_mode
         }
         return settings
     except Exception as e:
@@ -592,23 +589,40 @@ async def get_frontend_settings():
     try:
         config.refresh_cache()
         frontend_settings = {
+            # Public Store Information
             'site_name': config.site_name,
+            'site_description': config.site_description,
+
+            # Currency & Pricing (Public)
             'currency': config.currency,
             'currency_symbol': config.currency_symbol,
             'min_order_amount': config.min_order_amount,
+
+            # Shipping (Public)
             'free_shipping_min_amount': config.free_shipping_min_amount,
-            'free_shipping_threshold': getattr(config, 'free_shipping_threshold', 999),
-            'return_period_days': getattr(config, 'return_period_days', 10),
+            'free_shipping_threshold': config.free_shipping_threshold,
+
+            # Returns & Policies (Public)
+            'return_period_days': config.return_period_days,
+
+            # Features (Public)
             'enable_reviews': config.enable_reviews,
             'enable_wishlist': config.enable_wishlist,
             'enable_guest_checkout': config.enable_guest_checkout,
-            'site_phone': getattr(config, 'site_phone', '+91-9711317009'),
-            'site_email': getattr(config, 'site_email', 'support@pavitraenterprises.com'),
-            'business_hours': getattr(config, 'business_hours', {
-                'monday_friday': '9am-6pm',
-                'saturday': '10am-4pm',
-                'sunday': 'Closed'
-            })
+
+            # Contact Information (Public)
+            'site_phone': config.site_phone,
+            'site_email': config.site_email,
+
+            # Business Hours (Public)
+            'business_hours': config.business_hours,
+
+            # Cart Limits (Public - needed for UI validation)
+            'max_cart_quantity_per_product': config.max_cart_quantity_per_product,
+            'max_cart_items_total': config.max_cart_items_total,
+
+            # Maintenance Mode (Public - needed for UI messaging)
+            'maintenance_mode': config.maintenance_mode
         }
         return frontend_settings
     except Exception as e:
