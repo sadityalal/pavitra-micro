@@ -3,6 +3,8 @@ from typing import Optional, List
 import time
 import json
 from datetime import datetime, timedelta
+import re
+
 from shared import (
     config, db, verify_password, get_password_hash,
     create_access_token, verify_token, validate_email,
@@ -11,83 +13,77 @@ from shared import (
 from shared.auth_middleware import get_current_user, require_roles, blacklist_token
 from shared.session_service import session_service, SessionType
 from shared.session_middleware import get_session, get_session_id
+from shared.security import validate_password_strength
 from .models import (
     UserCreate, UserLogin, Token, UserResponse,
     RoleResponse, PermissionCheck, HealthResponse
 )
-import re
-
-from shared.security import validate_password_strength
 
 router = APIRouter()
 logger = get_logger(__name__)
 
-
-def blacklist_token(token: str, expire: int = 86400):
-    try:
-        success = redis_client.setex(
-            f"token_blacklist:{token}",
-            expire,
-            "blacklisted"
-        )
-        if success:
-            logger.info(f"Token blacklisted successfully")
-        else:
-            logger.error(f"Failed to blacklist token in Redis")
-        return success
-    except Exception as e:
-        logger.error(f"Failed to blacklist token: {e}")
-        return False
-
-
-def is_token_blacklisted(token: str) -> bool:
-    try:
-        return redis_client.exists(f"token_blacklist:{token}")
-    except Exception as e:
-        logger.error(f"Failed to check token blacklist: {e}")
-        return False
+# Constants for better maintainability
+RATE_LIMIT_WINDOW = 900  # 15 minutes
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+TOKEN_EXPIRY_HOURS = 24
+SESSION_TIMEOUT = 3600
 
 
 def get_client_identifier(request: Request) -> str:
+    """Generate a unique identifier for rate limiting based on client IP and user agent."""
     client_ip = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("user-agent", "unknown")
     return f"{client_ip}:{hash(user_agent) % 10000}"
 
 
 def check_rate_limit(key: str, max_attempts: int, window_seconds: int) -> bool:
+    """Check if request is within rate limits."""
     try:
         current_time = int(time.time())
         window_start = current_time // window_seconds
         rate_key = f"rate_limit:{key}:{window_start}"
+
         current_attempts = redis_client.incr(rate_key)
         if current_attempts == 1:
             redis_client.expire(rate_key, window_seconds)
+
         return current_attempts <= max_attempts
     except Exception as e:
         logger.error(f"Rate limit check failed: {e}")
-        return True
+        return True  # Fail open to avoid blocking users
 
 
-def track_failed_login(identifier: str, max_attempts: int = 5, lockout_minutes: int = 15):
+def track_failed_login(identifier: str, max_attempts: int = MAX_LOGIN_ATTEMPTS,
+                       lockout_minutes: int = LOCKOUT_MINUTES) -> bool:
+    """Track failed login attempts and implement lockout."""
     try:
         fail_key = f"login_fails:{identifier}"
         lockout_key = f"login_lockout:{identifier}"
+
+        # Check if already locked out
         if redis_client.exists(lockout_key):
             return False
+
+        # Increment failure count
         failures = redis_client.incr(fail_key)
         if failures == 1:
-            redis_client.expire(fail_key, 3600)
+            redis_client.expire(fail_key, 3600)  # 1 hour TTL for failure counter
+
+        # Implement lockout if max attempts reached
         if failures >= max_attempts:
             redis_client.setex(lockout_key, lockout_minutes * 60, "locked")
             redis_client.delete(fail_key)
             return False
+
         return True
     except Exception as e:
         logger.error(f"Failed login tracking error: {e}")
-        return True
+        return True  # Fail open
 
 
 def reset_failed_login(identifier: str):
+    """Reset failed login attempts counter."""
     try:
         redis_client.delete(f"login_fails:{identifier}")
         redis_client.delete(f"login_lockout:{identifier}")
@@ -96,6 +92,7 @@ def reset_failed_login(identifier: str):
 
 
 def validate_username(username: str) -> bool:
+    """Validate username format."""
     if not username:
         return False
     pattern = r'^[a-zA-Z0-9_]{3,30}$'
@@ -103,7 +100,9 @@ def validate_username(username: str) -> bool:
 
 
 def publish_user_registration_event(user_data: dict):
+    """Publish user registration event to message queue."""
     try:
+        # Convert non-serializable objects to strings
         serializable_user_data = {}
         for key, value in user_data.items():
             if hasattr(value, 'isoformat'):
@@ -127,17 +126,17 @@ def publish_user_registration_event(user_data: dict):
                 message=message
             )
             if success:
-                logger.info(f"✅ User registration event published for user {serializable_user_data['id']}")
+                logger.info(f"User registration event published for user {serializable_user_data['id']}")
             else:
-                logger.error(f"❌ Failed to publish user registration event for user {serializable_user_data['id']}")
+                logger.error(f"Failed to publish user registration event for user {serializable_user_data['id']}")
         else:
-            logger.error("❌ Cannot publish user registration event - RabbitMQ not connected")
+            logger.error("Cannot publish user registration event - RabbitMQ not connected")
     except Exception as e:
-        logger.error(f"❌ Failed to publish user registration event: {e}")
+        logger.error(f"Failed to publish user registration event: {e}")
 
 
-def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
-    """Migrate guest cart from session to user database with proper merging"""
+def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor) -> int:
+    """Migrate guest cart items to user's database cart."""
     try:
         if not guest_session or not guest_session.cart_items:
             return 0
@@ -151,21 +150,21 @@ def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
                 variation_id = item_data.get('variation_id')
                 quantity = item_data['quantity']
 
-                # Validate product exists and is active
+                # Check product availability
                 cursor.execute(
                     "SELECT id, stock_quantity, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
                     (product_id,)
                 )
                 product = cursor.fetchone()
+
                 if not product:
                     continue
 
-                # Calculate max allowed quantity
                 max_quantity = product['max_cart_quantity'] or 20
                 available_quantity = min(quantity, product['stock_quantity']) if product[
                                                                                      'stock_quantity'] > 0 else quantity
 
-                # Check if user already has this item in cart
+                # Check for existing cart item
                 cursor.execute("""
                     SELECT id, quantity FROM shopping_cart
                     WHERE user_id = %s AND product_id = %s
@@ -175,34 +174,146 @@ def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
                 existing_item = cursor.fetchone()
 
                 if existing_item:
-                    # Merge quantities, respecting maximum limits
+                    # Update existing item quantity
                     existing_quantity = existing_item['quantity']
                     new_quantity = min(existing_quantity + available_quantity, max_quantity)
-
                     cursor.execute("""
                         UPDATE shopping_cart
                         SET quantity = %s, updated_at = NOW()
                         WHERE id = %s
                     """, (new_quantity, existing_item['id']))
                 else:
-                    # Add new item with quantity limit
+                    # Insert new cart item
                     cursor.execute("""
                         INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
                         VALUES (%s, %s, %s, %s)
                     """, (user_id, product_id, variation_id, available_quantity))
 
                 migrated_count += 1
-                logger.info(f"✅ Migrated cart item: product {product_id}, quantity {available_quantity}")
+                logger.info(f"Migrated cart item: product {product_id}, quantity {available_quantity}")
 
             except Exception as e:
-                logger.error(f"❌ Failed to migrate cart item {item_key}: {e}")
+                logger.error(f"Failed to migrate cart item {item_key}: {e}")
                 continue
 
         return migrated_count
-
     except Exception as e:
-        logger.error(f"❌ Cart migration failed: {e}")
+        logger.error(f"Cart migration failed: {e}")
         return 0
+
+
+def _validate_registration_data(email: Optional[str], phone: Optional[str], username: Optional[str],
+                                password: str) -> None:
+    """Validate registration data and raise appropriate exceptions."""
+    if not email and not phone and not username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email, phone, or username is required"
+        )
+
+    if email and not validate_email(email):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid email format"
+        )
+
+    if phone and not validate_phone(phone):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid phone format"
+        )
+
+    if username and not validate_username(username):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username must be 3-30 characters and contain only letters, numbers, and underscores"
+        )
+
+    # Password validation
+    if len(password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters long"
+        )
+
+    password_validation = validate_password_strength(password)
+    if not password_validation["valid"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=password_validation["message"]
+        )
+
+
+def _check_existing_users(cursor, email: Optional[str], phone: Optional[str], username: Optional[str]) -> None:
+    """Check if user with same email, phone, or username already exists."""
+    if email:
+        cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
+        if cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+
+    if phone:
+        cursor.execute("SELECT id FROM users WHERE phone = %s", (phone,))
+        if cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Phone number already registered"
+            )
+
+    if username:
+        cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
+        if cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Username already taken"
+            )
+
+
+def _setup_user_account(cursor, user_id: int) -> tuple[list, list]:
+    """Set up user account with roles, permissions, and preferences."""
+    # Assign customer role
+    cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
+    role = cursor.fetchone()
+    if role:
+        cursor.execute("""
+            INSERT INTO user_role_assignments (user_id, role_id, assigned_by)
+            VALUES (%s, %s, %s)
+        """, (user_id, role['id'], user_id))
+        logger.info(f"Customer role assigned to user {user_id}")
+
+    # Set notification preferences
+    cursor.execute("""
+        INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
+        VALUES (%s, 'email', TRUE)
+        ON DUPLICATE KEY UPDATE is_enabled = TRUE
+    """, (user_id,))
+
+    # Get roles and permissions
+    cursor.execute("""
+        SELECT
+            ur.name as role_name,
+            p.name as permission_name
+        FROM user_role_assignments ura
+        JOIN user_roles ur ON ura.role_id = ur.id
+        LEFT JOIN role_permissions rp ON ur.id = rp.role_id
+        LEFT JOIN permissions p ON rp.permission_id = p.id
+        WHERE ura.user_id = %s
+    """, (user_id,))
+
+    roles = set()
+    permissions = set()
+    for row in cursor.fetchall():
+        if row['role_name']:
+            roles.add(row['role_name'])
+        if row['permission_name']:
+            permissions.add(row['permission_name'])
+
+    if not roles:
+        roles.add('customer')
+
+    return list(roles), list(permissions)
 
 
 @router.post("/register", response_model=Token)
@@ -219,6 +330,7 @@ async def register_user(
         request: Request = None,
         response: Response = None
 ):
+    """Register a new user account."""
     try:
         config.refresh_cache()
         if config.maintenance_mode:
@@ -227,6 +339,7 @@ async def register_user(
                 detail="Service is under maintenance. Registration is temporarily unavailable."
             )
 
+        # Handle both form data and JSON body
         if user_data:
             email = user_data.email
             phone = user_data.phone
@@ -236,152 +349,42 @@ async def register_user(
             last_name = user_data.last_name
             country_id = user_data.country_id or 1
 
-        logger.info(f"🔄 Processing registration for: {email or phone or username}")
+        logger.info(f"Processing registration for: {email or phone or username}")
 
-        # Input sanitization
+        # Sanitize inputs
         first_name = sanitize_input(first_name)
         last_name = sanitize_input(last_name)
 
-        # Validation
-        if not email and not phone and not username:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email, phone, or username is required"
-            )
-
-        if email and not validate_email(email):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid email format"
-            )
-
-        if phone and not validate_phone(phone):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid phone format"
-            )
-
-        if username and not validate_username(username):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Username must be 3-30 characters and contain only letters, numbers, and underscores"
-            )
-
-        # Enhanced password validation
-        if len(password) < 8:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password must be at least 8 characters long"
-            )
-
-        # Check for common passwords
-        common_passwords = ['password', '12345678', 'qwerty', 'admin', 'letmein', 'welcome', '123456789']
-        if password.lower() in common_passwords:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password is too common. Please choose a stronger password."
-            )
-
-        # Enhanced password strength check
-        password_validation = validate_password_strength(password)
-        if not password_validation["valid"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=password_validation["message"]
-            )
-
-        logger.info(f"🔄 Processing registration with Argon2 hashing")
+        # Validate input data
+        _validate_registration_data(email, phone, username, password)
 
         with db.get_cursor() as cursor:
             # Check for existing users
-            if email:
-                cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
-                if cursor.fetchone():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Email already registered"
-                    )
-
-            if phone:
-                cursor.execute("SELECT id FROM users WHERE phone = %s", (phone,))
-                if cursor.fetchone():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Phone number already registered"
-                    )
-
-            if username:
-                cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
-                if cursor.fetchone():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Username already taken"
-                    )
+            _check_existing_users(cursor, email, phone, username)
 
             # Create user
             password_hash = get_password_hash(password)
-            logger.info(f"🔐 Password hashed successfully")
-
             cursor.execute("""
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (email, phone, username, password_hash, first_name, last_name, country_id))
 
             user_id = cursor.lastrowid
-            logger.info(f"✅ User created with ID: {user_id}")
+            logger.info(f"User created with ID: {user_id}")
 
-            # Assign customer role
-            cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
-            role = cursor.fetchone()
-            if role:
-                cursor.execute("""
-                    INSERT INTO user_role_assignments (user_id, role_id, assigned_by)
-                    VALUES (%s, %s, %s)
-                """, (user_id, role['id'], user_id))
-                logger.info(f"✅ Customer role assigned to user {user_id}")
+            # Set up user account
+            roles, permissions = _setup_user_account(cursor, user_id)
 
-            # Enable email notifications by default
-            cursor.execute("""
-                INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
-                VALUES (%s, 'email', TRUE)
-                ON DUPLICATE KEY UPDATE is_enabled = TRUE
-            """, (user_id,))
-            logger.info(f"✅ Email notifications enabled for user {user_id}")
-
-            # Get user roles and permissions
-            cursor.execute("""
-                SELECT
-                    ur.name as role_name,
-                    p.name as permission_name
-                FROM user_role_assignments ura
-                JOIN user_roles ur ON ura.role_id = ur.id
-                LEFT JOIN role_permissions rp ON ur.id = rp.role_id
-                LEFT JOIN permissions p ON rp.permission_id = p.id
-                WHERE ura.user_id = %s
-            """, (user_id,))
-
-            roles = set()
-            permissions = set()
-            for row in cursor.fetchall():
-                if row['role_name']:
-                    roles.add(row['role_name'])
-                if row['permission_name']:
-                    permissions.add(row['permission_name'])
-
-            if not roles:
-                roles.add('customer')
-
-            # Handle guest cart migration
+            # Handle session migration
             current_session = get_session(request)
             current_session_id = get_session_id(request)
-
             migrated_items_count = 0
+
             if current_session and current_session.session_type == SessionType.GUEST:
-                # Migrate guest cart to user database
                 migrated_items_count = migrate_guest_cart_to_user_database(
                     current_session, user_id, cursor
                 )
-                logger.info(f"🛒 Migrated {migrated_items_count} cart items from guest session during registration")
+                logger.info(f"Migrated {migrated_items_count} cart items from guest session during registration")
 
             # Create new user session
             session_data = {
@@ -390,27 +393,26 @@ async def register_user(
                 'guest_id': None,
                 'ip_address': request.client.host if request.client else 'unknown',
                 'user_agent': request.headers.get("user-agent"),
-                'cart_items': {}  # Empty since we're using database now
+                'cart_items': {}
             }
 
             new_session = session_service.create_session(session_data)
-
             if new_session and response:
                 response.set_cookie(
                     key="session_id",
                     value=new_session.session_id,
-                    max_age=3600,
+                    max_age=SESSION_TIMEOUT,
                     httponly=True,
                     secure=not config.debug_mode,
                     samesite="Lax",
                     path="/"
                 )
-                logger.info(f"✅ User session created for new user {user_id}")
+                logger.info(f"User session created for new user {user_id}")
 
             # Delete old guest session
             if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
                 session_service.delete_session(current_session_id)
-                logger.info(f"✅ Deleted guest session after successful registration migration")
+                logger.info("Deleted guest session after successful registration migration")
 
             # Publish registration event
             if background_tasks:
@@ -426,25 +428,25 @@ async def register_user(
                 data={
                     "sub": str(user_id),
                     "email": email,
-                    "roles": list(roles),
-                    "permissions": list(permissions)
+                    "roles": roles,
+                    "permissions": permissions
                 },
-                expires_delta=timedelta(hours=24)
+                expires_delta=timedelta(hours=TOKEN_EXPIRY_HOURS)
             )
 
-            logger.info(f"✅ User registered successfully: {email or phone or username}")
+            logger.info(f"User registered successfully: {email or phone or username}")
             return Token(
                 access_token=access_token,
                 token_type="bearer",
-                expires_in=86400,
-                user_roles=list(roles),
-                user_permissions=list(permissions)
+                expires_in=TOKEN_EXPIRY_HOURS * 3600,
+                user_roles=roles,
+                user_permissions=permissions
             )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Registration failed: {str(e)}")
+        logger.error(f"Registration failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed due to server error"
@@ -453,12 +455,14 @@ async def register_user(
 
 @router.get("/site-settings")
 async def get_site_settings(current_user: dict = Depends(get_current_user)):
+    """Get site settings (admin only)."""
     user_roles = current_user.get('roles', [])
     if 'admin' not in user_roles and 'super_admin' not in user_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
+
     try:
         config.refresh_cache()
         settings = {
@@ -482,12 +486,10 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             'site_phone': config.site_phone,
             'site_email': config.site_email,
             'business_hours': config.business_hours,
-
             # Cart & Business Limits (Admin Only)
             'max_cart_quantity_per_product': config.max_cart_quantity_per_product,
             'max_cart_items_total': config.max_cart_items_total,
             'cart_session_timeout_minutes': config.cart_session_timeout_minutes,
-
             # Backend/Infrastructure Settings (Admin Only)
             'app_debug': config.app_debug,
             'log_level': config.log_level,
@@ -517,41 +519,34 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
 
 @router.get("/frontend-settings")
 async def get_frontend_settings():
+    """Get frontend settings (public)."""
     try:
         config.refresh_cache()
         frontend_settings = {
             # Public Store Information
             'site_name': config.site_name,
             'site_description': config.site_description,
-
             # Currency & Pricing (Public)
             'currency': config.currency,
             'currency_symbol': config.currency_symbol,
             'min_order_amount': config.min_order_amount,
-
             # Shipping (Public)
             'free_shipping_min_amount': config.free_shipping_min_amount,
             'free_shipping_threshold': config.free_shipping_threshold,
-
             # Returns & Policies (Public)
             'return_period_days': config.return_period_days,
-
             # Features (Public)
             'enable_reviews': config.enable_reviews,
             'enable_wishlist': config.enable_wishlist,
             'enable_guest_checkout': config.enable_guest_checkout,
-
             # Contact Information (Public)
             'site_phone': config.site_phone,
             'site_email': config.site_email,
-
             # Business Hours (Public)
             'business_hours': config.business_hours,
-
             # Cart Limits (Public - needed for UI validation)
             'max_cart_quantity_per_product': config.max_cart_quantity_per_product,
             'max_cart_items_total': config.max_cart_items_total,
-
             # Maintenance Mode (Public - needed for UI messaging)
             'maintenance_mode': config.maintenance_mode
         }
@@ -564,12 +559,13 @@ async def get_frontend_settings():
         )
 
 
-@router.post("/login")
+@router.post("/login", response_model=Token)
 async def login_user(
         login_data: UserLogin,
         request: Request = None,
         response: Response = None
 ):
+    """Authenticate user and return access token."""
     try:
         config.refresh_cache()
         if config.maintenance_mode:
@@ -579,21 +575,25 @@ async def login_user(
             )
 
         client_identifier = get_client_identifier(request)
-        if not check_rate_limit(f"login:{client_identifier}", max_attempts=10, window_seconds=900):
+
+        # Rate limiting
+        if not check_rate_limit(f"login:{client_identifier}", max_attempts=10, window_seconds=RATE_LIMIT_WINDOW):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many login attempts. Please try again later."
             )
 
+        # Failed login tracking
         if not track_failed_login(client_identifier):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Account temporarily locked due to too many failed attempts. Please try again in 15 minutes."
             )
 
-        logger.info(f"🔐 Login attempt for: {login_data.login_id}")
+        logger.info(f"Login attempt for: {login_data.login_id}")
 
         with db.get_cursor() as cursor:
+            # Find user by email, phone, or username
             cursor.execute("""
                 SELECT
                     id, email, password_hash, first_name, last_name,
@@ -604,26 +604,29 @@ async def login_user(
 
             user = cursor.fetchone()
             if not user:
-                logger.warning(f"❌ User not found: {login_data.login_id}")
+                logger.warning(f"User not found: {login_data.login_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
 
+            # Verify password
             if not verify_password(login_data.password, user['password_hash']):
-                logger.warning(f"❌ Invalid password for user: {user['email']}")
+                logger.warning(f"Invalid password for user: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
 
+            # Check if account is active
             if not user['is_active']:
-                logger.warning(f"❌ Account deactivated: {user['email']}")
+                logger.warning(f"Account deactivated: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Account is deactivated"
                 )
 
+            # Reset failed login counter on successful login
             reset_failed_login(client_identifier)
 
             # Get user roles and permissions
@@ -652,14 +655,13 @@ async def login_user(
             # Handle session and cart migration
             current_session = get_session(request)
             current_session_id = get_session_id(request)
-
             migrated_items_count = 0
+
             if current_session and current_session.session_type == SessionType.GUEST:
-                # Migrate guest cart to user database
                 migrated_items_count = migrate_guest_cart_to_user_database(
                     current_session, user['id'], cursor
                 )
-                logger.info(f"🛒 Migrated {migrated_items_count} cart items from guest session")
+                logger.info(f"Migrated {migrated_items_count} cart items from guest session")
 
             # Create new user session
             session_data = {
@@ -672,12 +674,11 @@ async def login_user(
             }
 
             new_session = session_service.create_session(session_data)
-
             if new_session and response:
                 response.set_cookie(
                     key="session_id",
                     value=new_session.session_id,
-                    max_age=3600,
+                    max_age=SESSION_TIMEOUT,
                     httponly=True,
                     secure=not config.debug_mode,
                     samesite="Lax",
@@ -687,9 +688,9 @@ async def login_user(
             # Delete old guest session
             if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
                 session_service.delete_session(current_session_id)
-                logger.info(f"✅ Deleted guest session after login migration")
+                logger.info("Deleted guest session after login migration")
 
-            # Update last login
+            # Update last login timestamp
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
 
             # Create access token
@@ -700,14 +701,14 @@ async def login_user(
                     "roles": list(roles),
                     "permissions": list(permissions)
                 },
-                expires_delta=timedelta(hours=24)
+                expires_delta=timedelta(hours=TOKEN_EXPIRY_HOURS)
             )
 
-            logger.info(f"✅ Login successful for user: {user['email']}")
+            logger.info(f"Login successful for user: {user['email']}")
             return Token(
                 access_token=access_token,
                 token_type="bearer",
-                expires_in=86400,
+                expires_in=TOKEN_EXPIRY_HOURS * 3600,
                 user_roles=list(roles),
                 user_permissions=list(permissions)
             )
@@ -715,7 +716,7 @@ async def login_user(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"❌ Login failed: {str(e)}")
+        logger.error(f"Login failed: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Login failed due to server error"
@@ -728,20 +729,24 @@ async def logout_user(
         response: Response,
         current_user: dict = Depends(get_current_user)
 ):
+    """Logout user and invalidate session/token."""
     try:
         user_id = current_user['sub']
         auth_header = request.headers.get("Authorization")
         session_id = get_session_id(request)
 
+        # Delete session
         if session_id:
             session_service.delete_session(session_id)
-            logger.info(f"✅ Session deleted for user {user_id}")
+            logger.info(f"Session deleted for user {user_id}")
 
+        # Blacklist token
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
             blacklist_token(token)
-            logger.info(f"✅ JWT token invalidated for user {user_id}")
+            logger.info(f"JWT token invalidated for user {user_id}")
 
+        # Clear session cookie
         response.delete_cookie(
             key="session_id",
             path="/",
@@ -750,18 +755,20 @@ async def logout_user(
             samesite="Lax"
         )
 
-        logger.info(f"✅ User {user_id} logged out successfully")
+        logger.info(f"User {user_id} logged out successfully")
         return {"message": "Logged out successfully"}
+
     except Exception as e:
-        logger.error(f"❌ Logout failed: {e}")
-        return {"message": "Logged out successfully"}
+        logger.error(f"Logout failed: {e}")
+        return {"message": "Logged out successfully"}  # Always return success to client
 
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=Token)
 async def refresh_token(
         request: Request,
         response: Response = None
 ):
+    """Refresh access token."""
     auth_header = request.headers.get("Authorization")
     if not auth_header or not auth_header.startswith("Bearer "):
         raise HTTPException(
@@ -777,11 +784,13 @@ async def refresh_token(
             detail="Invalid or expired token"
         )
 
+    # Refresh session activity
     session_id = get_session_id(request)
     if session_id:
         session_service.update_session_activity(session_id)
-        logger.info(f"✅ Session activity refreshed for user {payload['sub']}")
+        logger.info(f"Session activity refreshed for user {payload['sub']}")
 
+    # Create new token
     new_token = create_access_token(
         data={
             "sub": payload['sub'],
@@ -789,14 +798,14 @@ async def refresh_token(
             "roles": payload.get('roles', []),
             "permissions": payload.get('permissions', [])
         },
-        expires_delta=timedelta(hours=24)
+        expires_delta=timedelta(hours=TOKEN_EXPIRY_HOURS)
     )
 
-    logger.info(f"✅ Token refreshed successfully for user {payload['sub']}")
+    logger.info(f"Token refreshed successfully for user {payload['sub']}")
     return Token(
         access_token=new_token,
         token_type="bearer",
-        expires_in=86400,
+        expires_in=TOKEN_EXPIRY_HOURS * 3600,
         user_roles=payload.get('roles', []),
         user_permissions=payload.get('permissions', [])
     )
@@ -804,6 +813,7 @@ async def refresh_token(
 
 @router.post("/forgot-password")
 async def forgot_password(email: str = Form(...)):
+    """Initiate password reset process."""
     try:
         config.refresh_cache()
         if config.maintenance_mode:
@@ -815,19 +825,26 @@ async def forgot_password(email: str = Form(...)):
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, first_name FROM users WHERE email = %s", (email,))
             user = cursor.fetchone()
+
             if user:
+                # Create reset token
                 reset_token = create_access_token(
                     data={"sub": str(user['id']), "type": "password_reset"},
                     expires_delta=timedelta(hours=1)
                 )
+
+                # Store reset token in Redis
                 redis_client.setex(
                     f"password_reset:{user['id']}",
-                    3600,
+                    3600,  # 1 hour expiry
                     reset_token
                 )
+
                 logger.info(f"Password reset initiated for user {user['id']}")
 
+            # Always return same message for security
             return {"message": "If the email exists, a reset link has been sent"}
+
     except Exception as e:
         logger.error(f"Password reset failed: {e}")
         raise HTTPException(
@@ -838,6 +855,7 @@ async def forgot_password(email: str = Form(...)):
 
 @router.post("/reset-password")
 async def reset_password(token: str = Form(...), new_password: str = Form(...)):
+    """Reset user password using reset token."""
     try:
         config.refresh_cache()
         if config.maintenance_mode:
@@ -846,6 +864,7 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
                 detail="Service is under maintenance. Please try again later."
             )
 
+        # Verify reset token
         payload = verify_token(token)
         if not payload or payload.get('type') != 'password_reset':
             raise HTTPException(
@@ -854,6 +873,8 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
             )
 
         user_id = int(payload['sub'])
+
+        # Check if token exists in Redis
         stored_token = redis_client.get(f"password_reset:{user_id}")
         if not stored_token or stored_token != token:
             raise HTTPException(
@@ -861,6 +882,7 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
                 detail="Invalid or expired reset token"
             )
 
+        # Validate new password
         if len(new_password) < 8:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -868,18 +890,25 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
             )
 
         with db.get_cursor() as cursor:
+            # Update password
             new_password_hash = get_password_hash(new_password)
             cursor.execute(
                 "UPDATE users SET password_hash = %s WHERE id = %s",
                 (new_password_hash, user_id)
             )
+
+            # Store in password history
             cursor.execute(
                 "INSERT INTO password_history (user_id, password_hash) VALUES (%s, %s)",
                 (user_id, new_password_hash)
             )
+
+            # Clean up reset token
             redis_client.delete(f"password_reset:{user_id}")
-            logger.info(f"Password reset successful for user {user_id} using Argon2")
+
+            logger.info(f"Password reset successful for user {user_id}")
             return {"message": "Password reset successfully"}
+
     except HTTPException:
         raise
     except Exception as e:
@@ -892,6 +921,7 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
 
 @router.get("/roles", response_model=List[RoleResponse])
 async def get_roles():
+    """Get list of available user roles."""
     try:
         with db.get_cursor() as cursor:
             cursor.execute("""
@@ -900,6 +930,7 @@ async def get_roles():
                 ORDER BY name
             """)
             roles = cursor.fetchall()
+
             return [
                 RoleResponse(
                     id=role['id'],
@@ -919,10 +950,12 @@ async def get_roles():
 
 @router.post("/check-permission", response_model=PermissionCheck)
 async def check_permission(permission: str, request: Request):
+    """Check if current user has specific permission."""
     try:
         current_user = await get_current_user(request)
         user_permissions = current_user.get('permissions', [])
         has_access = permission in user_permissions
+
         return PermissionCheck(
             permission=permission,
             has_access=has_access
@@ -939,6 +972,7 @@ async def check_permission(permission: str, request: Request):
 
 @router.get("/debug/maintenance")
 async def debug_maintenance():
+    """Debug endpoint to check maintenance mode status."""
     config.refresh_cache()
     return {
         "maintenance_mode": config.maintenance_mode,
@@ -949,6 +983,7 @@ async def debug_maintenance():
 
 @router.get("/debug/settings")
 async def debug_settings():
+    """Debug endpoint to check configuration settings."""
     config.refresh_cache()
     return {
         "maintenance_mode": config.maintenance_mode,
@@ -957,18 +992,20 @@ async def debug_settings():
         "log_level": config.log_level,
         "cors_origins": config.cors_origins,
         "cache_info": {
-            "cache_size": len(config._cache),
-            "cache_keys": list(config._cache.keys())
+            "cache_size": len(config._cache) if hasattr(config, '_cache') else 0,
+            "cache_keys": list(config._cache.keys()) if hasattr(config, '_cache') else []
         }
     }
 
 
 @router.get("/session/info")
 async def get_session_info(request: Request, current_user: dict = Depends(get_current_user)):
+    """Get current session information."""
     try:
         session = get_session(request)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
+
         return {
             "session_id": session.session_id,
             "session_type": session.session_type,
@@ -989,13 +1026,16 @@ async def get_session_info(request: Request, current_user: dict = Depends(get_cu
 
 @router.post("/session/refresh")
 async def refresh_user_session(request: Request, response: Response):
+    """Refresh user session activity."""
     try:
         session_id = get_session_id(request)
         if not session_id:
             raise HTTPException(status_code=404, detail="Session not found")
+
         success = session_service.update_session_activity(session_id)
         if not success:
             raise HTTPException(status_code=404, detail="Session expired")
+
         return {"message": "Session refreshed successfully"}
     except HTTPException:
         raise

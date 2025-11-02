@@ -6,6 +6,7 @@ import time
 from contextlib import contextmanager
 from .config import config
 import threading
+
 logger = logging.getLogger(__name__)
 
 
@@ -13,6 +14,7 @@ class Database:
     _instance = None
     _pool = None
     _initialized = False
+    _lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
@@ -20,20 +22,22 @@ class Database:
         return cls._instance
 
     def initialize(self):
-        with threading.Lock():
-            if not self._initialized:
-                self._initialize_pool()
-                self._initialized = True
+        if not self._initialized:
+            with self._lock:
+                if not self._initialized:  # Double-check locking
+                    self._initialize_pool()
+                    self._initialized = True
 
     def _initialize_pool(self):
         max_retries = 3
         retry_delay = 2
-        logger.info(
-            f"🚀 Attempting to connect to database: {config.db_host}:{config.db_port}, db: {config.db_name}, user: {config.db_user}")
+
+        logger.info(f"Attempting to connect to database: {config.db_host}:{config.db_port}, db: {config.db_name}")
 
         for attempt in range(max_retries):
             try:
-                logger.info(f"📊 Database connection attempt {attempt + 1}/{max_retries}")
+                logger.info(f"Database connection attempt {attempt + 1}/{max_retries}")
+
                 self.connection_pool = pooling.MySQLConnectionPool(
                     pool_name="pavitra_pool",
                     pool_size=10,
@@ -52,28 +56,26 @@ class Database:
                     connect_timeout=10,
                 )
 
-                # Test the connection
+                # Test connection
                 test_conn = self.connection_pool.get_connection()
                 if test_conn.is_connected():
-                    logger.info("✅ Database connection successful!")
-                    test_conn.ping(reconnect=True, attempts=3, delay=1)
+                    test_conn.ping(reconnect=True, attempts=1, delay=0)
                     test_conn.close()
-                    logger.info("🎉 Database connection pool created successfully")
-                    self._initialized = True  # Add this line
+                    logger.info("Database connection pool created successfully")
                     return
                 else:
-                    logger.error("❌ Database connection failed - not connected")
+                    logger.error("Database connection failed - not connected")
                     if test_conn:
                         test_conn.close()
 
             except Error as e:
-                logger.error(f"❌ Database connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                logger.error(f"Database connection error (attempt {attempt + 1}/{max_retries}): {e}")
                 if attempt < max_retries - 1:
-                    logger.info(f"⏳ Retrying in {retry_delay} seconds...")
+                    logger.info(f"Retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                     retry_delay *= 2
                 else:
-                    logger.critical("💥 Failed to create database connection pool after all retries")
+                    logger.critical("Failed to create database connection pool after all retries")
                     self.connection_pool = None
                     raise
 
@@ -82,47 +84,26 @@ class Database:
             self.initialize()
 
         if not self.connection_pool:
-            logger.warning("🔄 Connection pool not initialized, reinitializing...")
+            logger.warning("Connection pool not initialized, reinitializing...")
             self._initialize_pool()
 
-        max_retries = 3
+        max_retries = 2
         for attempt in range(max_retries):
             try:
                 connection = self.connection_pool.get_connection()
                 if connection and connection.is_connected():
-                    # Test connection with a simple query
-                    try:
-                        connection.ping(reconnect=True, attempts=1, delay=0)
-                        return connection
-                    except Error:
-                        try:
-                            connection.close()
-                        except:
-                            pass
-                        continue
+                    connection.ping(reconnect=True, attempts=1, delay=0)
+                    return connection
                 else:
-                    try:
-                        if connection:
-                            connection.close()
-                    except:
-                        pass
-                    logger.warning(f"🔌 Got disconnected connection, retry {attempt + 1}/{max_retries}")
+                    if connection:
+                        connection.close()
+                    logger.warning(f"Got disconnected connection, retry {attempt + 1}/{max_retries}")
 
             except Error as e:
-                logger.warning(f"🔌 Connection attempt {attempt + 1} failed: {e}")
+                logger.warning(f"Connection attempt {attempt + 1} failed: {e}")
                 if attempt == max_retries - 1:
-                    logger.error("💥 Failed to get database connection after retries")
-                    try:
-                        self._initialize_pool()
-                        # One more attempt after reinitialization
-                        if self.connection_pool:
-                            connection = self.connection_pool.get_connection()
-                            if connection and connection.is_connected():
-                                return connection
-                    except Exception as pool_error:
-                        logger.error(f"💥 Pool reinitialization also failed: {pool_error}")
+                    logger.error("Failed to get database connection after retries")
                     raise
-                time.sleep(1)  # Wait before retry
 
         raise Error("Failed to get database connection")
 
@@ -136,7 +117,7 @@ class Database:
             yield cursor
             connection.commit()
         except Error as e:
-            logger.error(f"💥 Database error: {e}")
+            logger.error(f"Database error: {e}")
             if connection:
                 try:
                     connection.rollback()
@@ -168,7 +149,7 @@ class Database:
                     return cursor.fetchall()
                 return cursor.rowcount
         except Error as e:
-            logger.error(f"💥 Query execution error: {e}")
+            logger.error(f"Query execution error: {e}")
             return None
 
     def execute_many(self, query: str, params_list: list):
@@ -177,12 +158,11 @@ class Database:
         try:
             connection = self.get_connection()
             cursor = connection.cursor()
-            for params in params_list:
-                cursor.execute(query, params)
+            cursor.executemany(query, params_list)
             connection.commit()
             return True
         except Error as e:
-            logger.error(f"💥 Batch execution error: {e}")
+            logger.error(f"Batch execution error: {e}")
             if connection:
                 try:
                     connection.rollback()
@@ -207,24 +187,13 @@ class Database:
                 cursor.execute("SELECT 1 as health")
                 basic_health = cursor.fetchone()
 
-                # FIXED: Safe way to get pool status without accessing internal _queue attribute
+                # Get pool status
                 pool_status = {
-                    'pool_size': self.connection_pool.pool_size,
-                    'pool_name': self.connection_pool.pool_name
+                    'pool_size': self.connection_pool.pool_size if self.connection_pool else 0,
+                    'pool_name': self.connection_pool.pool_name if self.connection_pool else 'unknown'
                 }
 
-                # Try to get active connections count safely
-                try:
-                    # For newer mysql-connector-python versions
-                    if hasattr(self.connection_pool, '_cnx_queue'):
-                        active_connections = len(self.connection_pool._cnx_queue)
-                    else:
-                        active_connections = 'unknown'
-                except (AttributeError, TypeError):
-                    active_connections = 'unknown'
-
-                pool_status['active_connections'] = active_connections
-
+                # Get database stats
                 cursor.execute("""
                     SELECT
                         (SELECT COUNT(*) FROM users) as users_count,
@@ -242,7 +211,7 @@ class Database:
                     'timestamp': time.time()
                 }
         except Error as e:
-            logger.error(f"💥 Database health check failed: {e}")
+            logger.error(f"Database health check failed: {e}")
             return {
                 'status': 'unhealthy',
                 'error': str(e),
@@ -258,31 +227,6 @@ class Database:
             query += f" LIMIT {max_rows}"
 
         return self.execute_query(query, params)
-
-    def _monitor_connection_health(self):
-        """Monitor and repair connection pool health"""
-        try:
-            if not self.connection_pool:
-                return
-
-            # Try to get a connection and immediately return it
-            test_conn = None
-            try:
-                test_conn = self.connection_pool.get_connection()
-                if test_conn and test_conn.is_connected():
-                    test_conn.ping(reconnect=False)
-            except Exception as e:
-                logger.warning(f"Connection pool health check failed: {e}")
-                # Reinitialize pool if health check fails
-                self._initialize_pool()
-            finally:
-                if test_conn:
-                    try:
-                        test_conn.close()
-                    except:
-                        pass
-        except Exception as e:
-            logger.error(f"Connection health monitoring failed: {e}")
 
 
 db = Database()

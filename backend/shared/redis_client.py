@@ -6,6 +6,7 @@ from .config import config
 
 logger = logging.getLogger(__name__)
 
+
 class RedisClient:
     _instance = None
 
@@ -40,14 +41,16 @@ class RedisClient:
 
     def _ensure_connection(self):
         if not self.redis_client:
-            return self._connect()
+            self._connect()
+            return self.redis_client is not None
 
         try:
             self.redis_client.ping()
             return True
         except (redis.ConnectionError, redis.TimeoutError):
             logger.warning("Redis connection lost, reconnecting...")
-            return self._connect()
+            self._connect()
+            return self.redis_client is not None
         except Exception as e:
             logger.error(f"Redis connection error: {e}")
             return False
@@ -98,7 +101,7 @@ class RedisClient:
             return False
         try:
             key = f"product:{product_id}"
-            return self.redis_client.delete(key)
+            return bool(self.redis_client.delete(key))
         except Exception as e:
             logger.error(f"Failed to invalidate product cache {product_id}: {e}")
             return False
@@ -142,23 +145,14 @@ class RedisClient:
         try:
             keys = self.redis_client.keys(pattern)
             if keys:
-                return self.redis_client.delete(*keys) > 0
+                return bool(self.redis_client.delete(*keys))
             return True
         except Exception as e:
             logger.error(f"Failed to delete pattern {pattern}: {e}")
             return False
 
-    def ping(self):
-        """Check if Redis connection is alive"""
-        if not self._ensure_connection():
-            return False
-        try:
-            return self.redis_client.ping()
-        except Exception:
-            return False
-
+    # Basic Redis operations with improved error handling
     def setex(self, key: str, expire: int, value: str):
-        """Safe setex with connection handling"""
         if not self._ensure_connection():
             return False
         try:
@@ -168,7 +162,6 @@ class RedisClient:
             return False
 
     def get(self, key: str):
-        """Safe get with connection handling"""
         if not self._ensure_connection():
             return None
         try:
@@ -178,17 +171,15 @@ class RedisClient:
             return None
 
     def delete(self, key: str):
-        """Safe delete with connection handling"""
         if not self._ensure_connection():
             return False
         try:
-            return self.redis_client.delete(key) > 0
+            return bool(self.redis_client.delete(key))
         except Exception as e:
             logger.error(f"Redis delete failed for {key}: {e}")
             return False
 
     def exists(self, key: str):
-        """Safe exists check with connection handling"""
         if not self._ensure_connection():
             return False
         try:
@@ -198,7 +189,6 @@ class RedisClient:
             return False
 
     def incr(self, key: str):
-        """Safe increment with connection handling"""
         if not self._ensure_connection():
             return 0
         try:
@@ -208,7 +198,6 @@ class RedisClient:
             return 0
 
     def expire(self, key: str, expire: int):
-        """Safe expire with connection handling"""
         if not self._ensure_connection():
             return False
         try:
@@ -216,5 +205,14 @@ class RedisClient:
         except Exception as e:
             logger.error(f"Redis expire failed for {key}: {e}")
             return False
+
+    def ping(self):
+        if not self._ensure_connection():
+            return False
+        try:
+            return self.redis_client.ping()
+        except Exception:
+            return False
+
 
 redis_client = RedisClient()
