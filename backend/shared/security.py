@@ -115,3 +115,24 @@ def validate_phone(phone: str) -> bool:
         return False
     pattern = r'^\+?[1-9]\d{1,14}$'
     return re.match(pattern, phone) is not None
+
+
+# In backend/shared/security.py - enhance password validation
+def validate_password_strength(password: str) -> Dict[str, Any]:
+    """Validate password strength"""
+    if len(password) < 8:
+        return {"valid": False, "message": "Password must be at least 8 characters long"}
+
+    if not any(char.isdigit() for char in password):
+        return {"valid": False, "message": "Password must contain at least one number"}
+
+    if not any(char.isupper() for char in password):
+        return {"valid": False, "message": "Password must contain at least one uppercase letter"}
+
+    if not any(char.islower() for char in password):
+        return {"valid": False, "message": "Password must contain at least one lowercase letter"}
+
+    if not any(char in '!@#$%^&*(),.?":{}|<>' for char in password):
+        return {"valid": False, "message": "Password must contain at least one special character"}
+
+    return {"valid": True, "message": "Password is strong"}

@@ -89,22 +89,21 @@ class Database:
         for attempt in range(max_retries):
             try:
                 connection = self.connection_pool.get_connection()
-                if connection.is_connected():
-                    # FIX: Use a more reliable connection check
+                if connection and connection.is_connected():
+                    # Test connection with a simple query
                     try:
                         connection.ping(reconnect=True, attempts=1, delay=0)
                         return connection
                     except Error:
-                        # Connection is dead, close it and try again
                         try:
                             connection.close()
                         except:
                             pass
                         continue
                 else:
-                    # Connection is not connected, close and try again
                     try:
-                        connection.close()
+                        if connection:
+                            connection.close()
                     except:
                         pass
                     logger.warning(f"🔌 Got disconnected connection, retry {attempt + 1}/{max_retries}")
@@ -113,7 +112,6 @@ class Database:
                 logger.warning(f"🔌 Connection attempt {attempt + 1} failed: {e}")
                 if attempt == max_retries - 1:
                     logger.error("💥 Failed to get database connection after retries")
-                    # FIX: Don't raise error, try to reinitialize pool
                     try:
                         self._initialize_pool()
                         # One more attempt after reinitialization

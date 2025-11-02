@@ -17,6 +17,8 @@ from .models import (
 )
 import re
 
+from shared.security import validate_password_strength
+
 router = APIRouter()
 logger = get_logger(__name__)
 
@@ -134,6 +136,75 @@ def publish_user_registration_event(user_data: dict):
         logger.error(f"❌ Failed to publish user registration event: {e}")
 
 
+def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
+    """Migrate guest cart from session to user database with proper merging"""
+    try:
+        if not guest_session or not guest_session.cart_items:
+            return 0
+
+        migrated_count = 0
+        guest_cart_items = guest_session.cart_items.copy()
+
+        for item_key, item_data in guest_cart_items.items():
+            try:
+                product_id = item_data['product_id']
+                variation_id = item_data.get('variation_id')
+                quantity = item_data['quantity']
+
+                # Validate product exists and is active
+                cursor.execute(
+                    "SELECT id, stock_quantity, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
+                    (product_id,)
+                )
+                product = cursor.fetchone()
+                if not product:
+                    continue
+
+                # Calculate max allowed quantity
+                max_quantity = product['max_cart_quantity'] or 20
+                available_quantity = min(quantity, product['stock_quantity']) if product[
+                                                                                     'stock_quantity'] > 0 else quantity
+
+                # Check if user already has this item in cart
+                cursor.execute("""
+                    SELECT id, quantity FROM shopping_cart
+                    WHERE user_id = %s AND product_id = %s
+                    AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
+                """, (user_id, product_id, variation_id, variation_id))
+
+                existing_item = cursor.fetchone()
+
+                if existing_item:
+                    # Merge quantities, respecting maximum limits
+                    existing_quantity = existing_item['quantity']
+                    new_quantity = min(existing_quantity + available_quantity, max_quantity)
+
+                    cursor.execute("""
+                        UPDATE shopping_cart
+                        SET quantity = %s, updated_at = NOW()
+                        WHERE id = %s
+                    """, (new_quantity, existing_item['id']))
+                else:
+                    # Add new item with quantity limit
+                    cursor.execute("""
+                        INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
+                        VALUES (%s, %s, %s, %s)
+                    """, (user_id, product_id, variation_id, available_quantity))
+
+                migrated_count += 1
+                logger.info(f"✅ Migrated cart item: product {product_id}, quantity {available_quantity}")
+
+            except Exception as e:
+                logger.error(f"❌ Failed to migrate cart item {item_key}: {e}")
+                continue
+
+        return migrated_count
+
+    except Exception as e:
+        logger.error(f"❌ Cart migration failed: {e}")
+        return 0
+
+
 @router.post("/register", response_model=Token)
 async def register_user(
         user_data: UserCreate = None,
@@ -167,9 +238,11 @@ async def register_user(
 
         logger.info(f"🔄 Processing registration for: {email or phone or username}")
 
+        # Input sanitization
         first_name = sanitize_input(first_name)
         last_name = sanitize_input(last_name)
 
+        # Validation
         if not email and not phone and not username:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -194,22 +267,33 @@ async def register_user(
                 detail="Username must be 3-30 characters and contain only letters, numbers, and underscores"
             )
 
+        # Enhanced password validation
         if len(password) < 8:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password must be at least 8 characters long"
             )
 
-        common_passwords = ['password', '12345678', 'qwerty', 'admin', 'letmein']
+        # Check for common passwords
+        common_passwords = ['password', '12345678', 'qwerty', 'admin', 'letmein', 'welcome', '123456789']
         if password.lower() in common_passwords:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password is too common. Please choose a stronger password."
             )
 
+        # Enhanced password strength check
+        password_validation = validate_password_strength(password)
+        if not password_validation["valid"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=password_validation["message"]
+            )
+
         logger.info(f"🔄 Processing registration with Argon2 hashing")
 
         with db.get_cursor() as cursor:
+            # Check for existing users
             if email:
                 cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
                 if cursor.fetchone():
@@ -234,6 +318,7 @@ async def register_user(
                         detail="Username already taken"
                     )
 
+            # Create user
             password_hash = get_password_hash(password)
             logger.info(f"🔐 Password hashed successfully")
 
@@ -241,9 +326,11 @@ async def register_user(
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (email, phone, username, password_hash, first_name, last_name, country_id))
+
             user_id = cursor.lastrowid
             logger.info(f"✅ User created with ID: {user_id}")
 
+            # Assign customer role
             cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
             role = cursor.fetchone()
             if role:
@@ -253,6 +340,7 @@ async def register_user(
                 """, (user_id, role['id'], user_id))
                 logger.info(f"✅ Customer role assigned to user {user_id}")
 
+            # Enable email notifications by default
             cursor.execute("""
                 INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
                 VALUES (%s, 'email', TRUE)
@@ -260,6 +348,7 @@ async def register_user(
             """, (user_id,))
             logger.info(f"✅ Email notifications enabled for user {user_id}")
 
+            # Get user roles and permissions
             cursor.execute("""
                 SELECT
                     ur.name as role_name,
@@ -270,6 +359,7 @@ async def register_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_id,))
+
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -281,6 +371,57 @@ async def register_user(
             if not roles:
                 roles.add('customer')
 
+            # Handle guest cart migration
+            current_session = get_session(request)
+            current_session_id = get_session_id(request)
+
+            migrated_items_count = 0
+            if current_session and current_session.session_type == SessionType.GUEST:
+                # Migrate guest cart to user database
+                migrated_items_count = migrate_guest_cart_to_user_database(
+                    current_session, user_id, cursor
+                )
+                logger.info(f"🛒 Migrated {migrated_items_count} cart items from guest session during registration")
+
+            # Create new user session
+            session_data = {
+                'session_type': SessionType.USER,
+                'user_id': user_id,
+                'guest_id': None,
+                'ip_address': request.client.host if request.client else 'unknown',
+                'user_agent': request.headers.get("user-agent"),
+                'cart_items': {}  # Empty since we're using database now
+            }
+
+            new_session = session_service.create_session(session_data)
+
+            if new_session and response:
+                response.set_cookie(
+                    key="session_id",
+                    value=new_session.session_id,
+                    max_age=3600,
+                    httponly=True,
+                    secure=not config.debug_mode,
+                    samesite="Lax",
+                    path="/"
+                )
+                logger.info(f"✅ User session created for new user {user_id}")
+
+            # Delete old guest session
+            if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
+                session_service.delete_session(current_session_id)
+                logger.info(f"✅ Deleted guest session after successful registration migration")
+
+            # Publish registration event
+            if background_tasks:
+                cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+                user = cursor.fetchone()
+                background_tasks.add_task(
+                    publish_user_registration_event,
+                    user
+                )
+
+            # Create access token
             access_token = create_access_token(
                 data={
                     "sub": str(user_id),
@@ -290,105 +431,6 @@ async def register_user(
                 },
                 expires_delta=timedelta(hours=24)
             )
-
-            if request:
-                try:
-                    current_session = get_session(request)
-                    current_session_id = get_session_id(request)
-                    guest_cart_items = {}
-
-                    # Get guest cart items from session
-                    if current_session and current_session.session_type == SessionType.GUEST:
-                        if current_session.cart_items:
-                            guest_cart_items = current_session.cart_items.copy()
-                            logger.info(f"🛒 Migrating guest cart with {len(guest_cart_items)} items to user database")
-
-                    # Process cart migration
-                    if guest_cart_items:
-                        for item_key, item_data in guest_cart_items.items():
-                            try:
-                                product_id = item_data['product_id']
-                                variation_id = item_data.get('variation_id')
-                                quantity = item_data['quantity']
-
-                                # Check if product exists and is active
-                                cursor.execute(
-                                    "SELECT id, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
-                                    (product_id,))
-                                product = cursor.fetchone()
-                                if not product:
-                                    continue
-
-                                max_quantity = product['max_cart_quantity'] or 20
-
-                                # Check if user already has this item in cart
-                                cursor.execute("""
-                                    SELECT id, quantity FROM shopping_cart
-                                    WHERE user_id = %s AND product_id = %s
-                                    AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
-                                """, (user_id, product_id, variation_id, variation_id))
-                                existing_item = cursor.fetchone()
-
-                                if existing_item:
-                                    # Merge quantities, respecting maximum limits
-                                    existing_quantity = existing_item['quantity']
-                                    new_quantity = min(existing_quantity + quantity, max_quantity)
-
-                                    cursor.execute("""
-                                        UPDATE shopping_cart
-                                        SET quantity = %s, updated_at = NOW()
-                                        WHERE id = %s
-                                    """, (new_quantity, existing_item['id']))
-                                else:
-                                    # Add new item with quantity limit
-                                    cursor.execute("""
-                                        INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
-                                        VALUES (%s, %s, %s, %s)
-                                    """, (user_id, product_id, variation_id, min(quantity, max_quantity)))
-
-                                logger.info(f"✅ Migrated cart item: product {product_id}, quantity {quantity}")
-                            except Exception as e:
-                                logger.error(f"❌ Failed to migrate cart item {item_key}: {e}")
-                                continue
-
-                    # Create new user session
-                    session_data = {
-                        'session_type': SessionType.USER,
-                        'user_id': user_id,
-                        'guest_id': None,
-                        'ip_address': request.client.host if request.client else 'unknown',
-                        'user_agent': request.headers.get("user-agent"),
-                        'cart_items': {}  # Empty cart since we're using database now
-                    }
-                    new_session = session_service.create_session(session_data)
-
-                    if new_session and response:
-                        response.set_cookie(
-                            key="session_id",
-                            value=new_session.session_id,
-                            max_age=3600,
-                            httponly=True,
-                            secure=not config.debug_mode,
-                            samesite="Lax",
-                            path="/"
-                        )
-                        logger.info(f"✅ User session created for new user {user_id}")
-
-                    # Delete old guest session
-                    if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
-                        session_service.delete_session(current_session_id)
-                        logger.info(f"✅ Deleted guest session after successful registration migration")
-
-                except Exception as e:
-                    logger.error(f"❌ Session creation failed during registration: {e}")
-
-            if background_tasks:
-                cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-                user = cursor.fetchone()
-                background_tasks.add_task(
-                    publish_user_registration_event,
-                    user
-                )
 
             logger.info(f"✅ User registered successfully: {email or phone or username}")
             return Token(
@@ -559,8 +601,8 @@ async def login_user(
                 FROM users
                 WHERE email = %s OR phone = %s OR username = %s
             """, (login_data.login_id, login_data.login_id, login_data.login_id))
-            user = cursor.fetchone()
 
+            user = cursor.fetchone()
             if not user:
                 logger.warning(f"❌ User not found: {login_data.login_id}")
                 raise HTTPException(
@@ -584,6 +626,7 @@ async def login_user(
 
             reset_failed_login(client_identifier)
 
+            # Get user roles and permissions
             cursor.execute("""
                 SELECT
                     ur.name as role_name,
@@ -606,6 +649,50 @@ async def login_user(
             if not roles:
                 roles.add('customer')
 
+            # Handle session and cart migration
+            current_session = get_session(request)
+            current_session_id = get_session_id(request)
+
+            migrated_items_count = 0
+            if current_session and current_session.session_type == SessionType.GUEST:
+                # Migrate guest cart to user database
+                migrated_items_count = migrate_guest_cart_to_user_database(
+                    current_session, user['id'], cursor
+                )
+                logger.info(f"🛒 Migrated {migrated_items_count} cart items from guest session")
+
+            # Create new user session
+            session_data = {
+                'session_type': SessionType.USER,
+                'user_id': user['id'],
+                'guest_id': None,
+                'ip_address': request.client.host if request.client else 'unknown',
+                'user_agent': request.headers.get("user-agent"),
+                'cart_items': {}  # Empty since we're using database now
+            }
+
+            new_session = session_service.create_session(session_data)
+
+            if new_session and response:
+                response.set_cookie(
+                    key="session_id",
+                    value=new_session.session_id,
+                    max_age=3600,
+                    httponly=True,
+                    secure=not config.debug_mode,
+                    samesite="Lax",
+                    path="/"
+                )
+
+            # Delete old guest session
+            if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
+                session_service.delete_session(current_session_id)
+                logger.info(f"✅ Deleted guest session after login migration")
+
+            # Update last login
+            cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
+
+            # Create access token
             access_token = create_access_token(
                 data={
                     "sub": str(user['id']),
@@ -616,109 +703,7 @@ async def login_user(
                 expires_delta=timedelta(hours=24)
             )
 
-            if request:
-                try:
-                    current_session = get_session(request)
-                    current_session_id = get_session_id(request)
-                    guest_cart_items = {}
-
-                    # Get guest cart items from session
-                    if current_session and current_session.session_type == SessionType.GUEST:
-                        if current_session.cart_items:
-                            guest_cart_items = current_session.cart_items.copy()
-                            logger.info(f"🛒 Migrating guest cart with {len(guest_cart_items)} items to user database")
-
-                    # Get existing user cart from database
-                    cursor.execute("""
-                        SELECT product_id, variation_id, quantity
-                        FROM shopping_cart
-                        WHERE user_id = %s
-                    """, (user['id'],))
-                    existing_user_cart = cursor.fetchall()
-
-                    # Process cart migration - merge guest cart with existing user cart
-                    if guest_cart_items:
-                        for item_key, item_data in guest_cart_items.items():
-                            try:
-                                product_id = item_data['product_id']
-                                variation_id = item_data.get('variation_id')
-                                quantity = item_data['quantity']
-
-                                # Check if product exists and is active
-                                cursor.execute(
-                                    "SELECT id, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
-                                    (product_id,))
-                                product = cursor.fetchone()
-                                if not product:
-                                    continue
-
-                                max_quantity = product['max_cart_quantity'] or 20
-
-                                # Check if user already has this item in cart
-                                cursor.execute("""
-                                    SELECT id, quantity FROM shopping_cart
-                                    WHERE user_id = %s AND product_id = %s
-                                    AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
-                                """, (user['id'], product_id, variation_id, variation_id))
-                                existing_item = cursor.fetchone()
-
-                                if existing_item:
-                                    # Merge quantities, respecting maximum limits
-                                    existing_quantity = existing_item['quantity']
-                                    new_quantity = min(existing_quantity + quantity, max_quantity)
-
-                                    cursor.execute("""
-                                        UPDATE shopping_cart
-                                        SET quantity = %s, updated_at = NOW()
-                                        WHERE id = %s
-                                    """, (new_quantity, existing_item['id']))
-                                else:
-                                    # Add new item with quantity limit
-                                    cursor.execute("""
-                                        INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
-                                        VALUES (%s, %s, %s, %s)
-                                    """, (user['id'], product_id, variation_id, min(quantity, max_quantity)))
-
-                                logger.info(f"✅ Migrated cart item: product {product_id}, quantity {quantity}")
-                            except Exception as e:
-                                logger.error(f"❌ Failed to migrate cart item {item_key}: {e}")
-                                continue
-
-                    # Create new user session
-                    session_data = {
-                        'session_type': SessionType.USER,
-                        'user_id': user['id'],
-                        'guest_id': None,
-                        'ip_address': request.client.host if request.client else 'unknown',
-                        'user_agent': request.headers.get("user-agent"),
-                        'cart_items': {}  # Empty cart since we're using database now
-                    }
-                    new_session = session_service.create_session(session_data)
-
-                    if new_session and response:
-                        response.set_cookie(
-                            key="session_id",
-                            value=new_session.session_id,
-                            max_age=3600,
-                            httponly=True,
-                            secure=not config.debug_mode,
-                            samesite="Lax",
-                            path="/"
-                        )
-
-                    # Delete old guest session
-                    if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
-                        session_service.delete_session(current_session_id)
-                        logger.info(f"✅ Deleted guest session after login migration")
-
-                    logger.info(f"✅ User {user['id']} cart successfully migrated and merged")
-
-                except Exception as e:
-                    logger.error(f"❌ Session creation failed during login: {e}")
-
-            cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
             logger.info(f"✅ Login successful for user: {user['email']}")
-
             return Token(
                 access_token=access_token,
                 token_type="bearer",

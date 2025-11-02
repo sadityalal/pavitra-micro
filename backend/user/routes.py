@@ -182,23 +182,43 @@ def get_or_create_guest_id(request: Request, x_guest_id: Optional[str] = Header(
 
 
 async def get_current_user_or_guest(request: Request, x_guest_id: Optional[str] = Header(None)):
+    """Get current user or create guest session with proper error handling"""
     try:
-        current_user = await get_current_user(request)
+        # Try to get authenticated user first
+        try:
+            current_user = await get_current_user(request)
+            session = get_session(request)
+            session_id = get_session_id(request)
+
+            # Validate and repair session if it exists
+            if session_id and session:
+                try:
+                    session_service.validate_and_repair_session(session_id)
+                except Exception as e:
+                    logger.warning(f"Session repair failed but continuing: {e}")
+
+            return {
+                "user_id": current_user['sub'],
+                "is_guest": False,
+                "session_based": session is not None,
+                "session": session
+            }
+        except HTTPException:
+            # User is not authenticated, handle as guest
+            pass
+
+        # Guest user flow
         session = get_session(request)
         session_id = get_session_id(request)
+
+        # Validate and repair existing session
         if session_id and session:
-            session_service.validate_and_repair_session(session_id)
-        return {
-            "user_id": current_user['sub'],
-            "is_guest": False,
-            "session_based": session is not None,
-            "session": session
-        }
-    except HTTPException:
-        session = get_session(request)
-        session_id = get_session_id(request)
-        if session_id and session:
-            session_service.validate_and_repair_session(session_id)
+            try:
+                session_service.validate_and_repair_session(session_id)
+            except Exception as e:
+                logger.warning(f"Session repair failed: {e}")
+                # Continue with guest flow even if repair fails
+
         if session and session.session_type == SessionType.GUEST:
             return {
                 "guest_id": session.guest_id,
@@ -206,7 +226,10 @@ async def get_current_user_or_guest(request: Request, x_guest_id: Optional[str] 
                 "session_based": True,
                 "session": session
             }
+
+        # Create new guest session if no valid session exists
         guest_id = get_or_create_guest_id(request, x_guest_id)
+
         if not session and not session_id:
             try:
                 session_data = {
@@ -214,7 +237,7 @@ async def get_current_user_or_guest(request: Request, x_guest_id: Optional[str] 
                     'user_id': None,
                     'guest_id': guest_id,
                     'ip_address': request.client.host if request.client else 'unknown',
-                    'user_agent': request.headers.get("user-agent"),
+                    'user_agent': request.headers.get("user-agent", ""),
                     'cart_items': {}
                 }
                 new_session = session_service.create_session(session_data)
@@ -227,6 +250,19 @@ async def get_current_user_or_guest(request: Request, x_guest_id: Optional[str] 
                     }
             except Exception as e:
                 logger.error(f"Failed to create guest session: {e}")
+                # Fall through to basic guest ID
+
+        return {
+            "guest_id": guest_id,
+            "is_guest": True,
+            "session_based": False,
+            "session": None
+        }
+
+    except Exception as e:
+        logger.error(f"Critical error in get_current_user_or_guest: {e}")
+        # Fallback to basic guest ID to prevent complete failure
+        guest_id = get_or_create_guest_id(request, x_guest_id)
         return {
             "guest_id": guest_id,
             "is_guest": True,
@@ -1241,86 +1277,41 @@ async def migrate_session_cart_to_user(
         request: Request,
         current_user: dict = Depends(get_current_user)
 ):
+    """Migrate session cart to user database cart"""
     try:
         user_id = current_user['sub']
         session_id = get_session_id(request)
+
         if not session_id:
             raise HTTPException(status_code=404, detail="Session not found")
 
         session = get_session(request)
-        if not session or not session.cart_items:
-            return {"message": "No cart items to migrate", "items_migrated": 0}
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
 
         migrated_count = 0
         with db.get_cursor() as cursor:
-            for item_key, item_data in session.cart_items.items():
-                try:
-                    product_id = item_data['product_id']
-                    variation_id = item_data.get('variation_id')
-                    quantity = item_data['quantity']
+            if session.cart_items:
+                migrated_count = migrate_guest_cart_to_user_database(session, user_id, cursor)
 
-                    # Validate product before migration
-                    cursor.execute("SELECT id, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
-                                   (product_id,))
-                    product = cursor.fetchone()
-                    if not product:
-                        continue
+        # Update session to user type and clear cart
+        session_service.update_session_data(session_id, {
+            "session_type": SessionType.USER,
+            "user_id": user_id,
+            "guest_id": None,
+            "cart_items": {}
+        })
 
-                    # Get max cart quantity from settings
-                    config.refresh_cache()
-                    max_cart_quantity = getattr(config, 'max_cart_quantity_per_product', 20)
-                    product_max_quantity = product['max_cart_quantity']
-                    if product_max_quantity:
-                        max_quantity = min(product_max_quantity, max_cart_quantity)
-                    else:
-                        max_quantity = max_cart_quantity
-
-                    cursor.execute("""
-                        SELECT id, quantity FROM shopping_cart
-                        WHERE user_id = %s AND product_id = %s
-                        AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
-                    """, (user_id, product_id, variation_id, variation_id))
-                    existing_item = cursor.fetchone()
-
-                    if existing_item:
-                        # Merge quantities, respecting maximum limits
-                        new_quantity = min(existing_item['quantity'] + quantity, max_quantity)
-                        cursor.execute("""
-                            UPDATE shopping_cart
-                            SET quantity = %s, updated_at = NOW()
-                            WHERE id = %s
-                        """, (new_quantity, existing_item['id']))
-                    else:
-                        # Add new item with quantity limit
-                        cursor.execute("""
-                            INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
-                            VALUES (%s, %s, %s, %s)
-                        """, (user_id, product_id, variation_id, min(quantity, max_quantity)))
-
-                    migrated_count += 1
-
-                except Exception as e:
-                    logger.error(f"Failed to migrate cart item {item_key}: {e}")
-                    continue
-
-        session_service.update_session_data(session_id, {"cart_items": {}})
-        refreshed_session = session_service.get_session(session_id)
-        if refreshed_session:
-            session_service.update_session_data(session_id, {
-                "session_type": SessionType.USER,
-                "user_id": user_id,
-                "guest_id": None,
-                "cart_items": {}
-            })
-
+        # Invalidate cache
         redis_client.delete(f"user_cart:{user_id}")
-        logger.info(f"Cart migrated to user database for user {user_id}, {migrated_count} items migrated")
 
+        logger.info(f"Cart migrated to user database for user {user_id}, {migrated_count} items migrated")
         return {
             "message": "Cart migrated successfully",
             "items_migrated": migrated_count,
-            "session_cleared": True
+            "session_updated": True
         }
+
     except Exception as e:
         logger.error(f"Failed to migrate cart: {e}")
         raise HTTPException(
