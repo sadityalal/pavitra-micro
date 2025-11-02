@@ -73,11 +73,9 @@ async def maintenance_mode_middleware(request, call_next):
         "/api/v1/products/health", "/api/v1/products/site-settings",
         "/api/v1/products/debug/maintenance", "/api/v1/products/debug/settings"
     ]
-
     if any(request.url.path.startswith(path) for path in maintenance_exempt_paths):
         response = await call_next(request)
         return response
-
     config.refresh_cache()
     logger.info(f"DEBUG Middleware: maintenance_mode={config.maintenance_mode}, type={type(config.maintenance_mode)}")
     if config.maintenance_mode:
@@ -86,7 +84,6 @@ async def maintenance_mode_middleware(request, call_next):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Service is under maintenance. Please try again later."
         )
-
     response = await call_next(request)
     return response
 
