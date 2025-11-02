@@ -41,7 +41,7 @@ class ProductCreate(ProductBase):
 
 class ProductResponse(ProductBase):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     uuid: str
     specification: Optional[Dict[str, Any]] = None
@@ -67,7 +67,7 @@ class ProductResponse(ProductBase):
 
 class CategoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     uuid: str
     name: str
@@ -80,7 +80,7 @@ class CategoryResponse(BaseModel):
 
 class BrandResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: int
     uuid: str
     name: str
