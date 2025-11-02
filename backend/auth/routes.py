@@ -108,6 +108,7 @@ def publish_user_registration_event(user_data: dict):
                 serializable_user_data[key] = value.isoformat()
             else:
                 serializable_user_data[key] = value
+
         message = {
             'event_type': 'user_registered',
             'user_id': serializable_user_data['id'],
@@ -116,6 +117,7 @@ def publish_user_registration_event(user_data: dict):
             'timestamp': datetime.utcnow().isoformat(),
             'data': serializable_user_data
         }
+
         if rabbitmq_client.connect():
             success = rabbitmq_client.publish_message(
                 exchange='notification_events',
@@ -153,6 +155,7 @@ async def register_user(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Registration is temporarily unavailable."
             )
+
         if user_data:
             email = user_data.email
             phone = user_data.phone
@@ -161,41 +164,51 @@ async def register_user(
             first_name = user_data.first_name
             last_name = user_data.last_name
             country_id = user_data.country_id or 1
+
         logger.info(f"🔄 Processing registration for: {email or phone or username}")
+
         first_name = sanitize_input(first_name)
         last_name = sanitize_input(last_name)
+
         if not email and not phone and not username:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email, phone, or username is required"
             )
+
         if email and not validate_email(email):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid email format"
             )
+
         if phone and not validate_phone(phone):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid phone format"
             )
+
         if username and not validate_username(username):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username must be 3-30 characters and contain only letters, numbers, and underscores"
             )
+
         if len(password) < 8:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password must be at least 8 characters long"
             )
+
         common_passwords = ['password', '12345678', 'qwerty', 'admin', 'letmein']
         if password.lower() in common_passwords:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password is too common. Please choose a stronger password."
             )
+
         logger.info(f"🔄 Processing registration with Argon2 hashing")
+
         with db.get_cursor() as cursor:
             if email:
                 cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
@@ -204,6 +217,7 @@ async def register_user(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Email already registered"
                     )
+
             if phone:
                 cursor.execute("SELECT id FROM users WHERE phone = %s", (phone,))
                 if cursor.fetchone():
@@ -211,6 +225,7 @@ async def register_user(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Phone number already registered"
                     )
+
             if username:
                 cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
                 if cursor.fetchone():
@@ -218,14 +233,17 @@ async def register_user(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Username already taken"
                     )
+
             password_hash = get_password_hash(password)
             logger.info(f"🔐 Password hashed successfully")
+
             cursor.execute("""
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (email, phone, username, password_hash, first_name, last_name, country_id))
             user_id = cursor.lastrowid
             logger.info(f"✅ User created with ID: {user_id}")
+
             cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
             role = cursor.fetchone()
             if role:
@@ -234,12 +252,14 @@ async def register_user(
                     VALUES (%s, %s, %s)
                 """, (user_id, role['id'], user_id))
                 logger.info(f"✅ Customer role assigned to user {user_id}")
+
             cursor.execute("""
                 INSERT INTO user_notification_preferences (user_id, notification_method, is_enabled)
                 VALUES (%s, 'email', TRUE)
                 ON DUPLICATE KEY UPDATE is_enabled = TRUE
             """, (user_id,))
             logger.info(f"✅ Email notifications enabled for user {user_id}")
+
             cursor.execute("""
                 SELECT
                     ur.name as role_name,
@@ -257,8 +277,10 @@ async def register_user(
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
+
             if not roles:
                 roles.add('customer')
+
             access_token = create_access_token(
                 data={
                     "sub": str(user_id),
@@ -268,41 +290,98 @@ async def register_user(
                 },
                 expires_delta=timedelta(hours=24)
             )
+
             if request:
                 try:
                     current_session = get_session(request)
                     current_session_id = get_session_id(request)
                     guest_cart_items = {}
+
+                    # Get guest cart items from session
                     if current_session and current_session.session_type == SessionType.GUEST:
                         if current_session.cart_items:
                             guest_cart_items = current_session.cart_items.copy()
-                            logger.info(
-                                f"✅ Migrated guest cart to user session during registration: {len(guest_cart_items)} items")
+                            logger.info(f"🛒 Migrating guest cart with {len(guest_cart_items)} items to user database")
+
+                    # Process cart migration
+                    if guest_cart_items:
+                        for item_key, item_data in guest_cart_items.items():
+                            try:
+                                product_id = item_data['product_id']
+                                variation_id = item_data.get('variation_id')
+                                quantity = item_data['quantity']
+
+                                # Check if product exists and is active
+                                cursor.execute(
+                                    "SELECT id, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
+                                    (product_id,))
+                                product = cursor.fetchone()
+                                if not product:
+                                    continue
+
+                                max_quantity = product['max_cart_quantity'] or 20
+
+                                # Check if user already has this item in cart
+                                cursor.execute("""
+                                    SELECT id, quantity FROM shopping_cart
+                                    WHERE user_id = %s AND product_id = %s
+                                    AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
+                                """, (user_id, product_id, variation_id, variation_id))
+                                existing_item = cursor.fetchone()
+
+                                if existing_item:
+                                    # Merge quantities, respecting maximum limits
+                                    existing_quantity = existing_item['quantity']
+                                    new_quantity = min(existing_quantity + quantity, max_quantity)
+
+                                    cursor.execute("""
+                                        UPDATE shopping_cart
+                                        SET quantity = %s, updated_at = NOW()
+                                        WHERE id = %s
+                                    """, (new_quantity, existing_item['id']))
+                                else:
+                                    # Add new item with quantity limit
+                                    cursor.execute("""
+                                        INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
+                                        VALUES (%s, %s, %s, %s)
+                                    """, (user_id, product_id, variation_id, min(quantity, max_quantity)))
+
+                                logger.info(f"✅ Migrated cart item: product {product_id}, quantity {quantity}")
+                            except Exception as e:
+                                logger.error(f"❌ Failed to migrate cart item {item_key}: {e}")
+                                continue
+
+                    # Create new user session
                     session_data = {
                         'session_type': SessionType.USER,
                         'user_id': user_id,
                         'guest_id': None,
                         'ip_address': request.client.host if request.client else 'unknown',
                         'user_agent': request.headers.get("user-agent"),
-                        'cart_items': guest_cart_items
+                        'cart_items': {}  # Empty cart since we're using database now
                     }
                     new_session = session_service.create_session(session_data)
+
                     if new_session and response:
                         response.set_cookie(
                             key="session_id",
                             value=new_session.session_id,
-                            max_age=3600,  # 1 hour
+                            max_age=3600,
                             httponly=True,
                             secure=not config.debug_mode,
                             samesite="Lax",
                             path="/"
                         )
-                        logger.info(f"✅ User session created for new user {user_id} with cart items")
+                        logger.info(f"✅ User session created for new user {user_id}")
+
+                    # Delete old guest session
                     if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
                         session_service.delete_session(current_session_id)
                         logger.info(f"✅ Deleted guest session after successful registration migration")
+
                 except Exception as e:
                     logger.error(f"❌ Session creation failed during registration: {e}")
+
             if background_tasks:
                 cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
                 user = cursor.fetchone()
@@ -310,6 +389,7 @@ async def register_user(
                     publish_user_registration_event,
                     user
                 )
+
             logger.info(f"✅ User registered successfully: {email or phone or username}")
             return Token(
                 access_token=access_token,
@@ -318,6 +398,7 @@ async def register_user(
                 user_roles=list(roles),
                 user_permissions=list(permissions)
             )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -336,6 +417,7 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
+
     try:
         config.refresh_cache()
         settings = {
@@ -429,18 +511,22 @@ async def login_user(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         client_identifier = get_client_identifier(request)
         if not check_rate_limit(f"login:{client_identifier}", max_attempts=10, window_seconds=900):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many login attempts. Please try again later."
             )
+
         if not track_failed_login(client_identifier):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Account temporarily locked due to too many failed attempts. Please try again in 15 minutes."
             )
+
         logger.info(f"🔐 Login attempt for: {login_data.login_id}")
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -450,25 +536,30 @@ async def login_user(
                 WHERE email = %s OR phone = %s OR username = %s
             """, (login_data.login_id, login_data.login_id, login_data.login_id))
             user = cursor.fetchone()
+
             if not user:
                 logger.warning(f"❌ User not found: {login_data.login_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
+
             if not verify_password(login_data.password, user['password_hash']):
                 logger.warning(f"❌ Invalid password for user: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
+
             if not user['is_active']:
                 logger.warning(f"❌ Account deactivated: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Account is deactivated"
                 )
+
             reset_failed_login(client_identifier)
+
             cursor.execute("""
                 SELECT
                     ur.name as role_name,
@@ -479,6 +570,7 @@ async def login_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user['id'],))
+
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -486,8 +578,10 @@ async def login_user(
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
+
             if not roles:
                 roles.add('customer')
+
             access_token = create_access_token(
                 data={
                     "sub": str(user['id']),
@@ -497,11 +591,14 @@ async def login_user(
                 },
                 expires_delta=timedelta(hours=24)
             )
+
             if request:
                 try:
                     current_session = get_session(request)
                     current_session_id = get_session_id(request)
                     guest_cart_items = {}
+
+                    # Get guest cart items from session
                     if current_session and current_session.session_type == SessionType.GUEST:
                         if current_session.cart_items:
                             guest_cart_items = current_session.cart_items.copy()
@@ -509,24 +606,13 @@ async def login_user(
 
                     # Get existing user cart from database
                     cursor.execute("""
-                        SELECT product_id, variation_id, quantity 
-                        FROM shopping_cart 
+                        SELECT product_id, variation_id, quantity
+                        FROM shopping_cart
                         WHERE user_id = %s
                     """, (user['id'],))
                     existing_user_cart = cursor.fetchall()
 
-                    # Convert existing cart to dict for easy lookup
-                    existing_cart_dict = {}
-                    for item in existing_user_cart:
-                        key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
-                            item['product_id'])
-                        existing_cart_dict[key] = {
-                            'product_id': item['product_id'],
-                            'variation_id': item['variation_id'],
-                            'quantity': item['quantity']
-                        }
-
-                    # Merge guest cart with user's database cart
+                    # Process cart migration - merge guest cart with existing user cart
                     if guest_cart_items:
                         for item_key, item_data in guest_cart_items.items():
                             try:
@@ -535,26 +621,40 @@ async def login_user(
                                 quantity = item_data['quantity']
 
                                 # Check if product exists and is active
-                                cursor.execute("SELECT id FROM products WHERE id = %s AND status = 'active'",
-                                               (product_id,))
-                                if not cursor.fetchone():
+                                cursor.execute(
+                                    "SELECT id, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
+                                    (product_id,))
+                                product = cursor.fetchone()
+                                if not product:
                                     continue
 
+                                max_quantity = product['max_cart_quantity'] or 20
+
                                 # Check if user already has this item in cart
-                                if item_key in existing_cart_dict:
-                                    existing_quantity = existing_cart_dict[item_key]['quantity']
-                                    new_quantity = existing_quantity + quantity
+                                cursor.execute("""
+                                    SELECT id, quantity FROM shopping_cart
+                                    WHERE user_id = %s AND product_id = %s
+                                    AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
+                                """, (user['id'], product_id, variation_id, variation_id))
+                                existing_item = cursor.fetchone()
+
+                                if existing_item:
+                                    # Merge quantities, respecting maximum limits
+                                    existing_quantity = existing_item['quantity']
+                                    new_quantity = min(existing_quantity + quantity, max_quantity)
+
                                     cursor.execute("""
-                                        UPDATE shopping_cart 
-                                        SET quantity = %s, updated_at = NOW() 
-                                        WHERE user_id = %s AND product_id = %s 
-                                        AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
-                                    """, (new_quantity, user['id'], product_id, variation_id, variation_id))
+                                        UPDATE shopping_cart
+                                        SET quantity = %s, updated_at = NOW()
+                                        WHERE id = %s
+                                    """, (new_quantity, existing_item['id']))
                                 else:
+                                    # Add new item with quantity limit
                                     cursor.execute("""
                                         INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
                                         VALUES (%s, %s, %s, %s)
-                                    """, (user['id'], product_id, variation_id, quantity))
+                                    """, (user['id'], product_id, variation_id, min(quantity, max_quantity)))
+
                                 logger.info(f"✅ Migrated cart item: product {product_id}, quantity {quantity}")
                             except Exception as e:
                                 logger.error(f"❌ Failed to migrate cart item {item_key}: {e}")
@@ -569,13 +669,13 @@ async def login_user(
                         'user_agent': request.headers.get("user-agent"),
                         'cart_items': {}  # Empty cart since we're using database now
                     }
-
                     new_session = session_service.create_session(session_data)
+
                     if new_session and response:
                         response.set_cookie(
                             key="session_id",
                             value=new_session.session_id,
-                            max_age=3600,  # 1 hour
+                            max_age=3600,
                             httponly=True,
                             secure=not config.debug_mode,
                             samesite="Lax",
@@ -587,13 +687,14 @@ async def login_user(
                         session_service.delete_session(current_session_id)
                         logger.info(f"✅ Deleted guest session after login migration")
 
-                    logger.info(f"✅ User {user['id']} cart restored from database with {len(existing_user_cart)} items")
+                    logger.info(f"✅ User {user['id']} cart successfully migrated and merged")
 
                 except Exception as e:
                     logger.error(f"❌ Session creation failed during login: {e}")
 
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
             logger.info(f"✅ Login successful for user: {user['email']}")
+
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -601,6 +702,7 @@ async def login_user(
                 user_roles=list(roles),
                 user_permissions=list(permissions)
             )
+
     except HTTPException:
         raise
     except Exception as e:
@@ -621,13 +723,16 @@ async def logout_user(
         user_id = current_user['sub']
         auth_header = request.headers.get("Authorization")
         session_id = get_session_id(request)
+
         if session_id:
             session_service.delete_session(session_id)
             logger.info(f"✅ Session deleted for user {user_id}")
+
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
             blacklist_token(token)
             logger.info(f"✅ JWT token invalidated for user {user_id}")
+
         response.delete_cookie(
             key="session_id",
             path="/",
@@ -635,6 +740,7 @@ async def logout_user(
             httponly=True,
             samesite="Lax"
         )
+
         logger.info(f"✅ User {user_id} logged out successfully")
         return {"message": "Logged out successfully"}
     except Exception as e:
@@ -653,6 +759,7 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token"
         )
+
     token = auth_header[7:]
     payload = verify_token(token)
     if not payload:
@@ -660,10 +767,12 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
+
     session_id = get_session_id(request)
     if session_id:
         session_service.update_session_activity(session_id)
         logger.info(f"✅ Session activity refreshed for user {payload['sub']}")
+
     new_token = create_access_token(
         data={
             "sub": payload['sub'],
@@ -673,6 +782,7 @@ async def refresh_token(
         },
         expires_delta=timedelta(hours=24)
     )
+
     logger.info(f"✅ Token refreshed successfully for user {payload['sub']}")
     return Token(
         access_token=new_token,
@@ -692,6 +802,7 @@ async def forgot_password(email: str = Form(...)):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, first_name FROM users WHERE email = %s", (email,))
             user = cursor.fetchone()
@@ -706,6 +817,7 @@ async def forgot_password(email: str = Form(...)):
                     reset_token
                 )
                 logger.info(f"Password reset initiated for user {user['id']}")
+
             return {"message": "If the email exists, a reset link has been sent"}
     except Exception as e:
         logger.error(f"Password reset failed: {e}")
@@ -724,12 +836,14 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         payload = verify_token(token)
         if not payload or payload.get('type') != 'password_reset':
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid reset token"
             )
+
         user_id = int(payload['sub'])
         stored_token = redis_client.get(f"password_reset:{user_id}")
         if not stored_token or stored_token != token:
@@ -737,11 +851,13 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid or expired reset token"
             )
+
         if len(new_password) < 8:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password must be at least 8 characters long"
             )
+
         with db.get_cursor() as cursor:
             new_password_hash = get_password_hash(new_password)
             cursor.execute(

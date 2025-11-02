@@ -19,6 +19,279 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+def validate_product_for_cart(product_id: int, quantity: int, variation_id: Optional[int] = None) -> dict:
+    """
+    Validate if a product can be added to cart with the given quantity
+    Returns product data if valid, raises HTTPException if not
+    """
+    try:
+        with db.get_cursor() as cursor:
+            # Get product details with inventory information
+            query = """
+                SELECT 
+                    p.id, p.name, p.sku, p.base_price, p.stock_quantity, 
+                    p.stock_status, p.max_cart_quantity, p.status,
+                    p.track_inventory, p.low_stock_threshold
+                FROM products p
+                WHERE p.id = %s AND p.status = 'active'
+            """
+            cursor.execute(query, (product_id,))
+            product = cursor.fetchone()
+
+            if not product:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Product not found or not available"
+                )
+
+            # Check if product is active
+            if product['status'] != 'active':
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Product is not available"
+                )
+
+            # Check stock status
+            if product['stock_status'] == 'out_of_stock':
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Product is out of stock"
+                )
+
+            # Check if we have enough stock
+            if product['track_inventory'] and product['stock_status'] != 'on_backorder':
+                if quantity > product['stock_quantity'] and product['stock_status'] != 'on_backorder':
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Insufficient stock available"  # GENERIC MESSAGE
+                    )
+
+            # Check maximum cart quantity
+            max_quantity = product['max_cart_quantity'] or 20  # Default to 20 if not set
+            if quantity > max_quantity:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Maximum {max_quantity} items can be added to cart per order"
+                )
+
+            # For variable products, check variation stock if variation_id is provided
+            if variation_id:
+                cursor.execute("""
+                    SELECT stock_quantity, stock_status
+                    FROM product_variations 
+                    WHERE id = %s AND product_id = %s
+                """, (variation_id, product_id))
+                variation = cursor.fetchone()
+
+                if not variation:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Product variation not found"
+                    )
+
+                if variation['stock_status'] == 'out_of_stock':
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Product variation is out of stock"
+                    )
+
+                if quantity > variation['stock_quantity'] and variation['stock_status'] != 'on_backorder':
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Only {variation['stock_quantity']} items available for this variation"
+                    )
+
+            return {
+                'id': product['id'],
+                'name': product['name'],
+                'price': float(product['base_price']),
+                'stock_quantity': product['stock_quantity'],
+                'stock_status': product['stock_status'],
+                'max_cart_quantity': max_quantity,
+                'track_inventory': bool(product['track_inventory'])
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Product validation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to validate product for cart"
+        )
+
+
+def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None) -> dict:
+    """
+    Get cart limits and stock information for a product
+    """
+    try:
+        with db.get_cursor() as cursor:
+            query = """
+                SELECT 
+                    p.id, p.name, p.stock_quantity, p.stock_status, 
+                    p.max_cart_quantity, p.track_inventory
+                FROM products p
+                WHERE p.id = %s AND p.status = 'active'
+            """
+            cursor.execute(query, (product_id,))
+            product = cursor.fetchone()
+
+            if not product:
+                return {
+                    'available': False,
+                    'max_quantity': 0,
+                    'stock_quantity': 0,
+                    'stock_status': 'out_of_stock'
+                }
+
+            max_quantity = product['max_cart_quantity'] or 20
+
+            # For variations, check variation stock
+            variation_stock = None
+            if variation_id:
+                cursor.execute("""
+                    SELECT stock_quantity, stock_status
+                    FROM product_variations 
+                    WHERE id = %s AND product_id = %s
+                """, (variation_id, product_id))
+                variation = cursor.fetchone()
+                if variation:
+                    variation_stock = {
+                        'stock_quantity': variation['stock_quantity'],
+                        'stock_status': variation['stock_status']
+                    }
+
+            return {
+                'available': True,
+                'max_quantity': max_quantity,
+                'product_stock': {
+                    'stock_quantity': product['stock_quantity'],
+                    'stock_status': product['stock_status']
+                },
+                'variation_stock': variation_stock,
+                'track_inventory': bool(product['track_inventory'])
+            }
+
+    except Exception as e:
+        logger.error(f"Failed to get product cart limits: {e}")
+        return {
+            'available': False,
+            'max_quantity': 0,
+            'stock_quantity': 0,
+            'stock_status': 'out_of_stock'
+        }
+
+
+@router.get("/{product_id}/cart-validation")
+async def validate_product_cart_addition(
+        product_id: int,
+        quantity: int = Query(1, ge=1),
+        variation_id: Optional[int] = Query(None),
+        request: Request = None
+):
+    """
+    Validate if a product can be added to cart with specified quantity
+    """
+    try:
+        await rate_limiter.check_rate_limit(request)
+
+        if quantity < 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Quantity must be at least 1"
+            )
+
+        # Validate the product
+        product_data = validate_product_for_cart(product_id, quantity, variation_id)
+
+        return {
+            "valid": True,
+            "product_id": product_id,
+            "variation_id": variation_id,
+            "quantity": quantity,
+            "max_quantity": product_data['max_cart_quantity'],
+            "price": product_data['price'],
+            "stock_status": product_data['stock_status'],
+            # REMOVED: "available_stock": product_data['stock_quantity']
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Cart validation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to validate product for cart"
+        )
+
+
+# Add this endpoint to get bulk product info for cart
+@router.post("/bulk-cart-info")
+async def get_bulk_cart_product_info(
+        product_ids: List[int],
+        request: Request = None
+):
+    """
+    Get product information for multiple products (useful for cart display)
+    """
+    try:
+        await rate_limiter.check_rate_limit(request)
+
+        if not product_ids:
+            return {"products": []}
+
+        with db.get_cursor() as cursor:
+            placeholders = ','.join(['%s'] * len(product_ids))
+            query = f"""
+                SELECT 
+                    p.id, p.name, p.slug, p.main_image_url, p.base_price,
+                    p.stock_quantity, p.stock_status, p.max_cart_quantity,
+                    p.track_inventory, p.status
+                FROM products p
+                WHERE p.id IN ({placeholders}) AND p.status = 'active'
+            """
+            cursor.execute(query, product_ids)
+            products = cursor.fetchall()
+
+            product_map = {}
+            for product in products:
+                max_quantity = product['max_cart_quantity'] or 20
+                product_map[product['id']] = {
+                    'id': product['id'],
+                    'name': product['name'],
+                    'slug': product['slug'],
+                    'image_url': product['main_image_url'],
+                    'price': float(product['base_price']),
+                    # REMOVED: 'stock_quantity': product['stock_quantity'],
+                    'stock_status': product['stock_status'],
+                    'max_cart_quantity': max_quantity,
+                    'available': True,
+                    'track_inventory': bool(product['track_inventory'])
+                }
+
+            # Include products that weren't found
+            result_products = []
+            for pid in product_ids:
+                if pid in product_map:
+                    result_products.append(product_map[pid])
+                else:
+                    result_products.append({
+                        'id': pid,
+                        'available': False,
+                        'stock_status': 'out_of_stock'
+                    })
+
+            return {"products": result_products}
+
+    except Exception as e:
+        logger.error(f"Failed to get bulk cart info: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get product information"
+        )
+
+
 def invalidate_product_cache_comprehensive(product_id: int):
     """Comprehensive cache invalidation for product and related data"""
     try:
@@ -929,7 +1202,6 @@ async def get_product(product_id: int, request: Request):
                 detail="Service is under maintenance. Please try again later."
             )
 
-        # SESSION: Update product views and session activity
         session = get_session(request)
         session_id = get_session_id(request)
         if session_id:
@@ -988,6 +1260,9 @@ async def get_product(product_id: int, request: Request):
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(image_gallery)
 
+            # Get max cart quantity with default fallback
+            max_cart_quantity = product['max_cart_quantity'] or 20
+
             product_response = ProductResponse(
                 id=product['id'],
                 uuid=product['uuid'],
@@ -1034,6 +1309,69 @@ async def get_product(product_id: int, request: Request):
             detail="Failed to fetch product"
         )
 
+
+@router.get("/stock-status/bulk")
+async def get_bulk_stock_status(
+        product_ids: List[int] = Query(...),
+        request: Request = None
+):
+    """
+    Get stock status for multiple products at once
+    """
+    try:
+        await rate_limiter.check_rate_limit(request)
+
+        if not product_ids or len(product_ids) > 50:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Maximum 50 products allowed per request"
+            )
+
+        with db.get_cursor() as cursor:
+            placeholders = ','.join(['%s'] * len(product_ids))
+            query = f"""
+                SELECT 
+                    id, name, stock_quantity, stock_status, 
+                    max_cart_quantity, status
+                FROM products 
+                WHERE id IN ({placeholders})
+            """
+            cursor.execute(query, product_ids)
+            products = cursor.fetchall()
+
+            status_map = {}
+            for product in products:
+                max_quantity = product['max_cart_quantity'] or 20
+                status_map[product['id']] = {
+                    'product_id': product['id'],
+                    'name': product['name'],
+                    # REMOVED: 'stock_quantity': product['stock_quantity'],
+                    'stock_status': product['stock_status'],
+                    'max_cart_quantity': max_quantity,
+                    'available': product['status'] == 'active'
+                }
+
+            # Include products that weren't found
+            result = []
+            for pid in product_ids:
+                if pid in status_map:
+                    result.append(status_map[pid])
+                else:
+                    result.append({
+                        'product_id': pid,
+                        'available': False,
+                        'stock_status': 'out_of_stock',
+                        'max_cart_quantity': 0
+                    })
+
+            return {"products": result}
+
+    except Exception as e:
+        logger.error(f"Failed to get bulk stock status: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get stock status"
+        )
 
 @router.get("/slug/{product_slug}", response_model=ProductResponse)
 async def get_product_by_slug(product_slug: str, request: Request):
@@ -1669,7 +2007,6 @@ async def create_product(
                 detail="Service is under maintenance. Please try again later."
             )
 
-        # SESSION: Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -1707,13 +2044,16 @@ async def create_product(
                         detail="Brand not found"
                     )
 
+            # Set default max_cart_quantity if not provided
+            max_cart_quantity = 20  # Default value
+
             cursor.execute("""
                 INSERT INTO products (
                     sku, name, slug, short_description, description, specification,
                     base_price, compare_price, category_id, brand_id, gst_rate,
                     track_inventory, stock_quantity, product_type, is_featured,
-                    status, stock_status, low_stock_threshold
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    status, stock_status, low_stock_threshold, max_cart_quantity
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (
                 product_data.sku,
                 sanitize_input(product_data.name),
@@ -1732,8 +2072,10 @@ async def create_product(
                 product_data.is_featured,
                 'active',
                 'in_stock' if product_data.stock_quantity > 0 else 'out_of_stock',
-                5
+                5,
+                max_cart_quantity  # Set default max cart quantity
             ))
+
             product_id = cursor.lastrowid
             cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
