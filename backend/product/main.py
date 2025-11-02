@@ -12,40 +12,37 @@ setup_logging("product-service")
 logger = get_logger(__name__)
 
 app = FastAPI(
-    title=f"{config.app_name} - Product Service",
-    description=config.app_description,
+    title=f"{config.app_name if config.app_name else 'Product Service'} - Product Service",
+    description=config.app_description if config.app_description else "Product management service",
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc"
 )
-# Need to fix this hardcoded urls from config.py and site-settings table
+
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 app.add_middleware(SessionMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config.cors_origins,  # Make sure this includes your frontend URL
-    allow_credentials=True,  # This is crucial
+    allow_origins=config.cors_origins if config.cors_origins else [],
+    allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=[
         "Content-Type",
         "Authorization",
         "X-Requested-With",
-        "X-Guest-Id",  # Add this if you're using guest IDs
-        "Cookie"  # Allow cookie headers
+        "X-Guest-Id",
+        "Cookie"
     ],
-    expose_headers=["set-cookie"],  # Important for session cookies
+    expose_headers=["set-cookie"],
     max_age=600,
 )
-
 
 @app.middleware("http")
 async def secure_cors_headers(request: Request, call_next):
     response = await call_next(request)
     origin = request.headers.get('origin')
-    if origin and origin in config.cors_origins:
+    if origin and config.cors_origins and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
-    elif config.cors_origins and config.cors_origins[0] == '*':
-        response.headers['Access-Control-Allow-Origin'] = '*'
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Guest-Id, Cookie'
     response.headers['Access-Control-Allow-Credentials'] = 'true'
@@ -55,12 +52,11 @@ async def secure_cors_headers(request: Request, call_next):
     response.headers['X-XSS-Protection'] = '1; mode=block'
     return response
 
-
 @app.options("/{path:path}")
 async def secure_options_handler(path: str, request: Request):
     origin = request.headers.get('origin')
     response = JSONResponse(content={"method": "OPTIONS"})
-    if origin and origin in config.cors_origins:
+    if origin and config.cors_origins and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
@@ -69,7 +65,6 @@ async def secure_options_handler(path: str, request: Request):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     return response
-
 
 @app.middleware("http")
 async def maintenance_mode_middleware(request, call_next):
@@ -85,7 +80,6 @@ async def maintenance_mode_middleware(request, call_next):
 
     config.refresh_cache()
     logger.info(f"DEBUG Middleware: maintenance_mode={config.maintenance_mode}, type={type(config.maintenance_mode)}")
-
     if config.maintenance_mode:
         logger.warning(f"Maintenance mode blocking request to: {request.url.path}")
         raise HTTPException(
@@ -96,7 +90,6 @@ async def maintenance_mode_middleware(request, call_next):
     response = await call_next(request)
     return response
 
-
 @app.on_event("startup")
 async def startup_event():
     logger.info("🔄 Initializing database connection on startup...")
@@ -106,11 +99,8 @@ async def startup_event():
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
 
-
-
 app.mount("/uploads", StaticFiles(directory="/app/uploads"), name="uploads")
 app.include_router(router, prefix="/api/v1/products")
-
 
 @app.get("/health")
 async def health():
@@ -121,8 +111,8 @@ async def health():
                 "status": "healthy",
                 "service": "product",
                 "database": "connected",
-                "app_name": config.app_name,
-                "maintenance_mode": config.maintenance_mode
+                "app_name": config.app_name if config.app_name else "Product Service",
+                "maintenance_mode": config.maintenance_mode if config.maintenance_mode is not None else False
             }
         else:
             logger.error(f"Database health check failed: {health_data.get('error')}")
@@ -137,38 +127,33 @@ async def health():
             detail="Service unhealthy"
         )
 
-
 @app.post("/refresh-config")
 async def refresh_config():
     config.refresh_cache()
     return {
         "message": "Configuration cache refreshed",
-        "maintenance_mode": config.maintenance_mode,
+        "maintenance_mode": config.maintenance_mode if config.maintenance_mode is not None else False,
         "timestamp": "updated"
     }
-
 
 @app.get("/")
 async def root():
     return {
-        "message": f"{config.app_name} - Product Service",
+        "message": f"{config.app_name if config.app_name else 'Product Service'} - Product Service",
         "version": "1.0.0",
         "environment": "development" if config.debug_mode else "production",
-        "maintenance_mode": config.maintenance_mode
+        "maintenance_mode": config.maintenance_mode if config.maintenance_mode is not None else False
     }
-
 
 if __name__ == "__main__":
     import uvicorn
-
-    port = config.get_service_port('product')  # or 'product', 'user'
-    logger.info(f"🚀 Starting Service on port {port}")
-
+    port = config.get_service_port('product')
+    logger.info(f"Starting Service on port {port}")
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=port,
-        log_level=config.log_level.lower(),
+        log_level=config.log_level.lower() if config.log_level else "info",
         access_log=True,
-        reload=config.debug_mode  # Auto-reload in debug mode
+        reload=config.debug_mode if config.debug_mode is not None else True
     )
