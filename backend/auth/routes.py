@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Form, Request, status, BackgroundTasks, Response
 from typing import Optional, List
 import time
+import json
 from datetime import datetime, timedelta
 from shared import (
     config, db, verify_password, get_password_hash,
@@ -527,6 +528,7 @@ async def login_user(
                 WHERE email = %s OR phone = %s OR username = %s
             """, (login_data.login_id, login_data.login_id, login_data.login_id))
             user = cursor.fetchone()
+
             if not user:
                 logger.warning(f"❌ User not found: {login_data.login_id}")
                 raise HTTPException(
@@ -584,7 +586,7 @@ async def login_user(
                 expires_delta=timedelta(hours=24)
             )
 
-            # SESSION MANAGEMENT: Create user session and transfer cart
+            # ENHANCED SESSION MANAGEMENT: Create user session and preserve cart
             if request:
                 try:
                     current_session = get_session(request)
@@ -593,25 +595,44 @@ async def login_user(
                     # Start with empty cart for the new user session
                     user_cart_items = {}
 
-                    # If there's a guest session with cart items, transfer them to user session
-                    if current_session and current_session.session_type == SessionType.GUEST:
+                    # STEP 1: Try to recover preserved cart from Redis first (from previous logout)
+                    try:
+                        preserved_cart_data = redis_client.get(f"preserved_cart:{user['id']}")
+                        if preserved_cart_data:
+                            user_cart_items = json.loads(preserved_cart_data)  # This needs json import
+                            logger.info(
+                                f"🛒 Recovered preserved cart for user {user['id']}: {len(user_cart_items)} items")
+                            # Clean up the preserved cart data after recovery
+                            redis_client.delete(f"preserved_cart:{user['id']}")
+                            logger.info(f"✅ Cleared preserved cart data for user {user['id']}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to recover preserved cart from Redis: {e}")
+
+                    # STEP 2: If no preserved cart, check for existing user session cart
+                    if not user_cart_items:
+                        existing_user_session = session_service.get_session_by_user_id(user['id'])
+                        if existing_user_session and existing_user_session.cart_items:
+                            user_cart_items = existing_user_session.cart_items.copy()
+                            logger.info(f"🛒 Using existing user session cart: {len(user_cart_items)} items")
+
+                    # STEP 3: If still no cart, check for guest session cart migration
+                    if not user_cart_items and current_session and current_session.session_type == SessionType.GUEST:
                         if current_session.cart_items:
                             user_cart_items = current_session.cart_items.copy()
                             logger.info(
                                 f"✅ Migrated guest cart to user session during login: {len(user_cart_items)} items")
 
-                    # Create new user session with the transferred cart
+                    # STEP 4: Create new user session with the recovered/migrated cart
                     session_data = {
                         'session_type': SessionType.USER,
                         'user_id': user['id'],
                         'guest_id': None,
                         'ip_address': request.client.host if request.client else 'unknown',
                         'user_agent': request.headers.get("user-agent"),
-                        'cart_items': user_cart_items  # This preserves the cart
+                        'cart_items': user_cart_items  # This preserves the cart from any source
                     }
 
                     new_session = session_service.create_session(session_data)
-
                     if new_session and response:
                         response.set_cookie(
                             key="session_id",
@@ -625,13 +646,26 @@ async def login_user(
                         logger.info(
                             f"✅ User session created for user {user['id']} with cart: {len(user_cart_items)} items")
 
-                    # Delete the old guest session after successful transfer
+                    # STEP 5: Clean up old sessions
+                    # Delete current guest session if it exists
                     if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
                         session_service.delete_session(current_session_id)
                         logger.info(f"✅ Deleted guest session after successful login migration")
 
+                    # Delete any other existing user sessions for this user (prevent multiple sessions)
+                    try:
+                        all_user_sessions = session_service.get_all_user_sessions(user['id'])
+                        for old_session in all_user_sessions:
+                            if old_session.session_id != new_session.session_id:
+                                session_service.delete_session(old_session.session_id)
+                                logger.info(f"✅ Deleted duplicate user session: {old_session.session_id}")
+                    except Exception as e:
+                        logger.warning(f"Could not clean up duplicate sessions: {e}")
+
                 except Exception as e:
                     logger.error(f"❌ Session creation failed during login: {e}")
+                    # Don't fail the login if session creation fails, but log it
+                    # User can still login but might have cart issues
 
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
             logger.info(f"✅ Login successful for user: {user['email']}")
@@ -667,32 +701,57 @@ async def logout_user(
         user_id = current_user['sub']
         auth_header = request.headers.get("Authorization")
 
-        if auth_header and auth_header.startswith("Bearer "):
-            token = auth_header[7:]
-            # FIX: Use the fixed blacklist function
-            blacklist_token(token)
-            logger.info(f"✅ JWT token invalidated for user {user_id}")
-
+        # Preserve cart data before deleting session
         session_id = get_session_id(request)
+        preserved_cart = {}
+
         if session_id:
+            # Get current session to preserve cart
+            current_session = session_service.get_session(session_id)
+            if current_session and current_session.cart_items:
+                preserved_cart = current_session.cart_items.copy()
+                logger.info(f"🛒 Preserving cart with {len(preserved_cart)} items during logout for user {user_id}")
+
+            # Delete the session but preserve cart data for future sessions
             session_service.delete_session(session_id)
             logger.info(f"✅ Session deleted for user {user_id}")
 
-        # FIX: Proper cookie deletion with same attributes
+        # Store preserved cart in Redis for future login
+        if preserved_cart:
+            try:
+                # Use your Redis client's setex method with JSON serialization
+                success = redis_client.setex(
+                    f"preserved_cart:{user_id}",
+                    86400,  # 24 hours expiration
+                    json.dumps(preserved_cart)
+                )
+                if success:
+                    logger.info(f"💾 Cart data preserved in Redis for user {user_id}")
+                else:
+                    logger.error(f"❌ Failed to preserve cart in Redis for user {user_id}")
+            except Exception as e:
+                logger.error(f"❌ Failed to preserve cart in Redis: {e}")
+
+        # Blacklist JWT token
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            blacklist_token(token)
+            logger.info(f"✅ JWT token invalidated for user {user_id}")
+
+        # Clear session cookie
         response.delete_cookie(
             key="session_id",
-            path="/",  # Must match the path used when setting the cookie
+            path="/",
             secure=not config.debug_mode,
             httponly=True,
             samesite="lax"
         )
 
-        logger.info(f"✅ User {user_id} logged out successfully")
+        logger.info(f"✅ User {user_id} logged out successfully (cart preserved)")
         return {"message": "Logged out successfully"}
 
     except Exception as e:
         logger.error(f"❌ Logout failed: {e}")
-        # FIX: Still return success even if some cleanup failed
         return {"message": "Logged out successfully"}
 
 

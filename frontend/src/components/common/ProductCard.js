@@ -25,14 +25,14 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
       document.dispatchEvent(event);
 
       // Show success message
-      alert(`${product.name} added to cart!`);
+//      alert(`${product.name} added to cart!`);
 
       if (onAddToCart) {
         onAddToCart(product);
       }
     } catch (error) {
       console.error('ProductCard: Failed to add to cart:', error);
-      alert(error.message || 'Failed to add product to cart. Please try again.');
+//      alert(error.message || 'Failed to add product to cart. Please try again.');
     } finally {
       setAddingToCart(false);
     }

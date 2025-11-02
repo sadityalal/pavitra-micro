@@ -2,7 +2,8 @@ import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { AuthProvider } from './contexts/AuthContext.js';
 import { SettingsProvider } from './contexts/SettingsContext.js';
-import { CartProvider } from './contexts/CartContext.js'; // ADD THIS
+import { CartProvider } from './contexts/CartContext.js';
+import { ToastProvider } from './contexts/ToastContext.js';
 import Layout from './components/layout/Layout.js';
 import HomePage from './pages/HomePage.js';
 import AuthPage from './pages/AuthPage.js';
@@ -10,7 +11,7 @@ import CartPage from './pages/CartPage.js';
 import { useSession } from './hooks/useSession';
 
 function App() {
-  useSession(); // Initialize session for guest users
+  useSession();
   useEffect(() => {
     const initializeScripts = () => {
       if (typeof bootstrap !== 'undefined') {
@@ -216,23 +217,25 @@ function App() {
   }, []);
 
   return (
-    <AuthProvider>
-      <SettingsProvider>
-        <CartProvider> {/* WRAP WITH CARTPROVIDER */}
-          <Router>
-            <Layout>
-              <Routes>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/cart" element={<CartPage />} />
-                <Route path="/auth" element={<AuthPage />} />
-                <Route path="/login" element={<AuthPage />} />
-                <Route path="/register" element={<AuthPage />} />
-              </Routes>
-            </Layout>
-          </Router>
-        </CartProvider>
-      </SettingsProvider>
-    </AuthProvider>
+    <Router>
+      <ToastProvider>
+        <AuthProvider>
+          <SettingsProvider>
+            <CartProvider>
+              <Layout>
+                <Routes>
+                  <Route path="/" element={<HomePage />} />
+                  <Route path="/cart" element={<CartPage />} />
+                  <Route path="/auth" element={<AuthPage />} />
+                  <Route path="/login" element={<AuthPage />} />
+                  <Route path="/register" element={<AuthPage />} />
+                </Routes>
+              </Layout>
+            </CartProvider>
+          </SettingsProvider>
+        </AuthProvider>
+      </ToastProvider>
+    </Router>
   );
 }
 

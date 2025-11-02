@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
 
 const AuthContext = createContext();
@@ -11,10 +12,24 @@ export const useAuth = () => {
   return context;
 };
 
+const useSafeToast = () => {
+  try {
+    const { success, error } = useContext(require('./ToastContext').ToastContext);
+    return { success, error };
+  } catch (err) {
+    return {
+      success: (message) => console.log('✅', message),
+      error: (message) => console.error('❌', message)
+    };
+  }
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const navigate = useNavigate();
+  const { success, error } = useSafeToast();
 
   useEffect(() => {
     const checkAuthStatus = async () => {
@@ -22,9 +37,8 @@ export const AuthProvider = ({ children }) => {
         const token = localStorage.getItem('auth_token');
         if (token) {
           setIsAuthenticated(true);
-          // For now, set basic user info - you might want to fetch user profile
           setUser({
-            id: 'user_id', // This should come from token or API call
+            id: 'user_id',
             email: 'user@example.com',
             roles: ['customer'],
             permissions: []
@@ -37,7 +51,6 @@ export const AuthProvider = ({ children }) => {
         setLoading(false);
       }
     };
-
     checkAuthStatus();
   }, []);
 
@@ -45,31 +58,32 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       const response = await authService.login(credentials);
-
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
-
         setUser({
-          id: 'user_id', // This should come from backend response
+          id: 'user_id',
           email: credentials.login_id,
           roles: response.user_roles || [],
           permissions: response.user_permissions || []
         });
-
         setIsAuthenticated(true);
+        success('Login successful! Welcome back.');
         return response;
       }
-    } catch (error) {
-      console.error('Login failed:', error);
-
-      // Provide better error messages
-      if (error.response?.status === 401) {
-        throw new Error('Invalid credentials. Please check your email/username and password.');
-      } else if (error.response?.status === 422) {
-        throw new Error('Invalid input format. Please check your data.');
+    } catch (err) {
+      console.error('Login failed:', err);
+      if (err.response?.status === 401) {
+        error('Invalid credentials. Please check your email/username and password.');
+      } else if (err.response?.status === 422) {
+        error('Invalid input format. Please check your data.');
+      } else if (err.response?.status === 429) {
+        error('Too many login attempts. Please try again later.');
+      } else if (err.response?.status === 503) {
+        error('Service is under maintenance. Please try again later.');
       } else {
-        throw new Error('Login failed. Please try again.');
+        error('Login failed. Please try again.');
       }
+      throw err;
     } finally {
       setLoading(false);
     }
@@ -78,8 +92,22 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       await authService.logout();
-    } catch (error) {
-      console.error('Logout error:', error);
+      success('You have been successfully logged out');
+
+      setTimeout(() => {
+        navigate('/');
+      }, 500);
+    } catch (err) {
+      console.error('Logout error:', err);
+      error('There was an issue during logout, but you have been logged out locally.');
+
+      localStorage.removeItem('auth_token');
+      setUser(null);
+      setIsAuthenticated(false);
+
+      setTimeout(() => {
+        navigate('/');
+      }, 1500);
     } finally {
       localStorage.removeItem('auth_token');
       setUser(null);
@@ -91,44 +119,76 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       console.log('Registering user with data:', userData);
-
       const response = await authService.register(userData);
-
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
-
         setUser({
-          id: 'user_id', // This should come from backend response
+          id: 'user_id',
           email: userData.email,
           first_name: userData.first_name,
           last_name: userData.last_name,
           roles: response.user_roles || ['customer'],
           permissions: response.user_permissions || []
         });
-
         setIsAuthenticated(true);
+        success('Registration successful! Welcome to our platform.');
         return response;
       }
-    } catch (error) {
-      console.error('Registration failed:', error);
-
-      // Provide detailed error messages for 422 validation errors
-      if (error.response?.status === 422) {
-        const validationErrors = error.response.data.detail;
+    } catch (err) {
+      console.error('Registration failed:', err);
+      if (err.response?.status === 422) {
+        const validationErrors = err.response.data.detail;
         if (Array.isArray(validationErrors)) {
           const errorMessages = validationErrors.map(err => err.msg || err).join(', ');
-          throw new Error(`Validation failed: ${errorMessages}`);
+          error(`Validation failed: ${errorMessages}`);
         } else if (typeof validationErrors === 'string') {
-          throw new Error(validationErrors);
+          error(validationErrors);
         } else if (validationErrors && typeof validationErrors === 'object') {
           const errorMessage = Object.values(validationErrors).flat().join(', ');
-          throw new Error(`Validation failed: ${errorMessage}`);
+          error(`Validation failed: ${errorMessage}`);
         }
-      } else if (error.response?.data?.detail) {
-        throw new Error(error.response.data.detail);
+      } else if (err.response?.data?.detail) {
+        error(err.response.data.detail);
+      } else if (err.response?.status === 400) {
+        error('Email, phone, or username already exists. Please use different credentials.');
+      } else if (err.response?.status === 503) {
+        error('Service is under maintenance. Registration is temporarily unavailable.');
       } else {
-        throw new Error('Registration failed. Please try again.');
+        error('Registration failed. Please try again.');
       }
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const forgotPassword = async (email) => {
+    try {
+      setLoading(true);
+      await authService.forgotPassword(email);
+      success('If the email exists, a password reset link has been sent.');
+    } catch (err) {
+      console.error('Forgot password failed:', err);
+      error('Failed to send reset email. Please try again.');
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetPassword = async (token, newPassword) => {
+    try {
+      setLoading(true);
+      await authService.resetPassword(token, newPassword);
+      success('Password reset successfully. You can now login with your new password.');
+    } catch (err) {
+      console.error('Reset password failed:', err);
+      if (err.response?.status === 400) {
+        error('Invalid or expired reset token.');
+      } else {
+        error('Failed to reset password. Please try again.');
+      }
+      throw err;
     } finally {
       setLoading(false);
     }
@@ -147,7 +207,6 @@ export const AuthProvider = ({ children }) => {
   };
 
   const refreshUser = async () => {
-    // Implement user data refresh if needed
   };
 
   const value = {
@@ -157,6 +216,8 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     register,
+    forgotPassword,
+    resetPassword,
     hasRole,
     hasPermission,
     isAdmin,

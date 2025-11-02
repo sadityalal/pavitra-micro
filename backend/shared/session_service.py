@@ -1,7 +1,7 @@
 import uuid
 import json
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from shared import get_logger, redis_client
 from .session_models import SessionData, SessionType
 
@@ -158,6 +158,24 @@ class SessionService:
         except Exception as e:
             logger.error(f"Failed to update session activity {session_id}: {e}")
             return False
+
+    def get_all_user_sessions(self, user_id: int) -> List[SessionData]:
+        """Get all active sessions for a user"""
+        try:
+            # This is a simplified implementation - you might need to adjust based on your Redis structure
+            sessions = []
+            # Get the main user session
+            user_session_id = redis_client.redis_client.get(f"{self._redis_user_session_prefix}{user_id}")
+            if user_session_id:
+                if isinstance(user_session_id, (bytes, bytearray)):
+                    user_session_id = user_session_id.decode()
+                session = self.get_session(user_session_id)
+                if session:
+                    sessions.append(session)
+            return sessions
+        except Exception as e:
+            logger.error(f"Failed to get all user sessions for {user_id}: {e}")
+            return []
 
     def get_session_by_user_id(self, user_id: int) -> Optional[SessionData]:
         try:
