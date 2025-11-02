@@ -271,6 +271,71 @@ async def get_current_user_or_guest(request: Request, x_guest_id: Optional[str] 
         }
 
 
+def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
+    """Migrate guest cart items to user's database cart"""
+    try:
+        if not guest_session or not guest_session.cart_items:
+            return 0
+
+        migrated_count = 0
+        guest_cart_items = guest_session.cart_items.copy()
+
+        for item_key, item_data in guest_cart_items.items():
+            try:
+                product_id = item_data['product_id']
+                variation_id = item_data.get('variation_id')
+                quantity = item_data['quantity']
+
+                # Check product availability
+                cursor.execute(
+                    "SELECT id, stock_quantity, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
+                    (product_id,)
+                )
+                product = cursor.fetchone()
+                if not product:
+                    continue
+
+                max_quantity = product['max_cart_quantity'] or 20
+                available_quantity = min(quantity, product['stock_quantity']) if product[
+                                                                                     'stock_quantity'] > 0 else quantity
+
+                # Check if item already exists in user's cart
+                cursor.execute("""
+                    SELECT id, quantity FROM shopping_cart
+                    WHERE user_id = %s AND product_id = %s
+                    AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
+                """, (user_id, product_id, variation_id, variation_id))
+
+                existing_item = cursor.fetchone()
+                if existing_item:
+                    # Update existing item quantity
+                    existing_quantity = existing_item['quantity']
+                    new_quantity = min(existing_quantity + available_quantity, max_quantity)
+                    cursor.execute("""
+                        UPDATE shopping_cart
+                        SET quantity = %s, updated_at = NOW()
+                        WHERE id = %s
+                    """, (new_quantity, existing_item['id']))
+                else:
+                    # Insert new item
+                    cursor.execute("""
+                        INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
+                        VALUES (%s, %s, %s, %s)
+                    """, (user_id, product_id, variation_id, available_quantity))
+
+                migrated_count += 1
+                logger.info(f"✅ Migrated cart item: product {product_id}, quantity {available_quantity}")
+
+            except Exception as e:
+                logger.error(f"❌ Failed to migrate cart item {item_key}: {e}")
+                continue
+
+        return migrated_count
+
+    except Exception as e:
+        logger.error(f"❌ Cart migration failed: {e}")
+        return 0
+
 @router.get("/health", response_model=HealthResponse)
 async def health():
     try:

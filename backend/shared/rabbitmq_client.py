@@ -1,6 +1,8 @@
 import pika
 import json
 import logging
+import uuid
+from datetime import datetime
 import time
 from typing import Dict, Any, Callable
 from shared import config, get_logger
@@ -37,7 +39,6 @@ class RabbitMQClient:
             raise
 
     def connect(self):
-        # FIX: Prevent multiple simultaneous connection attempts
         if self._connection_lock:
             logger.info("Connection attempt already in progress, waiting...")
             time.sleep(1)
@@ -47,33 +48,23 @@ class RabbitMQClient:
         try:
             if self.connected and self.connection and not self.connection.is_closed:
                 return True
-
             parameters = self._get_connection_parameters()
-
-            # FIX: Add connection recovery with retry logic
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     self.connection = pika.BlockingConnection(parameters)
                     self.channel = self.connection.channel()
-
-                    # FIX: Configure channel for durability
                     self.channel.confirm_delivery()  # Enable delivery confirmations
-
-                    # Declare durable exchange and queues
                     self.channel.exchange_declare(
                         exchange='notification_events',
                         exchange_type='topic',
                         durable=True
                     )
-
-                    # FIX: Declare all required queues with durability
                     queues = [
                         ('notification_queue', True),
                         ('product_events_queue', True),
                         ('user_events_queue', True)
                     ]
-
                     for queue_name, durable in queues:
                         self.channel.queue_declare(
                             queue=queue_name,
@@ -82,8 +73,6 @@ class RabbitMQClient:
                                 'x-message-ttl': 86400000  # 24 hours TTL
                             }
                         )
-
-                    # FIX: Bind queues to exchange
                     bindings = [
                         ('notification_events', 'notification_queue', 'user.*'),
                         ('notification_events', 'notification_queue', 'order.*'),
@@ -129,8 +118,6 @@ class RabbitMQClient:
             if not self.connected or self.connection is None or self.connection.is_closed:
                 logger.warning("RabbitMQ connection lost, attempting to reconnect...")
                 return self.connect()
-
-            # FIX: Check if channel is still valid
             try:
                 self.channel.connection.process_data_events()
                 return True
@@ -156,11 +143,8 @@ class RabbitMQClient:
                     if attempt < max_retries - 1:
                         time.sleep(retry_delay)
                     continue
-
-                # FIX: Ensure message is JSON serializable and add metadata
                 serializable_message = self._make_serializable(message)
                 message_body = json.dumps(serializable_message)
-
                 properties = pika.BasicProperties(
                     delivery_mode=2,  # Persistent message
                     content_type='application/json',
@@ -168,8 +152,6 @@ class RabbitMQClient:
                     message_id=str(uuid.uuid4()),  # FIX: Add unique message ID
                     app_id=config.app_name
                 )
-
-                # FIX: Use confirmed delivery with timeout
                 self.channel.basic_publish(
                     exchange=exchange,
                     routing_key=routing_key,
@@ -177,7 +159,6 @@ class RabbitMQClient:
                     properties=properties,
                     mandatory=True  # FIX: Return undeliverable messages
                 )
-
                 logger.info(
                     f"📤 Message published to {exchange} with routing key {routing_key}, message_id: {properties.message_id}")
                 return True

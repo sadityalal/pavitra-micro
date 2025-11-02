@@ -89,22 +89,26 @@ class SessionMiddleware:
             user_id = None
             guest_id = str(uuid.uuid4())
 
-            # ✅ FIX: Check for authenticated users first
+            # Check for JWT token in Authorization header
             auth_header = request.headers.get("Authorization")
             if auth_header and auth_header.startswith("Bearer "):
-                from .auth_middleware import verify_token
-                token = auth_header[7:]
-                payload = verify_token(token)
-                if payload:
-                    session_type = SessionType.USER
-                    user_id = int(payload['sub'])
-                    guest_id = None
-                    existing_session = session_service.get_session_by_user_id(user_id)
-                    if existing_session:
-                        return existing_session
+                try:
+                    from .security import verify_token
+                    token = auth_header[7:]
+                    payload = verify_token(token)
+                    if payload:
+                        session_type = SessionType.USER
+                        user_id = int(payload['sub'])
+                        guest_id = None
 
-            # ✅ FIX: Always create session for guest users
-            # This ensures anonymous users get sessions too
+                        # Check for existing user session
+                        existing_session = session_service.get_session_by_user_id(user_id)
+                        if existing_session:
+                            return existing_session
+                except Exception as e:
+                    logger.warning(f"Token verification failed: {e}")
+                    # Continue with guest session creation
+
             session_data = {
                 'session_type': session_type,
                 'user_id': user_id,
@@ -113,12 +117,13 @@ class SessionMiddleware:
                 'user_agent': request.headers.get("user-agent", ""),
                 'cart_items': {}
             }
-            session = session_service.create_session(session_data)
 
+            session = session_service.create_session(session_data)
             if session:
                 logger.info(f"✅ Created new {session_type.value} session: {session.session_id}")
             else:
                 logger.error("❌ Failed to create session")
+
             return session
 
         except Exception as e:

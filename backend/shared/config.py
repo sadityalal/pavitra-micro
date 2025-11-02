@@ -19,6 +19,14 @@ class DatabaseConfig:
         self._validate_required_settings()
 
     def _validate_required_settings(self):
+        """Validate that all required settings are available"""
+        required_settings = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD']
+        missing_settings = []
+        for setting in required_settings:
+            if not os.getenv(setting):
+                missing_settings.append(setting)
+        if missing_settings and not self.debug_mode:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing_settings)}")
         if not self.debug_mode and not os.getenv('JWT_SECRET'):
             raise ValueError("JWT_SECRET environment variable is required in production")
 

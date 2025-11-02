@@ -132,13 +132,18 @@ async def root():
         "maintenance_mode": config.maintenance_mode
     }
 
+
 if __name__ == "__main__":
     import uvicorn
-    port = config.get_service_port('user')
-    logger.info(f"Starting User Service on port {port}")
+
+    port = config.get_service_port('auth')  # or 'product', 'user'
+    logger.info(f"🚀 Starting Service on port {port}")
+
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=port,
-        log_level=config.log_level.lower()
+        log_level=config.log_level.lower(),
+        access_log=True,
+        reload=config.debug_mode  # Auto-reload in debug mode
     )

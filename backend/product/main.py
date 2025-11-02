@@ -44,10 +44,12 @@ async def secure_cors_headers(request: Request, call_next):
     origin = request.headers.get('origin')
     if origin and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
-        response.headers['Access-Control-Allow-Credentials'] = 'true'
-        response.headers['Access-Control-Max-Age'] = '600'
+    elif config.cors_origins and config.cors_origins[0] == '*':
+        response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Guest-Id, Cookie'
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Max-Age'] = '600'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
@@ -159,13 +161,14 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
-    port = config.get_service_port('product')
-    logger.info(f"🚀 Starting Product Service on port {port}")
+    port = config.get_service_port('auth')  # or 'product', 'user'
+    logger.info(f"🚀 Starting Service on port {port}")
+
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=port,
         log_level=config.log_level.lower(),
-        forwarded_allow_ips="*",  # allow requests from any proxy
-        proxy_headers=True  # respect X-Forwarded-* headers
+        access_log=True,
+        reload=config.debug_mode  # Auto-reload in debug mode
     )

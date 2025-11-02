@@ -28,7 +28,6 @@ class Database:
     def _initialize_pool(self):
         max_retries = 3
         retry_delay = 2
-
         logger.info(
             f"🚀 Attempting to connect to database: {config.db_host}:{config.db_port}, db: {config.db_name}, user: {config.db_user}")
 
@@ -53,18 +52,19 @@ class Database:
                     connect_timeout=10,
                 )
 
-                # Test connection
-                logger.info("🔍 Testing database connection...")
+                # Test the connection
                 test_conn = self.connection_pool.get_connection()
                 if test_conn.is_connected():
                     logger.info("✅ Database connection successful!")
                     test_conn.ping(reconnect=True, attempts=3, delay=1)
                     test_conn.close()
                     logger.info("🎉 Database connection pool created successfully")
+                    self._initialized = True  # Add this line
                     return
                 else:
                     logger.error("❌ Database connection failed - not connected")
-                    test_conn.close()
+                    if test_conn:
+                        test_conn.close()
 
             except Error as e:
                 logger.error(f"❌ Database connection error (attempt {attempt + 1}/{max_retries}): {e}")
