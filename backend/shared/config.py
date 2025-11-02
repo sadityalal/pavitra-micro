@@ -13,7 +13,7 @@ class DatabaseConfig:
         self._cache = {}
         self._cache_timestamps = {}
         self._db = None
-        self._cache_duration = 10  # 10 seconds cache for performance
+        self._cache_duration = 100  # 10 seconds cache for performance
         self._last_settings_check = 0
         self._settings_version = 0
         self._validate_required_settings()
@@ -29,6 +29,120 @@ class DatabaseConfig:
             raise ValueError(f"Missing required environment variables: {', '.join(missing_settings)}")
         if not self.debug_mode and not os.getenv('JWT_SECRET'):
             raise ValueError("JWT_SECRET environment variable is required in production")
+
+    def validate_all_configurations(self) -> Dict[str, List[str]]:
+        """
+        Validate that all configuration values are available
+        Returns a dict with missing configurations categorized by type
+        """
+        missing_configs = {
+            'environment_variables': [],
+            'site_settings': [],
+            'frontend_settings': []
+        }
+
+        # Check environment variables
+        env_required = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'JWT_SECRET']
+        for env_var in env_required:
+            if not os.getenv(env_var):
+                missing_configs['environment_variables'].append(env_var)
+
+        # Check site settings (Admin-managed microservice environment variables)
+        site_settings_to_check = [
+            # System behavior controls
+            'enable_reviews', 'enable_wishlist', 'enable_guest_checkout',
+            # System limits
+            'max_cart_quantity_per_product', 'max_cart_items_total', 'cart_session_timeout_minutes',
+            # Operational settings
+            'debug_mode', 'app_debug', 'log_level', 'cors_origins',
+            # Security/Performance
+            'rate_limit_requests', 'rate_limit_window',
+            # Payment configuration
+            'razorpay_test_mode', 'stripe_test_mode', 'razorpay_key_id', 'razorpay_secret',
+            'stripe_publishable_key', 'stripe_secret_key',
+            # Notification controls
+            'email_notifications', 'sms_notifications', 'push_notifications',
+            'telegram_notifications', 'whatsapp_notifications',
+            # System limits
+            'max_upload_size', 'allowed_file_types',
+            # Business rules
+            'refund_policy_days', 'auto_refund_enabled', 'refund_processing_fee',
+            # External services
+            'redis_host', 'redis_port', 'redis_password', 'redis_db',
+            'rabbitmq_host', 'rabbitmq_port', 'rabbitmq_user', 'rabbitmq_password',
+            'smtp_host', 'smtp_port', 'smtp_username', 'smtp_password',
+            'telegram_bot_token', 'telegram_chat_id', 'whatsapp_api_url', 'whatsapp_api_token'
+        ]
+
+        for setting in site_settings_to_check:
+            try:
+                value = self._get_setting(setting, None)
+                if value is None or value == '':
+                    missing_configs['site_settings'].append(setting)
+            except Exception:
+                missing_configs['site_settings'].append(setting)
+
+        # Check frontend settings (Static content for webpages)
+        frontend_settings_to_check = [
+            # Application info
+            'app_name', 'app_description',
+            # Email display
+            'email_from', 'email_from_name',
+            # Regional settings
+            'default_currency', 'supported_currencies', 'default_country', 'default_gst_rate',
+            # Site branding
+            'site_name', 'site_description', 'currency', 'currency_symbol',
+            # Contact info
+            'site_phone', 'site_email', 'business_hours',
+            # Displayed pricing rules
+            'min_order_amount', 'free_shipping_min_amount', 'free_shipping_threshold',
+            'return_period_days'
+        ]
+
+        for setting in frontend_settings_to_check:
+            try:
+                value = self.get_frontend_setting(setting, None)
+                if value is None or value == '':
+                    missing_configs['frontend_settings'].append(setting)
+            except Exception:
+                missing_configs['frontend_settings'].append(setting)
+
+        return missing_configs
+
+    def is_configuration_complete(self) -> bool:
+        """
+        Check if all required configurations are available
+        Returns True if all configurations are present, False otherwise
+        """
+        missing_configs = self.validate_all_configurations()
+        return (
+                len(missing_configs['environment_variables']) == 0 and
+                len(missing_configs['site_settings']) == 0 and
+                len(missing_configs['frontend_settings']) == 0
+        )
+
+    def get_configuration_status(self) -> Dict[str, Any]:
+        """
+        Get detailed configuration status including missing and available configurations
+        """
+        missing_configs = self.validate_all_configurations()
+
+        status = {
+            'is_complete': self.is_configuration_complete(),
+            'missing_configurations': missing_configs,
+            'summary': {
+                'total_missing': (
+                        len(missing_configs['environment_variables']) +
+                        len(missing_configs['site_settings']) +
+                        len(missing_configs['frontend_settings'])
+                ),
+                'environment_variables_missing': len(missing_configs['environment_variables']),
+                'site_settings_missing': len(missing_configs['site_settings']),
+                'frontend_settings_missing': len(missing_configs['frontend_settings'])
+            }
+        }
+
+        return status
 
     def _get_db(self):
         if self._db is None:
@@ -118,7 +232,7 @@ class DatabaseConfig:
             return default
 
         except Exception as e:
-            # FIX: Don't log warnings for expected database unavailability during startup
+            # Don't log warnings for expected database unavailability during startup
             if "connection" not in str(e).lower() or "not available" not in str(e).lower():
                 logger.warning(f"Failed to get {key} from site_settings: {e}, using default: {default}")
             return default
@@ -254,31 +368,31 @@ class DatabaseConfig:
         self._last_settings_check = 0
         logger.info("Configuration cache forcefully refreshed")
 
-    # ===== BACKEND/ADMIN SETTINGS (site_settings table) =====
+    # ===== SITE SETTINGS (Admin-managed microservice environment variables) =====
 
     @property
     def db_host(self) -> str:
-        return os.getenv('DB_HOST', 'mysql')
+        return os.getenv('DB_HOST', '')
 
     @property
     def db_port(self) -> int:
-        return int(os.getenv('DB_PORT', '3306'))
+        return int(os.getenv('DB_PORT', ''))
 
     @property
     def db_name(self) -> str:
-        return os.getenv('DB_NAME', 'pavitra_trading')
+        return os.getenv('DB_NAME', '')
 
     @property
     def db_user(self) -> str:
-        return os.getenv('DB_USER', 'pavitra_app')
+        return os.getenv('DB_USER', '')
 
     @property
     def db_password(self) -> str:
-        return os.getenv('DB_PASSWORD', 'app123')
+        return os.getenv('DB_PASSWORD', '')
 
     @property
     def jwt_secret(self) -> str:
-        secret = os.getenv('JWT_SECRET')
+        secret = os.getenv('JWT_SECRET', '')
         if not secret:
             if not self.debug_mode:
                 raise ValueError("JWT_SECRET environment variable is required in production")
@@ -288,51 +402,51 @@ class DatabaseConfig:
 
     @property
     def jwt_algorithm(self) -> str:
-        return os.getenv('JWT_ALGORITHM', 'HS256')
+        return os.getenv('JWT_ALGORITHM', '')
 
     def get_service_port(self, service_name: str) -> int:
         port_key = f"{service_name.upper()}_SERVICE_PORT"
-        return int(os.getenv(port_key, '8001'))
+        return int(os.getenv(port_key, ''))
 
     @property
     def redis_host(self) -> str:
-        return self._get_setting('redis_host', 'redis')
+        return self._get_setting('redis_host', '')
 
     @property
     def redis_port(self) -> int:
-        return self._get_setting('redis_port', 6379)
+        return self._get_setting('redis_port', '')
 
     @property
     def redis_password(self) -> str:
-        return self._get_setting('redis_password', 'redis123')
+        return self._get_setting('redis_password', '')
 
     @property
     def redis_db(self) -> int:
-        return self._get_setting('redis_db', 0)
+        return self._get_setting('redis_db', '')
 
     @property
     def rabbitmq_host(self) -> str:
-        return self._get_setting('rabbitmq_host', 'rabbitmq')
+        return self._get_setting('rabbitmq_host', '')
 
     @property
     def rabbitmq_port(self) -> int:
-        return self._get_setting('rabbitmq_port', 5672)
+        return self._get_setting('rabbitmq_port', '')
 
     @property
     def rabbitmq_user(self) -> str:
-        return self._get_setting('rabbitmq_user', 'admin')
+        return self._get_setting('rabbitmq_user', '')
 
     @property
     def rabbitmq_password(self) -> str:
-        return self._get_setting('rabbitmq_password', 'admin123')
+        return self._get_setting('rabbitmq_password', '')
 
     @property
     def smtp_host(self) -> str:
-        return self._get_setting('smtp_host', 'smtp.gmail.com')
+        return self._get_setting('smtp_host', '')
 
     @property
     def smtp_port(self) -> int:
-        return self._get_setting('smtp_port', 587)
+        return self._get_setting('smtp_port', '')
 
     @property
     def smtp_username(self) -> str:
@@ -341,130 +455,6 @@ class DatabaseConfig:
     @property
     def smtp_password(self) -> str:
         return self._get_setting('smtp_password', '')
-
-    @property
-    def email_from(self) -> str:
-        return self._get_setting('email_from', 'noreply@pavitra-trading.com')
-
-    @property
-    def email_from_name(self) -> str:
-        return self._get_setting('email_from_name', 'Pavitra Trading')
-
-    @property
-    def app_name(self) -> str:
-        return self._get_setting('app_name', 'Pavitra Trading')
-
-    @property
-    def app_description(self) -> str:
-        return self._get_setting('app_description', 'E-commerce Platform')
-
-    @property
-    def default_currency(self) -> str:
-        return self._get_setting('default_currency', 'INR')
-
-    @property
-    def supported_currencies(self) -> List[str]:
-        return self._get_setting('supported_currencies', ['INR', 'USD', 'EUR', 'GBP'])
-
-    @property
-    def default_country(self) -> str:
-        return self._get_setting('default_country', 'IN')
-
-    @property
-    def default_gst_rate(self) -> float:
-        return self._get_setting('default_gst_rate', 18.0)
-
-    @property
-    def debug_mode(self) -> bool:
-        return self._get_setting('debug_mode', False)
-
-    @property
-    def app_debug(self) -> bool:
-        return self._get_setting('app_debug', False)
-
-    @property
-    def log_level(self) -> str:
-        return self._get_setting('log_level', 'INFO')
-
-    @property
-    def cors_origins(self) -> List[str]:
-        return self._get_setting('cors_origins', ['http://localhost:3000'])
-
-    @property
-    def rate_limit_requests(self) -> int:
-        return self._get_setting('rate_limit_requests', 100)
-
-    @property
-    def rate_limit_window(self) -> int:
-        return self._get_setting('rate_limit_window', 900)
-
-    @property
-    def razorpay_test_mode(self) -> bool:
-        return self._get_setting('razorpay_test_mode', True)
-
-    @property
-    def stripe_test_mode(self) -> bool:
-        return self._get_setting('stripe_test_mode', True)
-
-    @property
-    def razorpay_key_id(self) -> str:
-        return self._get_setting('razorpay_key_id', '')
-
-    @property
-    def razorpay_secret(self) -> str:
-        return self._get_setting('razorpay_secret', '')
-
-    @property
-    def stripe_publishable_key(self) -> str:
-        return self._get_setting('stripe_publishable_key', '')
-
-    @property
-    def stripe_secret_key(self) -> str:
-        return self._get_setting('stripe_secret_key', '')
-
-    @property
-    def email_notifications(self) -> bool:
-        return self._get_setting('email_notifications', True)
-
-    @property
-    def sms_notifications(self) -> bool:
-        return self._get_setting('sms_notifications', True)
-
-    @property
-    def push_notifications(self) -> bool:
-        return self._get_setting('push_notifications', True)
-
-    @property
-    def refund_policy_days(self) -> int:
-        return self._get_setting('refund_policy_days', 30)
-
-    @property
-    def auto_refund_enabled(self) -> bool:
-        return self._get_setting('auto_refund_enabled', False)
-
-    @property
-    def refund_processing_fee(self) -> float:
-        return self._get_setting('refund_processing_fee', 0.0)
-
-    @property
-    def max_upload_size(self) -> int:
-        return self._get_setting('max_upload_size', 5242880)
-
-    @property
-    def allowed_file_types(self) -> List[str]:
-        return self._get_setting('allowed_file_types', ['jpg', 'jpeg', 'png', 'gif', 'webp'])
-
-    @property
-    def upload_path(self) -> str:
-        return os.getenv('UPLOAD_PATH', '/app/uploads')
-
-    @property
-    def telegram_notifications(self) -> bool:
-        return self._get_setting('telegram_notifications', False)
-
-    @property
-    def whatsapp_notifications(self) -> bool:
-        return self._get_setting('whatsapp_notifications', False)
 
     @property
     def telegram_bot_token(self) -> str:
@@ -482,85 +472,203 @@ class DatabaseConfig:
     def whatsapp_api_token(self) -> str:
         return self._get_setting('whatsapp_api_token', '')
 
-    # ===== FRONTEND/PUBLIC SETTINGS (frontend_settings table) =====
-
-    @property
-    def site_name(self) -> str:
-        return self.get_frontend_setting('site_name', 'Pavitra Trading')
-
-    @property
-    def site_description(self) -> str:
-        return self.get_frontend_setting('site_description', 'Your trusted online shopping destination')
-
-    @property
-    def currency(self) -> str:
-        return self.get_frontend_setting('currency', 'INR')
-
-    @property
-    def currency_symbol(self) -> str:
-        return self.get_frontend_setting('currency_symbol', '₹')
-
-    @property
-    def maintenance_mode(self) -> bool:
-        return self.get_frontend_setting('maintenance_mode', False)
-
+    # System behavior controls
     @property
     def enable_reviews(self) -> bool:
-        return self.get_frontend_setting('enable_reviews', True)
+        return self._get_setting('enable_reviews', '')
 
     @property
     def enable_wishlist(self) -> bool:
-        return self.get_frontend_setting('enable_wishlist', True)
+        return self._get_setting('enable_wishlist', '')
 
     @property
     def enable_guest_checkout(self) -> bool:
-        return self.get_frontend_setting('enable_guest_checkout', True)
+        return self._get_setting('enable_guest_checkout', '')
 
-    @property
-    def min_order_amount(self) -> float:
-        return self.get_frontend_setting('min_order_amount', 0.0)
-
-    @property
-    def free_shipping_min_amount(self) -> float:
-        return self.get_frontend_setting('free_shipping_min_amount', 500.0)
-
-    @property
-    def free_shipping_threshold(self) -> float:
-        return self.get_frontend_setting('free_shipping_threshold', 999.0)
-
-    @property
-    def return_period_days(self) -> int:
-        return self.get_frontend_setting('return_period_days', 10)
-
-    @property
-    def site_phone(self) -> str:
-        return self.get_frontend_setting('site_phone', '+91-9711317009')
-
-    @property
-    def site_email(self) -> str:
-        return self.get_frontend_setting('site_email', 'support@pavitraenterprises.com')
-
-    @property
-    def business_hours(self) -> Dict[str, str]:
-        return self.get_frontend_setting('business_hours', {
-            'monday_friday': '9am-6pm',
-            'saturday': '10am-4pm',
-            'sunday': 'Closed'
-        })
-
-    # ===== CART LIMIT SETTINGS (frontend_settings table) =====
-
+    # System limits
     @property
     def max_cart_quantity_per_product(self) -> int:
-        return self.get_frontend_setting('max_cart_quantity_per_product', 20)
+        return self._get_setting('max_cart_quantity_per_product', '')
 
     @property
     def max_cart_items_total(self) -> int:
-        return self.get_frontend_setting('max_cart_items_total', 50)
+        return self._get_setting('max_cart_items_total', '')
 
     @property
     def cart_session_timeout_minutes(self) -> int:
-        return self.get_frontend_setting('cart_session_timeout_minutes', 30)
+        return self._get_setting('cart_session_timeout_minutes', '')
+
+    # Operational settings
+    @property
+    def debug_mode(self) -> bool:
+        return self._get_setting('debug_mode', '')
+
+    @property
+    def app_debug(self) -> bool:
+        return self._get_setting('app_debug', '')
+
+    @property
+    def log_level(self) -> str:
+        return self._get_setting('log_level', '')
+
+    @property
+    def cors_origins(self) -> List[str]:
+        return self._get_setting('cors_origins', [])
+
+    # Security/Performance
+    @property
+    def rate_limit_requests(self) -> int:
+        return self._get_setting('rate_limit_requests', '')
+
+    @property
+    def rate_limit_window(self) -> int:
+        return self._get_setting('rate_limit_window', '')
+
+    # Payment configuration
+    @property
+    def razorpay_test_mode(self) -> bool:
+        return self._get_setting('razorpay_test_mode', '')
+
+    @property
+    def stripe_test_mode(self) -> bool:
+        return self._get_setting('stripe_test_mode', '')
+
+    @property
+    def razorpay_key_id(self) -> str:
+        return self._get_setting('razorpay_key_id', '')
+
+    @property
+    def razorpay_secret(self) -> str:
+        return self._get_setting('razorpay_secret', '')
+
+    @property
+    def stripe_publishable_key(self) -> str:
+        return self._get_setting('stripe_publishable_key', '')
+
+    @property
+    def stripe_secret_key(self) -> str:
+        return self._get_setting('stripe_secret_key', '')
+
+    # Notification controls
+    @property
+    def email_notifications(self) -> bool:
+        return self._get_setting('email_notifications', '')
+
+    @property
+    def sms_notifications(self) -> bool:
+        return self._get_setting('sms_notifications', '')
+
+    @property
+    def push_notifications(self) -> bool:
+        return self._get_setting('push_notifications', '')
+
+    @property
+    def telegram_notifications(self) -> bool:
+        return self._get_setting('telegram_notifications', '')
+
+    @property
+    def whatsapp_notifications(self) -> bool:
+        return self._get_setting('whatsapp_notifications', '')
+
+    # System limits
+    @property
+    def max_upload_size(self) -> int:
+        return self._get_setting('max_upload_size', '')
+
+    @property
+    def allowed_file_types(self) -> List[str]:
+        return self._get_setting('allowed_file_types', [])
+
+    # Business rules
+    @property
+    def refund_policy_days(self) -> int:
+        return self._get_setting('refund_policy_days', '')
+
+    @property
+    def auto_refund_enabled(self) -> bool:
+        return self._get_setting('auto_refund_enabled', '')
+
+    @property
+    def refund_processing_fee(self) -> float:
+        return self._get_setting('refund_processing_fee', '')
+
+    # ===== FRONTEND SETTINGS (Static content for webpages) =====
+
+    @property
+    def app_name(self) -> str:
+        return self.get_frontend_setting('app_name', '')
+
+    @property
+    def app_description(self) -> str:
+        return self.get_frontend_setting('app_description', '')
+
+    @property
+    def email_from(self) -> str:
+        return self.get_frontend_setting('email_from', '')
+
+    @property
+    def email_from_name(self) -> str:
+        return self.get_frontend_setting('email_from_name', '')
+
+    @property
+    def default_currency(self) -> str:
+        return self.get_frontend_setting('default_currency', '')
+
+    @property
+    def supported_currencies(self) -> List[str]:
+        return self.get_frontend_setting('supported_currencies', [])
+
+    @property
+    def default_country(self) -> str:
+        return self.get_frontend_setting('default_country', '')
+
+    @property
+    def default_gst_rate(self) -> float:
+        return self.get_frontend_setting('default_gst_rate', '')
+
+    @property
+    def site_name(self) -> str:
+        return self.get_frontend_setting('site_name', '')
+
+    @property
+    def site_description(self) -> str:
+        return self.get_frontend_setting('site_description', '')
+
+    @property
+    def currency(self) -> str:
+        return self.get_frontend_setting('currency', '')
+
+    @property
+    def currency_symbol(self) -> str:
+        return self.get_frontend_setting('currency_symbol', '')
+
+    @property
+    def site_phone(self) -> str:
+        return self.get_frontend_setting('site_phone', '')
+
+    @property
+    def site_email(self) -> str:
+        return self.get_frontend_setting('site_email', '')
+
+    @property
+    def business_hours(self) -> Dict[str, str]:
+        return self.get_frontend_setting('business_hours', {})
+
+    @property
+    def min_order_amount(self) -> float:
+        return self.get_frontend_setting('min_order_amount', '')
+
+    @property
+    def free_shipping_min_amount(self) -> float:
+        return self.get_frontend_setting('free_shipping_min_amount', '')
+
+    @property
+    def free_shipping_threshold(self) -> float:
+        return self.get_frontend_setting('free_shipping_threshold', '')
+
+    @property
+    def return_period_days(self) -> int:
+        return self.get_frontend_setting('return_period_days', '')
 
 
 config = DatabaseConfig()
