@@ -4,9 +4,7 @@ from .security import verify_token
 from .redis_client import redis_client
 from .database import db
 import logging
-
 logger = logging.getLogger(__name__)
-
 
 async def get_current_user(request: Request) -> Dict[str, Any]:
     auth_header = request.headers.get("Authorization")
@@ -15,33 +13,24 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials"
         )
-
     token = auth_header[7:]
-
-    # Check token blacklist
     if redis_client.exists(f"token_blacklist:{token}"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token has been invalidated"
         )
-
-    # Check cached user session
     cached_user = redis_client.get_cached_session(f"token:{token}")
     if cached_user:
         logger.debug("User authenticated from cache")
         return cached_user
-
-    # Verify token
     payload = verify_token(token)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-
     try:
         with db.get_cursor() as cursor:
-            # Get user data
             cursor.execute("""
                 SELECT
                     u.id, u.uuid, u.email, u.first_name, u.last_name, u.phone,
@@ -52,14 +41,11 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
                 WHERE u.id = %s AND u.is_active = 1
             """, (int(payload['sub']),))
             user_data = cursor.fetchone()
-
             if not user_data:
                 raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    status_code=status.HTTP_401_UNANAUTHORIZED,
                     detail="User not found or inactive"
                 )
-
-            # Get user roles and permissions
             cursor.execute("""
                 SELECT
                     ur.name as role_name,
@@ -70,7 +56,6 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_data['id'],))
-
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -78,8 +63,6 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
-
-            # Build user payload
             user_payload = {
                 'sub': user_data['id'],
                 'uuid': user_data['uuid'],
@@ -97,16 +80,12 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
                 'roles': list(roles),
                 'permissions': list(permissions)
             }
-
-            # Cache user session
             redis_client.cache_user_session(
                 user_id=user_data['id'],
                 session_data=user_payload,
                 expire=3600
             )
-
             return user_payload
-
     except HTTPException:
         raise
     except Exception as e:
@@ -116,11 +95,9 @@ async def get_current_user(request: Request) -> Dict[str, Any]:
             detail="Failed to authenticate user"
         )
 
-
 async def require_roles(required_roles: List[str], request: Request):
     user = await get_current_user(request)
     user_roles = user.get('roles', [])
-
     if not any(role in user_roles for role in required_roles):
         logger.warning(
             f"User {user['sub']} with roles {user_roles} attempted to access endpoint requiring {required_roles}")
@@ -130,11 +107,9 @@ async def require_roles(required_roles: List[str], request: Request):
         )
     return user
 
-
 async def require_permissions(required_permissions: List[str], request: Request):
     user = await get_current_user(request)
     user_permissions = user.get('permissions', [])
-
     if not any(perm in user_permissions for perm in required_permissions):
         logger.warning(
             f"User {user['sub']} with permissions {user_permissions} attempted to access endpoint requiring {required_permissions}")
@@ -144,11 +119,9 @@ async def require_permissions(required_permissions: List[str], request: Request)
         )
     return user
 
-
 async def require_any_role(required_roles: List[str], request: Request):
     user = await get_current_user(request)
     user_roles = user.get('roles', [])
-
     if not any(role in user_roles for role in required_roles):
         logger.warning(
             f"User {user['sub']} with roles {user_roles} attempted to access endpoint requiring any of {required_roles}")
@@ -158,11 +131,9 @@ async def require_any_role(required_roles: List[str], request: Request):
         )
     return user
 
-
 async def require_all_roles(required_roles: List[str], request: Request):
     user = await get_current_user(request)
     user_roles = user.get('roles', [])
-
     if not all(role in user_roles for role in required_roles):
         logger.warning(
             f"User {user['sub']} with roles {user_roles} attempted to access endpoint requiring all of {required_roles}")
@@ -171,7 +142,6 @@ async def require_all_roles(required_roles: List[str], request: Request):
             detail="Missing required roles"
         )
     return user
-
 
 def blacklist_token(token: str, expire: int = 86400):
     try:
