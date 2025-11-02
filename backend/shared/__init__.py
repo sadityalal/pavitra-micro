@@ -5,6 +5,7 @@ from .security import (
     verify_token, sanitize_input, validate_email, validate_phone
 )
 from .logging_config import setup_logging, get_logger
+from .session_service import session_service
 from .redis_client import redis_client
 from .rabbitmq_client import rabbitmq_client
 from .auth_middleware import get_current_user, require_roles, require_permissions

@@ -1225,6 +1225,30 @@ async def upload_avatar(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload avatar"
         )
+
+@router.post("/security/invalidate-all-sessions")
+async def invalidate_all_sessions(
+        current_user: dict = Depends(get_current_user)
+):
+    try:
+        user_id = current_user['sub']
+        success = session_service.invalidate_all_user_sessions(user_id)
+
+        if success:
+            logger.info(f"All sessions invalidated for user {user_id}")
+            return {"message": "All other sessions have been invalidated"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to invalidate sessions"
+            )
+    except Exception as e:
+        logger.error(f"Failed to invalidate sessions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to invalidate sessions"
+        )
+
 @router.post("/change-password")
 async def change_password(
         current_password: str = Form(...),

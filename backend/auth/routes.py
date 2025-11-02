@@ -557,18 +557,22 @@ async def login_user(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         client_identifier = get_client_identifier(request)
         if not check_rate_limit(f"login:{client_identifier}", max_attempts=10, window_seconds=RATE_LIMIT_WINDOW):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many login attempts. Please try again later."
             )
+
         if not track_failed_login(client_identifier):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Account temporarily locked due to too many failed attempts. Please try again in 15 minutes."
             )
+
         logger.info(f"Login attempt for: {login_data.login_id}")
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -578,25 +582,30 @@ async def login_user(
                 WHERE email = %s OR phone = %s OR username = %s
             """, (login_data.login_id, login_data.login_id, login_data.login_id))
             user = cursor.fetchone()
+
             if not user:
                 logger.warning(f"User not found: {login_data.login_id}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
+
             if not verify_password(login_data.password, user['password_hash']):
                 logger.warning(f"Invalid password for user: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
+
             if not user['is_active']:
                 logger.warning(f"Account deactivated: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Account is deactivated"
                 )
+
             reset_failed_login(client_identifier)
+
             cursor.execute("""
                 SELECT
                     ur.name as role_name,
@@ -607,6 +616,7 @@ async def login_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user['id'],))
+
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -614,16 +624,20 @@ async def login_user(
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
+
             if not roles:
                 roles.add('customer')
+
             current_session = get_session(request)
             current_session_id = get_session_id(request)
             migrated_items_count = 0
+
             if current_session and current_session.session_type == SessionType.GUEST:
                 migrated_items_count = migrate_guest_cart_to_user_database(
                     current_session, user['id'], cursor
                 )
                 logger.info(f"Migrated {migrated_items_count} cart items from guest session")
+
             session_data = {
                 'session_type': SessionType.USER,
                 'user_id': user['id'],
@@ -632,7 +646,9 @@ async def login_user(
                 'user_agent': request.headers.get("user-agent"),
                 'cart_items': {}
             }
+
             new_session = session_service.create_session(session_data)
+
             if new_session and response:
                 response.set_cookie(
                     key="session_id",
@@ -643,13 +659,13 @@ async def login_user(
                     samesite="Lax",
                     path="/"
                 )
-            # Delete old guest session
+
             if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
                 session_service.delete_session(current_session_id)
                 logger.info("Deleted guest session after login migration")
-            # Update last login timestamp
+
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
-            # Create access token
+
             access_token = create_access_token(
                 data={
                     "sub": str(user['id']),
@@ -659,6 +675,7 @@ async def login_user(
                 },
                 expires_delta=timedelta(hours=TOKEN_EXPIRY_HOURS)
             )
+
             logger.info(f"Login successful for user: {user['email']}")
             return Token(
                 access_token=access_token,
@@ -667,6 +684,7 @@ async def login_user(
                 user_roles=list(roles),
                 user_permissions=list(permissions)
             )
+
     except HTTPException:
         raise
     except Exception as e:
