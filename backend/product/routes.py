@@ -268,6 +268,7 @@ def invalidate_product_cache_comprehensive(product_id: int):
     except Exception as e:
         logger.error(f"Failed to comprehensively invalidate product cache: {e}")
 
+
 def get_cached_products_with_fallback(cache_key: str, fallback_func: callable, expire: int = 1800):
     try:
         cached_data = redis_client.get(cache_key)
@@ -275,13 +276,27 @@ def get_cached_products_with_fallback(cache_key: str, fallback_func: callable, e
             return json.loads(cached_data)
     except Exception as e:
         logger.warning(f"Cache read failed for {cache_key}: {e}")
+
+    lock_key = f"lock:{cache_key}"
     try:
-        data = fallback_func()
-        if data:
-            redis_client.setex(cache_key, expire, json.dumps(data))
-        return data
+        if redis_client.setnx(lock_key, "1") and redis_client.expire(lock_key, 10):
+            try:
+                data = fallback_func()
+                if data:
+                    redis_client.setex(cache_key, expire, json.dumps(data))
+                return data
+            finally:
+                redis_client.delete(lock_key)
+        else:
+            import time
+            time.sleep(0.2)
+            cached_data = redis_client.get(cache_key)
+            if cached_data:
+                return json.loads(cached_data)
+            return None
     except Exception as e:
         logger.error(f"Fallback function failed for {cache_key}: {e}")
+        redis_client.delete(lock_key)
         return None
 
 def publish_product_event(product_data: dict, event_type: str):
@@ -313,10 +328,18 @@ def cache_product(product_id: int, product_data: dict, expire: int = 1800):
 def get_cached_product(product_id: int) -> Optional[dict]:
     try:
         key = f"product:{product_id}"
+        lock_key = f"product_lock:{product_id}"
+
         data = redis_client.get(key)
         if data:
             return json.loads(data)
-        return None
+
+        if redis_client.setnx(lock_key, "1") and redis_client.expire(lock_key, 10):
+            return None
+        else:
+            import time
+            time.sleep(0.1)
+            return get_cached_product(product_id)
     except Exception as e:
         logger.error(f"Failed to get cached product: {e}")
         return None
