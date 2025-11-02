@@ -147,7 +147,7 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
 
-    port = config.get_service_port('auth')  # or 'product', 'user'
+    port = config.get_service_port('payment')  # or 'product', 'user'
     logger.info(f"🚀 Starting Service on port {port}")
 
     uvicorn.run(

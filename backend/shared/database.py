@@ -5,7 +5,7 @@ import logging
 import time
 from contextlib import contextmanager
 from .config import config
-
+import threading
 logger = logging.getLogger(__name__)
 
 
@@ -20,10 +20,10 @@ class Database:
         return cls._instance
 
     def initialize(self):
-        """Initialize database connection - call this after logging is set up"""
-        if not self._initialized:
-            self._initialize_pool()
-            self._initialized = True
+        with threading.Lock():
+            if not self._initialized:
+                self._initialize_pool()
+                self._initialized = True
 
     def _initialize_pool(self):
         max_retries = 3

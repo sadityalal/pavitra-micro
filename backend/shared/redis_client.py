@@ -40,27 +40,17 @@ class RedisClient:
 
     def _ensure_connection(self):
         if not self.redis_client:
-            self._connect()
-            if not self.redis_client:
-                return False
+            return self._connect()
 
         try:
-            # Test the connection
             self.redis_client.ping()
             return True
-        except (redis.ConnectionError, redis.TimeoutError, redis.BusyLoadingError):
-            logger.warning("Redis connection lost, attempting to reconnect...")
-            try:
-                self._connect()
-                if self.redis_client:
-                    self.redis_client.ping()
-                    return True
-            except Exception:
-                pass
-        except Exception:
-            pass
-
-        return False
+        except (redis.ConnectionError, redis.TimeoutError):
+            logger.warning("Redis connection lost, reconnecting...")
+            return self._connect()
+        except Exception as e:
+            logger.error(f"Redis connection error: {e}")
+            return False
 
     def cache_product(self, product_id: int, product_data: dict, expire: int = 3600):
         if not self._ensure_connection():
