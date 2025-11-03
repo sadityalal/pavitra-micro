@@ -214,5 +214,23 @@ class RedisClient:
         except Exception:
             return False
 
+    def incr(self, key: str):
+        if not self._ensure_connection():
+            return 0
+        try:
+            return self.redis_client.incr(key)
+        except Exception as e:
+            logger.error(f"Redis incr failed for {key}: {e}")
+            return 0
+
+    def setex(self, key: str, expire: int, value: str):
+        if not self._ensure_connection():
+            return False
+        try:
+            return self.redis_client.setex(key, expire, value)
+        except Exception as e:
+            logger.error(f"Redis setex failed for {key}: {e}")
+            return False
+
 
 redis_client = RedisClient()
