@@ -3,7 +3,8 @@ import json
 import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
-from shared import get_logger, redis_client, db
+from shared import get_logger, db
+from .redis_client import redis_client
 from .session_models import SessionData, SessionType
 
 logger = get_logger(__name__)
