@@ -1,5 +1,6 @@
 import json
 import time
+import html
 import logging
 from shared import get_logger, rabbitmq_client, db, config
 from .routes import email_service, sms_service, push_service, telegram_service, whatsapp_service, log_notification
@@ -147,21 +148,32 @@ class NotificationConsumer:
     def start_consuming(self):
         self.running = True
         logger.info("Starting notification consumer...")
-        
-        while self.running:
+        max_retries = 10  # Prevent infinite retry loops
+        retry_count = 0
+
+        while self.running and retry_count < max_retries:
             try:
                 logger.info("🔄 Attempting to connect to RabbitMQ...")
                 if rabbitmq_client.connect():
                     logger.info("✅ Connected to RabbitMQ, starting message consumption...")
                     rabbitmq_client.consume_messages('notification_queue', self.process_notification)
+                    retry_count = 0  # Reset on successful connection
                 else:
-                    logger.warning(f"❌ Failed to connect to RabbitMQ. Retrying in {self.reconnect_delay} seconds...")
+                    retry_count += 1
+                    logger.warning(
+                        f"❌ Failed to connect to RabbitMQ. Retry {retry_count}/{max_retries}. Retrying in {self.reconnect_delay} seconds...")
                     time.sleep(self.reconnect_delay)
-                    
+
             except Exception as e:
+                retry_count += 1
                 logger.error(f"Notification consumer error: {e}")
-                logger.info(f"Reconnecting in {self.reconnect_delay} seconds...")
+                logger.info(f"Reconnecting in {self.reconnect_delay} seconds... (Retry {retry_count}/{max_retries})")
                 time.sleep(self.reconnect_delay)
+
+        if retry_count >= max_retries:
+            logger.error(f"❌ Maximum retry attempts ({max_retries}) reached. Notification consumer stopping.")
+        else:
+            logger.info("Notification consumer stopped normally.")
 
     def process_notification(self, message):
         try:
@@ -455,15 +467,16 @@ Thank you for your payment!
             logger.info(f"🔄 Processing user registration welcome for user {user_id}")
 
             # ✅ 1. SEND BUSINESS ALERT TO ADMIN
+            safe_first_name = html.escape(first_name) if first_name else "New User"
+            safe_email = html.escape(email) if email else "No email"
+            safe_telegram = html.escape(telegram_username) if telegram_username else "Not provided"
             admin_telegram_msg = f"""
-    👤 <b>NEW USER REGISTERED</b>
-
-    User: {first_name}
-    Email: {email}
-    Telegram: {telegram_username or 'Not provided'}
-    User ID: {user_id}
-
-    Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+            👤 <b>NEW USER REGISTERED</b>
+            User: {safe_first_name}
+            Email: {safe_email}
+            Telegram: {safe_telegram}
+            User ID: {user_id}
+            Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
             """
             telegram_service.send_message(config.telegram_chat_id, admin_telegram_msg)
             log_notification(
@@ -501,13 +514,10 @@ Thank you for your payment!
                 elif channel == 'telegram' and ('username' in contacts or 'phone' in contacts):
                     # ✅ ATTEMPT TO SEND TO USER (may fail but we try)
                     user_telegram_msg = f"""
-    👋 <b>Welcome to Pavitra Trading, {first_name}!</b>
-
-    Thank you for registering with us. We're excited to have you as a member!
-
-    Start exploring our products and enjoy a seamless shopping experience.
-
-    Happy shopping! 🛍️
+                    👋 <b>Welcome to Pavitra Trading, {safe_first_name}!</b>
+                    Thank you for registering with us. We're excited to have you as a member!
+                    Start exploring our products and enjoy a seamless shopping experience.
+                    Happy shopping! 🛍️
                     """
                     telegram_contact = contacts.get('username') or contacts.get('phone')
                     if telegram_contact:

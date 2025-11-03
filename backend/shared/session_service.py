@@ -329,49 +329,30 @@ class SessionService:
         try:
             if not self._check_rate_limit(f"update:{session_id}"):
                 return False
-
             session = self.get_session(session_id)
             if not session:
                 return False
-
             for key, value in updates.items():
                 if hasattr(session, key):
                     setattr(session, key, value)
-
             session.last_activity = datetime.utcnow()
             session_dict = session.model_dump()
             session_dict['session_type'] = session_dict['session_type'].value
             session_dict['created_at'] = session_dict['created_at'].isoformat()
             session_dict['last_activity'] = session_dict['last_activity'].isoformat()
             session_dict['expires_at'] = session_dict['expires_at'].isoformat()
-
             key = self._session_key(session_id)
             expiry = self.user_session_duration if session.session_type == SessionType.USER else self.guest_session_duration
-
-            success = redis_client.setex(
-                key,
-                expiry,
-                json.dumps(session_dict)
-            )
-
+            success = redis_client.setex(key, expiry, json.dumps(session_dict))
             if success and 'user_id' in updates:
                 if session.user_id:
                     mapping_key = f"{self._redis_user_session_prefix}{session.user_id}:{session_id}"
-                    redis_client.setex(
-                        mapping_key,
-                        self.user_session_duration,
-                        session_id
-                    )
+                    redis_client.setex(mapping_key, self.user_session_duration, session_id)
             if success and 'guest_id' in updates:
                 if session.guest_id:
                     mapping_key = f"{self._redis_guest_session_prefix}{session.guest_id}:{session_id}"
-                    redis_client.setex(
-                        mapping_key,
-                        self.guest_session_duration,
-                        session_id
-                    )
+                    redis_client.setex(mapping_key, self.guest_session_duration, session_id)
             return success
-
         except Exception as e:
             logger.error(f"Failed to update session data {session_id}: {e}")
             return False

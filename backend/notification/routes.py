@@ -2,6 +2,9 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, status, 
 from typing import List, Optional
 from shared import config, db, sanitize_input, get_logger, redis_client
 from shared.auth_middleware import get_current_user
+import html
+from datetime import datetime
+import time
 from .models import (
     EmailNotification, SMSNotification, PushNotification,
     TelegramNotification, WhatsAppNotification,
@@ -176,40 +179,56 @@ def log_notification(notification_type: str, recipient: str, subject: str = None
     except Exception as e:
         logger.error(f"Failed to log notification: {e}")
 
+
 def get_email_template(template_name: str, template_data: dict) -> tuple:
+    # Sanitize all user inputs first
+    sanitized_data = {}
+    for key, value in template_data.items():
+        if isinstance(value, str):
+            # HTML escape all strings to prevent XSS
+            sanitized_data[key] = html.escape(value)
+        else:
+            sanitized_data[key] = value
+
+    # Add safe defaults
+    sanitized_data.update({
+        "app_name": html.escape(config.app_name),
+        "current_year": datetime.now().year,
+        "currency_symbol": html.escape(config.currency_symbol)
+    })
     templates = {
         "welcome_email": {
             "subject": "Welcome to {app_name}!",
             "html": """
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <style>
-                    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
-                    .container { max-width: 600px; margin: 0 auto; padding: 20px; background: #ffffff; }
-                    .header { background: #4CAF50; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
-                    .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 5px 5px; }
-                    .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; }
-                </style>
-            </head>
-            <body>
-                <div class="container">
-                    <div class="header">
-                        <h1>Welcome to {app_name}!</h1>
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+                        .container { max-width: 600px; margin: 0 auto; padding: 20px; background: #ffffff; }
+                        .header { background: #4CAF50; color: white; padding: 20px; text-align: center; border-radius: 5px 5px 0 0; }
+                        .content { padding: 20px; background: #f9f9f9; border-radius: 0 0 5px 5px; }
+                        .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; border-top: 1px solid #eee; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1>Welcome to {app_name}!</h1>
+                        </div>
+                        <div class="content">
+                            <p>Hello {first_name},</p>
+                            <p>Thank you for joining {app_name}. We're excited to have you as a member!</p>
+                            <p>Start exploring our products and enjoy a seamless shopping experience.</p>
+                            <p>If you have any questions, feel free to contact our support team.</p>
+                        </div>
+                        <div class="footer">
+                            <p>&copy; {current_year} {app_name}. All rights reserved.</p>
+                        </div>
                     </div>
-                    <div class="content">
-                        <p>Hello {first_name},</p>
-                        <p>Thank you for joining {app_name}. We're excited to have you as a member!</p>
-                        <p>Start exploring our products and enjoy a seamless shopping experience.</p>
-                        <p>If you have any questions, feel free to contact our support team.</p>
-                    </div>
-                    <div class="footer">
-                        <p>&copy; {current_year} {app_name}. All rights reserved.</p>
-                    </div>
-                </div>
-            </body>
-            </html>
-            """
+                </body>
+                </html>
+                """
         },
         "order_confirmation": {
             "subject": "Order Confirmation - {order_number}",
@@ -297,8 +316,8 @@ def get_email_template(template_name: str, template_data: dict) -> tuple:
         "current_year": datetime.now().year,
         "currency_symbol": config.currency_symbol
     })
-    subject = template["subject"].format(**template_data)
-    html_content = template["html"].format(**template_data)
+    subject = template["subject"].format(**sanitized_data)
+    html_content = template["html"].format(**sanitized_data)
     return subject, html_content
 
 @router.get("/health", response_model=HealthResponse)
@@ -361,23 +380,18 @@ def send_email_background(to_email: str, subject: str, html_content: str, templa
     try:
         success = email_service.send_email(to_email, subject, html_content)
         status = "sent" if success else "failed"
-        log_notification(
-            notification_type="email",
-            recipient=to_email,
-            subject=subject,
-            message=html_content[:500],
-            template_name=template_name,
-            status=status
-        )
+        if not success:
+            logger.warning(f"Email service returned failure for {to_email}")
+    except smtplib.SMTPException as e:
+        logger.error(f"SMTP error sending email to {to_email}: {e}")
+        status = "failed"
     except Exception as e:
-        logger.error(f"Background email sending failed: {e}")
-        log_notification(
-            notification_type="email",
-            recipient=to_email,
-            subject=subject,
-            template_name=template_name,
-            status="failed"
-        )
+        logger.error(f"Unexpected error sending email to {to_email}: {e}")
+        status = "failed"
+    try:
+        log_notification(notification_type="email", recipient=to_email, subject=subject, message=html_content[:500], template_name=template_name, status=status)
+    except Exception as log_error:
+        logger.error(f"Failed to log notification: {log_error}")
 
 @router.post("/sms")
 async def send_sms_notification(
@@ -743,72 +757,3 @@ async def test_email_notification(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to send test email"
         )
-
-@router.get("/debug/test")
-async def debug_test():
-    import traceback
-    try:
-        from shared import config, db, get_logger
-        logger = get_logger(__name__)
-
-        maintenance_mode = config.maintenance_mode
-        debug_mode = config.debug_mode
-
-        db_status = "unknown"
-        notification_count = 0
-        
-        try:
-            with db.get_cursor() as cursor:
-                cursor.execute("SELECT 1 as test")
-                db_status = "connected"
-                cursor.execute("SELECT COUNT(*) as count FROM notification_logs")
-                notification_count = cursor.fetchone()['count']
-        except Exception as db_error:
-            db_status = f"error: {str(db_error)}"
-            logger.error(f"Database error: {db_error}")
-
-        redis_status = "unknown"
-        try:
-            from shared.redis_client import redis_client
-            redis_status = "connected" if redis_client._ensure_connection() else "disconnected"
-        except Exception as redis_error:
-            redis_status = f"error: {str(redis_error)}"
-
-        return {
-            "status": "ok",
-            "maintenance_mode": maintenance_mode,
-            "debug_mode": debug_mode,
-            "database": db_status,
-            "notification_count": notification_count,
-            "redis": redis_status,
-            "service": "notification",
-            "email_config": {
-                "smtp_host": bool(config.smtp_host),
-                "smtp_username": bool(config.smtp_username),
-                "smtp_password": bool(config.smtp_password)
-            }
-        }
-    except Exception as e:
-        error_traceback = traceback.format_exc()
-        return {
-            "status": "error",
-            "error_type": type(e).__name__,
-            "error_message": str(e),
-            "traceback": error_traceback,
-            "service": "notification"
-        }
-
-
-@router.get("/debug/rabbitmq-config")
-async def debug_rabbitmq_config():
-    """Debug RabbitMQ configuration"""
-    config.refresh_cache()  # Force refresh
-
-    return {
-        "rabbitmq_host": config.rabbitmq_host,
-        "rabbitmq_port": config.rabbitmq_port,
-        "rabbitmq_user": config.rabbitmq_user,
-        "rabbitmq_password": "***" if config.rabbitmq_password else "empty",
-        "rabbitmq_password_length": len(config.rabbitmq_password) if config.rabbitmq_password else 0,
-        "connection_url": f"amqp://{config.rabbitmq_user}:{'*' * len(config.rabbitmq_password) if config.rabbitmq_password else ''}@{config.rabbitmq_host}:{config.rabbitmq_port}/"
-    }

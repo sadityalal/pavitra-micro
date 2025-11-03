@@ -38,6 +38,27 @@ app.add_middleware(
 )
 
 @app.middleware("http")
+async def validate_product_requests(request: Request, call_next):
+    user_agent = request.headers.get("user-agent", "").lower()
+    suspicious_agents = ["sqlmap", "nikto", "metasploit", "nmap"]
+    if any(agent in user_agent for agent in suspicious_agents):
+        logger.warning(f"Suspicious user agent blocked: {user_agent}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied"
+        )
+
+    if request.method in ["POST", "PUT"]:
+        content_type = request.headers.get("content-type", "")
+        if not content_type.startswith(("application/json", "multipart/form-data")):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid content type"
+            )
+    response = await call_next(request)
+    return response
+
+@app.middleware("http")
 async def secure_cors_headers(request: Request, call_next):
     response = await call_next(request)
     origin = request.headers.get('origin')

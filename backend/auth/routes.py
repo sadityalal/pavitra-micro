@@ -808,55 +808,35 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
     try:
         config.refresh_cache()
         if config.maintenance_mode:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Service is under maintenance. Please try again later."
-            )
-        # Verify reset token
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,detail="Service is under maintenance. Please try again later.")
         payload = verify_token(token)
         if not payload or payload.get('type') != 'password_reset':
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid reset token"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Invalid reset token")
         user_id = int(payload['sub'])
-        # Check if token exists in Redis
-        stored_token = redis_client.get(f"password_reset:{user_id}")
+        try:
+            stored_token = redis_client.get(f"password_reset:{user_id}")
+        except Exception as redis_error:
+            logger.error(f"Redis unavailable during password reset: {redis_error}")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,detail="Service temporarily unavailable")
         if not stored_token or stored_token != token:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid or expired reset token"
-            )
-        # Validate new password
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Invalid or expired reset token")
         if len(new_password) < 8:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Password must be at least 8 characters long"
-            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Password must be at least 8 characters long")
         with db.get_cursor() as cursor:
-            # Update password
             new_password_hash = get_password_hash(new_password)
-            cursor.execute(
-                "UPDATE users SET password_hash = %s WHERE id = %s",
-                (new_password_hash, user_id)
-            )
-            # Store in password history
-            cursor.execute(
-                "INSERT INTO password_history (user_id, password_hash) VALUES (%s, %s)",
-                (user_id, new_password_hash)
-            )
-            # Clean up reset token
-            redis_client.delete(f"password_reset:{user_id}")
+            cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s",(new_password_hash, user_id))
+            cursor.execute("INSERT INTO password_history (user_id, password_hash) VALUES (%s, %s)",(user_id, new_password_hash))
+            try:
+                redis_client.delete(f"password_reset:{user_id}")
+            except Exception as e:
+                logger.warning(f"Failed to delete reset token from Redis: {e}")
             logger.info(f"Password reset successful for user {user_id}")
             return {"message": "Password reset successfully"}
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Password reset failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Password reset failed"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Password reset failed")
 
 @router.get("/roles", response_model=List[RoleResponse])
 async def get_roles():

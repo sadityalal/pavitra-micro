@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends, Form, status, BackgroundTasks, UploadFile, File, Request, Header
 from typing import List, Optional, Dict, Any
+import html
 from shared import config, db, sanitize_input, get_logger, redis_client, rabbitmq_client
 from shared.security import verify_password, get_password_hash
 from shared.auth_middleware import get_current_user, require_roles
@@ -296,6 +297,9 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
                 WHERE u.id = %s
             """, (user_id,))
             user = cursor.fetchone()
+            safe_first_name = html.escape(user['first_name']) if user['first_name'] else ""
+            safe_last_name = html.escape(user['last_name']) if user['last_name'] else ""
+            safe_email = html.escape(user['email']) if user['email'] else ""
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -319,10 +323,10 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
             profile_data = UserProfileResponse(
                 id=user['id'],
                 uuid=user['uuid'],
-                email=user['email'],
+                email=safe_email,
                 mobile=user['phone'],
-                first_name=user['first_name'],
-                last_name=user['last_name'],
+                first_name=safe_first_name,
+                last_name=safe_last_name,
                 phone=user['phone'],
                 username=user['username'],
                 country_id=user['country_id'],
@@ -429,6 +433,8 @@ async def update_user_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update user profile"
         )
+
+
 @router.get("/addresses", response_model=List[AddressResponse])
 async def get_user_addresses(current_user: dict = Depends(get_current_user)):
     try:
@@ -436,6 +442,7 @@ async def get_user_addresses(current_user: dict = Depends(get_current_user)):
         cached_addresses = get_cached_user_addresses(user_id)
         if cached_addresses:
             return [AddressResponse(**addr) for addr in cached_addresses]
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM user_addresses
@@ -443,35 +450,48 @@ async def get_user_addresses(current_user: dict = Depends(get_current_user)):
                 ORDER BY is_default DESC, created_at DESC
             """, (user_id,))
             addresses = cursor.fetchall()
-            address_list = [
-                AddressResponse(
+
+            address_list = []
+            for addr in addresses:
+                # XSS SANITIZATION FOR ALL TEXT FIELDS
+                import html
+                safe_full_name = html.escape(addr['full_name']) if addr['full_name'] else ""
+                safe_address_line1 = html.escape(addr['address_line1']) if addr['address_line1'] else ""
+                safe_address_line2 = html.escape(addr['address_line2']) if addr['address_line2'] else ""
+                safe_landmark = html.escape(addr['landmark']) if addr['landmark'] else ""
+                safe_city = html.escape(addr['city']) if addr['city'] else ""
+                safe_state = html.escape(addr['state']) if addr['state'] else ""
+                safe_country = html.escape(addr['country']) if addr['country'] else ""
+
+                address_list.append(AddressResponse(
                     id=addr['id'],
                     user_id=addr['user_id'],
                     address_type=addr['address_type'],
-                    full_name=addr['full_name'],
+                    full_name=safe_full_name,
                     phone=addr['phone'],
-                    address_line1=addr['address_line1'],
-                    address_line2=addr['address_line2'],
-                    landmark=addr['landmark'],
-                    city=addr['city'],
-                    state=addr['state'],
-                    country=addr['country'],
+                    address_line1=safe_address_line1,
+                    address_line2=safe_address_line2,
+                    landmark=safe_landmark,
+                    city=safe_city,
+                    state=safe_state,
+                    country=safe_country,
                     postal_code=addr['postal_code'],
                     address_type_detail=addr['address_type_detail'],
                     is_default=bool(addr['is_default']),
                     created_at=addr['created_at'],
                     updated_at=addr['updated_at']
-                )
-                for addr in addresses
-            ]
+                ))
+
             cache_user_addresses(user_id, [addr.dict() for addr in address_list])
             return address_list
+
     except Exception as e:
         logger.error(f"Failed to fetch user addresses: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch addresses"
         )
+
 @router.post("/addresses", response_model=AddressResponse)
 async def create_user_address(
         address_data: AddressCreate,
@@ -1142,10 +1162,7 @@ async def get_session_info(request: Request, current_user: dict = Depends(get_cu
             detail="Failed to get session information"
         )
 @router.post("/session/cart/migrate-to-user")
-async def migrate_session_cart_to_user(
-        request: Request,
-        current_user: dict = Depends(get_current_user)
-):
+async def migrate_session_cart_to_user(request: Request, current_user: dict = Depends(get_current_user)):
     try:
         user_id = current_user['sub']
         session_id = get_session_id(request)
@@ -1158,14 +1175,16 @@ async def migrate_session_cart_to_user(
         with db.get_cursor() as cursor:
             if session.cart_items:
                 migrated_count = migrate_guest_cart_to_user_database(session, user_id, cursor)
-        session_service.update_session_data(session_id, {
+        success = session_service.update_session_data(session_id, {
             "session_type": SessionType.USER,
             "user_id": user_id,
             "guest_id": None,
             "cart_items": {}
         })
+        if not success:
+            logger.error(f"Failed to update session during cart migration for user {user_id}")
+            raise HTTPException(status_code=500, detail="Failed to migrate cart")
         redis_client.delete(f"user_cart:{user_id}")
-
         logger.info(f"Cart migrated to user database for user {user_id}, {migrated_count} items migrated")
         return {
             "message": "Cart migrated successfully",
@@ -1174,10 +1193,8 @@ async def migrate_session_cart_to_user(
         }
     except Exception as e:
         logger.error(f"Failed to migrate cart: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to migrate cart"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Failed to migrate cart")
+
 @router.post("/profile/avatar")
 async def upload_avatar(
         file: UploadFile = File(...),

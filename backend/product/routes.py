@@ -1,3 +1,5 @@
+import html
+
 from fastapi import APIRouter, HTTPException, Depends, Query, status, UploadFile, File, Request, BackgroundTasks
 from typing import Optional, List
 from shared import config, db, sanitize_input, get_logger, require_roles, redis_client, rabbitmq_client
@@ -363,15 +365,24 @@ def get_cached_categories() -> Optional[List[dict]]:
         logger.error(f"Failed to get cached categories: {e}")
         return None
 
+
 def invalidate_product_cache(product_id: int):
     try:
-        keys = [
+        keys_to_delete = [
             f"product:{product_id}",
-            "categories:all"
+            f"product_slug:{product_id}",
+            "products:featured",
+            "products:bestsellers",
+            "products:new_arrivals",
         ]
-        for key in keys:
-            redis_client.delete(key)
-        logger.info(f"Invalidated cache for product {product_id}")
+        pipeline = redis_client.redis_client.pipeline()
+        for key in keys_to_delete:
+            pipeline.delete(key)
+        pipeline.execute()
+        pattern_keys = redis_client.redis_client.keys("products:search:*")
+        if pattern_keys:
+            redis_client.redis_client.delete(*pattern_keys)
+        logger.info(f"Targeted cache invalidation for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to invalidate product cache: {e}")
 
@@ -433,6 +444,87 @@ def update_session_wishlist(session, session_id: str, product_id: int, action: s
         })
     except Exception as e:
         logger.error(f"Failed to update session wishlist: {e}")
+        return False
+
+def validate_uploaded_file(file: UploadFile) -> bool:
+    """
+    Comprehensive file validation for uploaded images
+    Returns True if file is valid, False otherwise
+    """
+    try:
+        # Check file size
+        max_size = 5 * 1024 * 1024  # 5MB
+        file.file.seek(0, 2)  # Seek to end
+        file_size = file.file.tell()
+        file.file.seek(0)  # Reset to beginning
+
+        if file_size > max_size:
+            logger.warning(f"File too large: {file.filename} ({file_size} bytes)")
+            return False
+
+        if file_size == 0:
+            logger.warning(f"Empty file: {file.filename}")
+            return False
+
+        # Read first few bytes for magic number validation
+        file_content = file.file.read(1024)
+        file.file.seek(0)  # Reset to beginning after reading
+
+        # Basic file extension check
+        file_extension = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
+        if file_extension not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+            logger.warning(f"Invalid file extension: {file.filename}")
+            return False
+
+        # Magic number validation (file signature)
+        valid_signatures = {
+            b'\xff\xd8\xff': 'jpeg',
+            b'\x89PNG\r\n\x1a\n': 'png',
+            b'GIF8': 'gif',
+            b'RIFF....WEBPVP8': 'webp'
+        }
+
+        signature_valid = False
+        for signature, file_type in valid_signatures.items():
+            if file_content.startswith(signature):
+                signature_valid = True
+                break
+
+        if not signature_valid:
+            logger.warning(f"Invalid file signature: {file.filename}")
+            return False
+
+        # Content-type validation (basic)
+        allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+        if file.content_type not in allowed_types:
+            logger.warning(f"Invalid content type: {file.filename} - {file.content_type}")
+            return False
+
+        # Image integrity check using Pillow
+        try:
+            from PIL import Image
+            import io
+
+            image = Image.open(io.BytesIO(file_content))
+            image.verify()  # Verify it's a valid image
+
+            # Additional checks
+            if image.width > 10000 or image.height > 10000:
+                logger.warning(f"Image dimensions too large: {file.filename}")
+                return False
+
+            if image.width * image.height > 25000000:  # 25MP limit
+                logger.warning(f"Image resolution too high: {file.filename}")
+                return False
+
+        except Exception as e:
+            logger.warning(f"Image integrity check failed for {file.filename}: {e}")
+            return False
+
+        return True
+
+    except Exception as e:
+        logger.error(f"File validation error for {file.filename}: {e}")
         return False
 
 @router.get("/health", response_model=HealthResponse)
@@ -672,6 +764,9 @@ async def get_products(
             logger.info(f"📦 Products fetched: {len(products)}, total: {total_count}")
             product_list = []
             for product in products:
+                safe_name = html.escape(product['name']) if product['name'] else ""
+                safe_short_description = html.escape(product['short_description']) if product['short_description'] else ""
+                safe_description = html.escape(product['description']) if product['description'] else ""
                 specification = None
                 image_gallery = None
                 if product['specification']:
@@ -695,11 +790,11 @@ async def get_products(
                 product_list.append(ProductResponse(
                     id=product['id'],
                     uuid=product['uuid'],
-                    name=product['name'],
+                    name=safe_name,
                     sku=product['sku'],
                     slug=product['slug'],
-                    short_description=product['short_description'],
-                    description=product['description'],
+                    short_description=safe_short_description,
+                    description=safe_description,
                     base_price=float(product['base_price']),
                     compare_price=float(product['compare_price']) if product['compare_price'] else None,
                     category_id=product['category_id'],
@@ -1070,6 +1165,11 @@ async def get_new_arrivals(
 
 @router.get("/{product_id}", response_model=ProductResponse)
 async def get_product(product_id: int, request: Request):
+    if product_id <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid product ID"
+        )
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
@@ -1130,14 +1230,17 @@ async def get_product(product_id: int, request: Request):
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(image_gallery)
             max_cart_quantity = product['max_cart_quantity'] or 20
+            safe_name = html.escape(product['name']) if product['name'] else ""
+            safe_short_description = html.escape(product['short_description']) if product['short_description'] else ""
+            safe_description = html.escape(product['description']) if product['description'] else ""
             product_response = ProductResponse(
                 id=product['id'],
                 uuid=product['uuid'],
-                name=product['name'],
+                name=safe_name,
                 sku=product['sku'],
                 slug=product['slug'],
-                short_description=product['short_description'],
-                description=product['description'],
+                short_description=safe_short_description,
+                description=safe_description,
                 base_price=float(product['base_price']),
                 compare_price=float(product['compare_price']) if product['compare_price'] else None,
                 category_id=product['category_id'],
@@ -2019,6 +2122,7 @@ async def update_product(
             detail="Failed to update product"
         )
 
+
 @router.post("/admin/products/{product_id}/images")
 async def upload_product_images(
         request: Request,
@@ -2034,9 +2138,11 @@ async def upload_product_images(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, image_gallery FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
@@ -2045,10 +2151,31 @@ async def upload_product_images(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
-            allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-            max_size = 5 * 1024 * 1024
+
+            invalid_files = []
+            valid_files = []
+            for file in files:
+                if not validate_uploaded_file(file):
+                    invalid_files.append(file.filename)
+                else:
+                    valid_files.append(file)
+            if invalid_files:
+                logger.warning(f"Invalid files rejected for product {product_id}: {invalid_files}")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Invalid or malicious files detected: {', '.join(invalid_files)}. Only valid JPEG, PNG, GIF, and WebP images are allowed."
+                )
+
+            if not valid_files:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No valid files to upload"
+                )
+
+            max_total_files = 20
             uploaded_urls = []
             existing_gallery = []
+
             if product['image_gallery']:
                 try:
                     if isinstance(product['image_gallery'], str):
@@ -2057,59 +2184,111 @@ async def upload_product_images(
                         existing_gallery = product['image_gallery']
                 except:
                     existing_gallery = []
-            for file in files:
-                if file.content_type not in allowed_types:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid file type for {file.filename}. Only JPEG, PNG, GIF, and WebP are allowed."
-                    )
-                file_extension = file.filename.split('.')[-1].lower()
-                if file_extension not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid file extension for {file.filename}. Only .jpg, .jpeg, .png, .gif, .webp are allowed."
-                    )
-                file.file.seek(0, 2)
-                file_size = file.file.tell()
-                file.file.seek(0)
-                if file_size > max_size:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"File {file.filename} too large. Maximum size is 5MB."
-                    )
-                safe_filename = "".join(c for c in file.filename if c.isalnum() or c in ('-', '_', '.')).rstrip()
-                unique_filename = f"product_{product_id}_{int(datetime.now().timestamp())}_{len(uploaded_urls)}_{safe_filename}"
-                upload_dir = "/app/uploads/products"
-                os.makedirs(upload_dir, exist_ok=True, mode=0o755)
-                file_path = os.path.join(upload_dir, unique_filename)
-                if not file_path.startswith("/app/uploads/"):
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail="Invalid file path"
-                    )
-                with open(file_path, "wb") as buffer:
-                    while True:
-                        chunk = await file.read(8192)
-                        if not chunk:
-                            break
-                        buffer.write(chunk)
-                image_url = f"/uploads/products/{unique_filename}"
-                uploaded_urls.append(image_url)
-            updated_gallery = existing_gallery + uploaded_urls
-            if len(updated_gallery) > 20:
+
+            current_file_count = len(existing_gallery)
+            if current_file_count + len(valid_files) > max_total_files:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Maximum 20 images allowed per product"
+                    detail=f"Maximum {max_total_files} images allowed per product. Currently have {current_file_count}, trying to add {len(valid_files)}."
                 )
+
+            for file in valid_files:
+                try:
+                    original_filename = file.filename
+                    safe_filename = "".join(
+                        c for c in original_filename if c.isalnum() or c in ('-', '_', '.')).rstrip()
+                    if not safe_filename:
+                        safe_filename = "image"
+
+                    file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
+                    if file_extension not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
+                        content_type_to_extension = {
+                            'image/jpeg': 'jpg',
+                            'image/png': 'png',
+                            'image/gif': 'gif',
+                            'image/webp': 'webp'
+                        }
+                        file_extension = content_type_to_extension.get(file.content_type, 'jpg')
+
+                    unique_filename = f"product_{product_id}_{int(datetime.now().timestamp())}_{len(uploaded_urls)}.{file_extension}"
+                    upload_dir = "/app/uploads/products"
+                    try:
+                        os.makedirs(upload_dir, mode=0o755, exist_ok=True)
+                    except PermissionError as e:
+                        logger.error(f"Permission denied creating upload directory: {e}")
+                        raise HTTPException(status_code=500, detail="Server configuration error")
+                    except OSError as e:
+                        logger.error(f"Failed to create upload directory: {e}")
+                        raise HTTPException(status_code=500, detail="Server storage error")
+                    file_path = os.path.join(upload_dir, unique_filename)
+                    if not file_path.startswith("/app/uploads/"):
+                        logger.error(f"Potential path traversal attack: {file_path}")
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Invalid file path"
+                        )
+                    file_content = await file.read()
+                    file_size = len(file_content)
+                    if file_size > 5 * 1024 * 1024:  # 5MB
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"File {original_filename} too large. Maximum size is 5MB."
+                        )
+
+                    try:
+                        from PIL import Image
+                        import io
+                        image = Image.open(io.BytesIO(file_content))
+
+                        if hasattr(image, 'tell'):
+                            image.tell()  # Check if image can be processed safely
+
+                        if image.mode in ('RGBA', 'LA', 'P'):
+                            image = image.convert('RGB')
+
+                    except Exception as img_error:
+                        logger.error(f"Final image validation failed for {original_filename}: {img_error}")
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"Invalid image file: {original_filename}"
+                        )
+
+                    with open(file_path, "wb") as buffer:
+                        buffer.write(file_content)
+
+                    os.chmod(file_path, 0o644)
+
+                    image_url = f"/uploads/products/{unique_filename}"
+                    uploaded_urls.append(image_url)
+
+                    logger.info(f"Successfully uploaded image for product {product_id}: {unique_filename}")
+
+                except HTTPException:
+                    raise
+                except Exception as file_error:
+                    logger.error(f"Failed to process file {file.filename}: {file_error}")
+                    continue
+
+            if not uploaded_urls:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to process any files"
+                )
+
+            updated_gallery = existing_gallery + uploaded_urls
+
             if not product['main_image_url'] and uploaded_urls:
                 cursor.execute(
                     "UPDATE products SET main_image_url = %s WHERE id = %s",
                     (uploaded_urls[0], product_id)
                 )
+                logger.info(f"Set main image for product {product_id}: {uploaded_urls[0]}")
+
             cursor.execute(
                 "UPDATE products SET image_gallery = %s WHERE id = %s",
                 (str(updated_gallery), product_id)
             )
+
             if background_tasks:
                 cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
                 updated_product = cursor.fetchone()
@@ -2118,12 +2297,17 @@ async def upload_product_images(
                     updated_product,
                     'images_updated'
                 )
+
             invalidate_product_cache(product_id)
+
             return {
+                "success": True,
                 "message": f"Successfully uploaded {len(uploaded_urls)} images",
                 "uploaded_urls": uploaded_urls,
-                "total_images": len(updated_gallery)
+                "total_images": len(updated_gallery),
+                "rejected_files": invalid_files
             }
+
     except HTTPException:
         raise
     except Exception as e:
