@@ -1,3 +1,5 @@
+# backend/shared/redis_client.py
+
 import redis
 import logging
 import json
@@ -43,7 +45,6 @@ class RedisClient:
         if not self.redis_client:
             self._connect()
             return self.redis_client is not None
-
         try:
             self.redis_client.ping()
             return True
@@ -55,12 +56,89 @@ class RedisClient:
             logger.error(f"Redis connection error: {e}")
             return False
 
+    # Add all the missing Redis methods
+    def incr(self, key: str) -> int:
+        if not self._ensure_connection():
+            return 0
+        try:
+            return self.redis_client.incr(key)
+        except Exception as e:
+            logger.error(f"Redis incr failed for {key}: {e}")
+            return 0
+
+    def setex(self, key: str, expire: int, value: str) -> bool:
+        if not self._ensure_connection():
+            return False
+        try:
+            return bool(self.redis_client.setex(key, expire, value))
+        except Exception as e:
+            logger.error(f"Redis setex failed for {key}: {e}")
+            return False
+
+    def expire(self, key: str, expire: int) -> bool:
+        if not self._ensure_connection():
+            return False
+        try:
+            return bool(self.redis_client.expire(key, expire))
+        except Exception as e:
+            logger.error(f"Redis expire failed for {key}: {e}")
+            return False
+
+    def get(self, key: str) -> Optional[str]:
+        if not self._ensure_connection():
+            return None
+        try:
+            return self.redis_client.get(key)
+        except Exception as e:
+            logger.error(f"Redis get failed for {key}: {e}")
+            return None
+
+    def set(self, key: str, value: str, ex: Optional[int] = None) -> bool:
+        if not self._ensure_connection():
+            return False
+        try:
+            if ex:
+                return bool(self.redis_client.setex(key, ex, value))
+            else:
+                return bool(self.redis_client.set(key, value))
+        except Exception as e:
+            logger.error(f"Redis set failed for {key}: {e}")
+            return False
+
+    def delete(self, key: str) -> bool:
+        if not self._ensure_connection():
+            return False
+        try:
+            return bool(self.redis_client.delete(key))
+        except Exception as e:
+            logger.error(f"Redis delete failed for {key}: {e}")
+            return False
+
+    def exists(self, key: str) -> bool:
+        if not self._ensure_connection():
+            return False
+        try:
+            return bool(self.redis_client.exists(key))
+        except Exception as e:
+            logger.error(f"Redis exists failed for {key}: {e}")
+            return False
+
+    def setnx(self, key: str, value: str) -> bool:
+        if not self._ensure_connection():
+            return False
+        try:
+            return bool(self.redis_client.setnx(key, value))
+        except Exception as e:
+            logger.error(f"Redis setnx failed for {key}: {e}")
+            return False
+
+    # Keep the existing methods
     def cache_product(self, product_id: int, product_data: dict, expire: int = 3600):
         if not self._ensure_connection():
             return False
         try:
             key = f"product:{product_id}"
-            return self.redis_client.setex(key, expire, json.dumps(product_data))
+            return self.setex(key, expire, json.dumps(product_data))
         except Exception as e:
             logger.error(f"Failed to cache product {product_id}: {e}")
             return False
@@ -70,7 +148,7 @@ class RedisClient:
             return None
         try:
             key = f"product:{product_id}"
-            data = self.redis_client.get(key)
+            data = self.get(key)
             return json.loads(data) if data else None
         except Exception as e:
             logger.error(f"Failed to get cached product {product_id}: {e}")
@@ -81,7 +159,7 @@ class RedisClient:
             return False
         try:
             key = f"session:{user_id}"
-            return self.redis_client.setex(key, expire, json.dumps(session_data))
+            return self.setex(key, expire, json.dumps(session_data))
         except Exception as e:
             logger.error(f"Failed to cache session for user {user_id}: {e}")
             return False
@@ -90,7 +168,7 @@ class RedisClient:
         if not self._ensure_connection():
             return None
         try:
-            data = self.redis_client.get(session_key)
+            data = self.get(session_key)
             return json.loads(data) if data else None
         except Exception as e:
             logger.error(f"Failed to get cached session {session_key}: {e}")
@@ -101,7 +179,7 @@ class RedisClient:
             return False
         try:
             key = f"product:{product_id}"
-            return bool(self.redis_client.delete(key))
+            return self.delete(key)
         except Exception as e:
             logger.error(f"Failed to invalidate product cache {product_id}: {e}")
             return False
@@ -111,7 +189,7 @@ class RedisClient:
             return False
         try:
             key = "categories:all"
-            return self.redis_client.setex(key, expire, json.dumps(categories_data))
+            return self.setex(key, expire, json.dumps(categories_data))
         except Exception as e:
             logger.error(f"Failed to cache categories: {e}")
             return False
@@ -121,7 +199,7 @@ class RedisClient:
             return None
         try:
             key = "categories:all"
-            data = self.redis_client.get(key)
+            data = self.get(key)
             return json.loads(data) if data else None
         except Exception as e:
             logger.error(f"Failed to get cached categories: {e}")
@@ -131,9 +209,9 @@ class RedisClient:
         if not self._ensure_connection():
             return True
         try:
-            current = self.redis_client.incr(key)
+            current = self.incr(key)
             if current == 1:
-                self.redis_client.expire(key, window)
+                self.expire(key, window)
             return current <= limit
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
@@ -151,85 +229,12 @@ class RedisClient:
             logger.error(f"Failed to delete pattern {pattern}: {e}")
             return False
 
-    # Basic Redis operations with improved error handling
-    def setex(self, key: str, expire: int, value: str):
-        if not self._ensure_connection():
-            return False
-        try:
-            return self.redis_client.setex(key, expire, value)
-        except Exception as e:
-            logger.error(f"Redis setex failed for {key}: {e}")
-            return False
-
-    def get(self, key: str):
-        if not self._ensure_connection():
-            return None
-        try:
-            return self.redis_client.get(key)
-        except Exception as e:
-            logger.error(f"Redis get failed for {key}: {e}")
-            return None
-
-    def delete(self, key: str):
-        if not self._ensure_connection():
-            return False
-        try:
-            return bool(self.redis_client.delete(key))
-        except Exception as e:
-            logger.error(f"Redis delete failed for {key}: {e}")
-            return False
-
-    def exists(self, key: str):
-        if not self._ensure_connection():
-            return False
-        try:
-            return self.redis_client.exists(key) > 0
-        except Exception as e:
-            logger.error(f"Redis exists failed for {key}: {e}")
-            return False
-
-    def incr(self, key: str):
-        if not self._ensure_connection():
-            return 0
-        try:
-            return self.redis_client.incr(key)
-        except Exception as e:
-            logger.error(f"Redis incr failed for {key}: {e}")
-            return 0
-
-    def expire(self, key: str, expire: int):
-        if not self._ensure_connection():
-            return False
-        try:
-            return self.redis_client.expire(key, expire)
-        except Exception as e:
-            logger.error(f"Redis expire failed for {key}: {e}")
-            return False
-
     def ping(self):
         if not self._ensure_connection():
             return False
         try:
             return self.redis_client.ping()
         except Exception:
-            return False
-
-    def incr(self, key: str):
-        if not self._ensure_connection():
-            return 0
-        try:
-            return self.redis_client.incr(key)
-        except Exception as e:
-            logger.error(f"Redis incr failed for {key}: {e}")
-            return 0
-
-    def setex(self, key: str, expire: int, value: str):
-        if not self._ensure_connection():
-            return False
-        try:
-            return self.redis_client.setex(key, expire, value)
-        except Exception as e:
-            logger.error(f"Redis setex failed for {key}: {e}")
             return False
 
 
