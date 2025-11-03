@@ -1,4 +1,3 @@
-# backend/shared/redis_client.py
 import redis
 import logging
 import json
@@ -14,12 +13,12 @@ class RedisClient:
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(RedisClient, cls).__new__(cls)
-            cls._instance._initialize()
         return cls._instance
 
-    def _initialize(self):
-        self.redis_client = None
-        self._connect()
+    def __init__(self):
+        if not hasattr(self, '_initialized'):
+            self.redis_client = None
+            self._initialized = True
 
     def _connect(self):
         try:
@@ -55,8 +54,7 @@ class RedisClient:
             logger.error(f"Redis connection error: {e}")
             return False
 
-    # Add all the missing Redis methods
-    def incr(self, key: str) -> int:
+    def incr(self, key: str):
         if not self._ensure_connection():
             return 0
         try:
@@ -65,25 +63,16 @@ class RedisClient:
             logger.error(f"Redis incr failed for {key}: {e}")
             return 0
 
-    def setex(self, key: str, expire: int, value: str) -> bool:
+    def setex(self, key: str, expire: int, value: str):
         if not self._ensure_connection():
             return False
         try:
-            return bool(self.redis_client.setex(key, expire, value))
+            return self.redis_client.setex(key, expire, value)
         except Exception as e:
             logger.error(f"Redis setex failed for {key}: {e}")
             return False
 
-    def expire(self, key: str, expire: int) -> bool:
-        if not self._ensure_connection():
-            return False
-        try:
-            return bool(self.redis_client.expire(key, expire))
-        except Exception as e:
-            logger.error(f"Redis expire failed for {key}: {e}")
-            return False
-
-    def get(self, key: str) -> Optional[str]:
+    def get(self, key: str):
         if not self._ensure_connection():
             return None
         try:
@@ -92,46 +81,50 @@ class RedisClient:
             logger.error(f"Redis get failed for {key}: {e}")
             return None
 
-    def set(self, key: str, value: str, ex: Optional[int] = None) -> bool:
+    def delete(self, *keys):
         if not self._ensure_connection():
             return False
         try:
-            if ex:
-                return bool(self.redis_client.setex(key, ex, value))
-            else:
-                return bool(self.redis_client.set(key, value))
+            return bool(self.redis_client.delete(*keys))
         except Exception as e:
-            logger.error(f"Redis set failed for {key}: {e}")
+            logger.error(f"Redis delete failed for {keys}: {e}")
             return False
 
-    def delete(self, key: str) -> bool:
+    def exists(self, key: str):
         if not self._ensure_connection():
             return False
         try:
-            return bool(self.redis_client.delete(key))
-        except Exception as e:
-            logger.error(f"Redis delete failed for {key}: {e}")
-            return False
-
-    def exists(self, key: str) -> bool:
-        if not self._ensure_connection():
-            return False
-        try:
-            return bool(self.redis_client.exists(key))
+            return self.redis_client.exists(key) > 0
         except Exception as e:
             logger.error(f"Redis exists failed for {key}: {e}")
             return False
 
-    def setnx(self, key: str, value: str) -> bool:
+    def expire(self, key: str, expire: int):
         if not self._ensure_connection():
             return False
         try:
-            return bool(self.redis_client.setnx(key, value))
+            return self.redis_client.expire(key, expire)
         except Exception as e:
-            logger.error(f"Redis setnx failed for {key}: {e}")
+            logger.error(f"Redis expire failed for {key}: {e}")
             return False
 
-    # Keep the existing methods
+    def keys(self, pattern: str):
+        if not self._ensure_connection():
+            return []
+        try:
+            return self.redis_client.keys(pattern)
+        except Exception as e:
+            logger.error(f"Redis keys failed for pattern {pattern}: {e}")
+            return []
+
+    def ping(self):
+        if not self._ensure_connection():
+            return False
+        try:
+            return self.redis_client.ping()
+        except Exception:
+            return False
+
     def cache_product(self, product_id: int, product_data: dict, expire: int = 3600):
         if not self._ensure_connection():
             return False
@@ -220,20 +213,12 @@ class RedisClient:
         if not self._ensure_connection():
             return False
         try:
-            keys = self.redis_client.keys(pattern)
+            keys = self.keys(pattern)
             if keys:
-                return bool(self.redis_client.delete(*keys))
+                return self.delete(*keys)
             return True
         except Exception as e:
             logger.error(f"Failed to delete pattern {pattern}: {e}")
-            return False
-
-    def ping(self):
-        if not self._ensure_connection():
-            return False
-        try:
-            return self.redis_client.ping()
-        except Exception:
             return False
 
 

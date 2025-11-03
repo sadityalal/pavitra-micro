@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y gcc curl && rm -rf /var/lib/apt/lists/*
 COPY backend/product/ /app/product/
 COPY backend/shared/ /app/shared/
 COPY backend/__init__.py /app/
-
+ENV PYTHONPATH=/app
 # Install dependencies directly
 COPY backend/product/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

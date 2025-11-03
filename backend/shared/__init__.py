@@ -9,6 +9,8 @@ from .session_service import session_service
 from .redis_client import redis_client
 from .rabbitmq_client import rabbitmq_client
 from .auth_middleware import get_current_user, require_roles, require_permissions
+from .rate_limiter import rate_limiter
+from .session_middleware import SessionMiddleware, get_session, get_session_id
 
 __all__ = [
     'config',
@@ -26,5 +28,10 @@ __all__ = [
     'rabbitmq_client',
     'get_current_user',
     'require_roles',
-    'require_permissions'
+    'require_permissions',
+    'rate_limiter',
+    'SessionMiddleware',
+    'get_session',
+    'get_session_id',
+    'session_service',
 ]

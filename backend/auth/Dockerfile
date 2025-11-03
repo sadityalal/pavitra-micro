@@ -5,10 +5,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y gcc curl && rm -rf /var/lib/apt/lists/*
 
 # Copy everything needed
-COPY backend/auth/ /app/user/
+COPY backend/auth/ /app/auth/
 COPY backend/shared/ /app/shared/
 COPY backend/__init__.py /app/
 
+ENV PYTHONPATH=/app
 # Install dependencies directly
 COPY backend/auth/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

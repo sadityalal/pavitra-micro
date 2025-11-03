@@ -259,13 +259,13 @@ def invalidate_product_cache_comprehensive(product_id: int):
             "products:bestsellers",
             "products:new_arrivals"
         ]
-        pipeline = redis_client.redis_client.pipeline()
+        pipeline = redis_client.pipeline()
         for key in keys_to_delete:
             pipeline.delete(key)
         pipeline.execute()
-        pattern_keys = redis_client.redis_client.keys("products:*")
+        pattern_keys = redis_client.keys("products:*")
         if pattern_keys:
-            redis_client.redis_client.delete(*pattern_keys)
+            redis_client.delete(*pattern_keys)
         logger.info(f"Comprehensively invalidated cache for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to comprehensively invalidate product cache: {e}")
@@ -375,13 +375,13 @@ def invalidate_product_cache(product_id: int):
             "products:bestsellers",
             "products:new_arrivals",
         ]
-        pipeline = redis_client.redis_client.pipeline()
+        pipeline = redis_client.pipeline()
         for key in keys_to_delete:
             pipeline.delete(key)
         pipeline.execute()
-        pattern_keys = redis_client.redis_client.keys("products:search:*")
+        pattern_keys = redis_client.keys("products:search:*")
         if pattern_keys:
-            redis_client.redis_client.delete(*pattern_keys)
+            redis_client.delete(*pattern_keys)
         logger.info(f"Targeted cache invalidation for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to invalidate product cache: {e}")

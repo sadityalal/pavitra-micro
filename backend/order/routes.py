@@ -32,7 +32,7 @@ def require_roles(required_roles: List[str]):
 def cache_order(order_id: int, order_data: dict, expire: int = 1800):
     try:
         key = f"order:{order_id}"
-        redis_client.redis_client.setex(key, expire, json.dumps(order_data))
+        redis_client.setex(key, expire, json.dumps(order_data))
         logger.info(f"Cached order {order_id}")
     except Exception as e:
         logger.error(f"Failed to cache order: {e}")
@@ -41,7 +41,7 @@ def cache_order(order_id: int, order_data: dict, expire: int = 1800):
 def get_cached_order(order_id: int) -> Optional[dict]:
     try:
         key = f"order:{order_id}"
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -53,7 +53,7 @@ def get_cached_order(order_id: int) -> Optional[dict]:
 def cache_user_orders(user_id: int, orders_data: dict, expire: int = 900):
     try:
         key = f"user_orders:{user_id}"
-        redis_client.redis_client.setex(key, expire, json.dumps(orders_data))
+        redis_client.setex(key, expire, json.dumps(orders_data))
         logger.info(f"Cached orders for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to cache user orders: {e}")
@@ -62,7 +62,7 @@ def cache_user_orders(user_id: int, orders_data: dict, expire: int = 900):
 def get_cached_user_orders(user_id: int) -> Optional[dict]:
     try:
         key = f"user_orders:{user_id}"
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -78,7 +78,7 @@ def invalidate_order_cache(order_id: int, user_id: int = None):
             keys.append(f"user_orders:{user_id}")
 
         for key in keys:
-            redis_client.redis_client.delete(key)
+            redis_client.delete(key)
         logger.info(f"Invalidated cache for order {order_id}")
     except Exception as e:
         logger.error(f"Failed to invalidate order cache: {e}")
@@ -868,7 +868,6 @@ async def debug_test():
 
         redis_status = "unknown"
         try:
-            from shared.redis_client import redis_client
             redis_status = "connected" if redis_client._ensure_connection() else "disconnected"
         except Exception as redis_error:
             redis_status = f"error: {str(redis_error)}"

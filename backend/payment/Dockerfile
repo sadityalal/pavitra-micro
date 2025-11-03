@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y \
 COPY backend/payment/ /app/payment/
 COPY backend/shared/ /app/shared/
 COPY backend/__init__.py /app/
-
+ENV PYTHONPATH=/app
 # Install dependencies directly
 COPY backend/payment/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

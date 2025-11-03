@@ -211,14 +211,14 @@ def publish_payment_event(payment_data: dict, event_type: str):
 
 def cache_payment_data(key: str, data: Any, expire: int = 3600):
     try:
-        redis_client.redis_client.setex(key, expire, json.dumps(data))
+        redis_client.setex(key, expire, json.dumps(data))
         logger.info(f"Cached payment data for key: {key}")
     except Exception as e:
         logger.error(f"Failed to cache payment data: {e}")
 
 def get_cached_payment_data(key: str) -> Optional[Any]:
     try:
-        data = redis_client.redis_client.get(key)
+        data = redis_client.get(key)
         if data:
             return json.loads(data)
         return None
@@ -235,9 +235,9 @@ def invalidate_payment_cache(user_id: int):
         ]
         
         for pattern in keys_patterns:
-            keys = redis_client.redis_client.keys(pattern)
+            keys = redis_client.keys(pattern)
             if keys:
-                redis_client.redis_client.delete(*keys)
+                redis_client.delete(*keys)
         
         logger.info(f"Invalidated payment cache for user {user_id}")
     except Exception as e:

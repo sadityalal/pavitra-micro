@@ -1366,9 +1366,9 @@ async def change_password(
                 cursor.execute("ROLLBACK")
                 raise e
             try:
-                user_sessions = redis_client.redis_client.keys(f"user_session:{user_id}:*")
+                user_sessions = redis_client.keys(f"user_session:{user_id}:*")
                 if user_sessions:
-                    redis_client.redis_client.delete(*user_sessions)
+                    redis_client.delete(*user_sessions)
                 invalidate_user_cache(user_id)
                 cursor.execute("""
                     INSERT INTO security_logs (user_id, action, ip_address, user_agent)

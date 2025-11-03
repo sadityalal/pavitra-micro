@@ -12,16 +12,16 @@ logger = get_logger(__name__)
 class SessionService:
     def __init__(self):
         self.inactivity_timeout = 1200
-        self.guest_session_duration = 86400  # 24 hours
-        self.user_session_duration = 86400  # 24 hours
+        self.guest_session_duration = 86400
+        self.user_session_duration = 86400
         self._redis_session_prefix = "session:"
         self._redis_user_session_prefix = "user_session:"
         self._redis_guest_session_prefix = "guest_session:"
         self._rate_limit_prefix = "session_rate_limit:"
-        self.max_sessions_per_user = 5  # Prevent session flooding
-        self.session_rotation_interval = 3600  # Rotate sessions every hour
-        self.rate_limit_attempts = 10  # Max session operations per minute
-        self.rate_limit_window = 60  # 1 minute window
+        self.max_sessions_per_user = 5
+        self.session_rotation_interval = 3600
+        self.rate_limit_attempts = 10
+        self.rate_limit_window = 60
 
     def generate_session_id(self) -> str:
         return uuid.uuid4().hex
@@ -46,13 +46,13 @@ class SessionService:
             return True
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
-            return True  # Fail open on rate limit errors
+            return True
 
     def _cleanup_old_user_sessions(self, user_id: int):
         try:
             user_sessions = []
             pattern = f"{self._redis_user_session_prefix}{user_id}:*"
-            all_keys = redis_client.redis_client.keys(f"{self._redis_session_prefix}*")
+            all_keys = redis_client.keys(f"{self._redis_session_prefix}*")
             for key in all_keys:
                 try:
                     data = redis_client.get(key)
@@ -67,11 +67,9 @@ class SessionService:
             if len(user_sessions) > self.max_sessions_per_user:
                 user_sessions.sort(key=lambda x: x[1])
                 sessions_to_remove = user_sessions[:-self.max_sessions_per_user]
-
                 for session_id, _ in sessions_to_remove:
                     self.delete_session(session_id)
                     logger.info(f"Cleaned up old session {session_id} for user {user_id}")
-
         except Exception as e:
             logger.error(f"Failed to cleanup old user sessions: {e}")
 
@@ -79,10 +77,7 @@ class SessionService:
         try:
             client_ip = session_data.get('ip_address', 'unknown')
             if not self._check_rate_limit(f"create:{client_ip}"):
-                raise HTTPException(
-                    status_code=429,
-                    detail="Too many session creation attempts"
-                )
+                return None
 
             session_id = self.generate_session_id()
             now = datetime.utcnow()
@@ -146,18 +141,15 @@ class SessionService:
                     session_id
                 )
 
-            logger.info(
-                f"Created {session.session_type.value} session: {session_id} for IP: {session_data.get('ip_address', 'unknown')}")
+            logger.info(f"Created {session.session_type.value} session: {session_id}")
             return session
 
         except Exception as e:
             logger.error(f"Failed to create session: {e}")
             return None
 
-    def get_session(self, session_id: str, request_ip: str = None, request_user_agent: str = None) -> Optional[
-        SessionData]:
+    def get_session(self, session_id: str, request_ip: str = None, request_user_agent: str = None) -> Optional[SessionData]:
         try:
-            # Rate limit session access
             if not self._check_rate_limit(f"access:{session_id}"):
                 logger.warning(f"Rate limited session access: {session_id}")
                 return None
@@ -204,19 +196,14 @@ class SessionService:
     def validate_session_origin(self, session: SessionData, request_ip: str, request_user_agent: str) -> bool:
         try:
             if session.ip_address and session.ip_address != request_ip:
-                logger.warning(
-                    f"Session IP mismatch: {session.ip_address} vs {request_ip} for session {session.session_id}")
+                logger.warning(f"Session IP mismatch: {session.ip_address} vs {request_ip}")
                 return False
-            if session.user_agent and session.user_agent != request_user_agent:
-                logger.warning(f"Session User-Agent mismatch for session {session.session_id}")
-
             return True
         except Exception as e:
             logger.error(f"Session origin validation failed: {e}")
-            return True  # Fail open on validation errors
+            return True
 
     def _should_rotate_session(self, session: SessionData) -> bool:
-        """Check if session should be rotated for security"""
         try:
             session_age = datetime.utcnow() - session.created_at
             return session_age.total_seconds() > self.session_rotation_interval
@@ -225,7 +212,6 @@ class SessionService:
             return False
 
     def rotate_session(self, old_session_id: str) -> Optional[SessionData]:
-        """Rotate session ID to prevent session fixation"""
         try:
             old_session = self.get_session(old_session_id)
             if not old_session:
@@ -282,7 +268,6 @@ class SessionService:
         return self._update_session_activity_only(session_id)
 
     def migrate_guest_to_user_session(self, guest_session_id: str, user_id: int) -> Optional[SessionData]:
-        """Migrate guest session to user session and merge carts"""
         try:
             if not self._check_rate_limit(f"migrate:{user_id}"):
                 return None
@@ -365,17 +350,15 @@ class SessionService:
 
             redis_client.delete(self._session_key(session_id))
             if session.user_id:
-                # Delete all session mappings for this user
                 pattern = f"{self._redis_user_session_prefix}{session.user_id}:*"
-                mapping_keys = redis_client.redis_client.keys(pattern)
+                mapping_keys = redis_client.keys(pattern)
                 if mapping_keys:
-                    redis_client.redis_client.delete(*mapping_keys)
+                    redis_client.delete(*mapping_keys)
             if session.guest_id:
-                # Delete all session mappings for this guest
                 pattern = f"{self._redis_guest_session_prefix}{session.guest_id}:*"
-                mapping_keys = redis_client.redis_client.keys(pattern)
+                mapping_keys = redis_client.keys(pattern)
                 if mapping_keys:
-                    redis_client.redis_client.delete(*mapping_keys)
+                    redis_client.delete(*mapping_keys)
 
             logger.info(f"Deleted session: {session_id}")
             return True
@@ -387,7 +370,7 @@ class SessionService:
     def get_session_by_user_id(self, user_id: int) -> Optional[SessionData]:
         try:
             pattern = f"{self._redis_user_session_prefix}{user_id}:*"
-            mapping_keys = redis_client.redis_client.keys(pattern)
+            mapping_keys = redis_client.keys(pattern)
             if not mapping_keys:
                 return None
             latest_session = None
@@ -458,10 +441,9 @@ class SessionService:
             return False
 
     def invalidate_all_user_sessions(self, user_id: int) -> bool:
-        """Invalidate all sessions for a user (useful for password changes, etc.)"""
         try:
             pattern = f"{self._redis_user_session_prefix}{user_id}:*"
-            mapping_keys = redis_client.redis_client.keys(pattern)
+            mapping_keys = redis_client.keys(pattern)
 
             sessions_invalidated = 0
             for key in mapping_keys:
