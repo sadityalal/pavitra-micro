@@ -32,18 +32,27 @@ class SessionService:
     def _rate_limit_key(self, identifier: str) -> str:
         return f"{self._rate_limit_prefix}{identifier}"
 
+    # In backend/shared/session_service.py - replace the _check_rate_limit method:
+
     def _check_rate_limit(self, identifier: str) -> bool:
         try:
             current_time = int(time.time())
             window_start = current_time // self.rate_limit_window
             rate_key = f"{self._rate_limit_key(identifier)}:{window_start}"
 
-            # Use the rate_limit_check method which has fallback
-            return redis_client.rate_limit_check(rate_key, self.rate_limit_attempts, self.rate_limit_window)
+            # Use incr directly instead of rate_limit_check method
+            current_attempts = redis_client.incr(rate_key)
+            if current_attempts == 1:
+                redis_client.expire(rate_key, self.rate_limit_window)
+
+            if current_attempts > self.rate_limit_attempts:
+                logger.warning(f"Rate limit exceeded for session operations: {identifier}")
+                return False
+            return True
 
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
-            return True  # Allow if rate limiting fails
+            return True
 
     def _cleanup_old_user_sessions(self, user_id: int):
         try:
