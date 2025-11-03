@@ -1,5 +1,4 @@
 # backend/shared/redis_client.py
-
 import redis
 import logging
 import json
