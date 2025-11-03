@@ -37,16 +37,13 @@ class SessionService:
             current_time = int(time.time())
             window_start = current_time // self.rate_limit_window
             rate_key = f"{self._rate_limit_key(identifier)}:{window_start}"
-            current_attempts = redis_client.incr(rate_key)
-            if current_attempts == 1:
-                redis_client.expire(rate_key, self.rate_limit_window)
-            if current_attempts > self.rate_limit_attempts:
-                logger.warning(f"Rate limit exceeded for session operations: {identifier}")
-                return False
-            return True
+
+            # Use the rate_limit_check method which has fallback
+            return redis_client.rate_limit_check(rate_key, self.rate_limit_attempts, self.rate_limit_window)
+
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
-            return True
+            return True  # Allow if rate limiting fails
 
     def _cleanup_old_user_sessions(self, user_id: int):
         try:
@@ -124,22 +121,17 @@ class SessionService:
 
             if not success:
                 logger.error(f"Failed to save session to Redis: {session_id}")
-                return None
+                # Even if Redis fails, we can still return the session object
+                # The session just won't be persisted
+                return session
 
+            # Store session mappings
             if session.user_id:
                 mapping_key = f"{self._redis_user_session_prefix}{session.user_id}:{session_id}"
-                redis_client.setex(
-                    mapping_key,
-                    self.user_session_duration,
-                    session_id
-                )
+                redis_client.setex(mapping_key, self.user_session_duration, session_id)
             elif session.guest_id:
                 mapping_key = f"{self._redis_guest_session_prefix}{session.guest_id}:{session_id}"
-                redis_client.setex(
-                    mapping_key,
-                    self.guest_session_duration,
-                    session_id
-                )
+                redis_client.setex(mapping_key, self.guest_session_duration, session_id)
 
             logger.info(f"Created {session.session_type.value} session: {session_id}")
             return session

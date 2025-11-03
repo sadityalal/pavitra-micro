@@ -1,3 +1,5 @@
+# backend/shared/redis_client.py
+
 import redis
 import logging
 import json
@@ -19,13 +21,14 @@ class RedisClient:
         if not hasattr(self, '_initialized'):
             self.redis_client = None
             self._initialized = True
+            self._connect()
 
     def _connect(self):
         try:
             self.redis_client = redis.Redis(
                 host=config.redis_host,
                 port=config.redis_port,
-                password=config.redis_password,
+                password=config.redis_password if config.redis_password else None,
                 db=config.redis_db,
                 decode_responses=True,
                 socket_connect_timeout=5,
@@ -34,15 +37,16 @@ class RedisClient:
                 health_check_interval=30
             )
             self.redis_client.ping()
-            logger.info("Redis connection established successfully")
+            logger.info("✅ Redis connection established successfully")
         except Exception as e:
-            logger.error(f"Failed to connect to Redis: {e}")
+            logger.error(f"❌ Failed to connect to Redis: {e}")
             self.redis_client = None
 
     def _ensure_connection(self):
         if not self.redis_client:
             self._connect()
             return self.redis_client is not None
+
         try:
             self.redis_client.ping()
             return True
@@ -54,54 +58,65 @@ class RedisClient:
             logger.error(f"Redis connection error: {e}")
             return False
 
-    def incr(self, key: str):
+    def incr(self, key: str, amount: int = 1) -> int:
+        """Increment key by amount, return new value"""
         if not self._ensure_connection():
-            return 0
+            logger.warning(f"Redis not available for incr on key: {key}")
+            return amount  # Fallback
+
         try:
-            return self.redis_client.incr(key)
+            return self.redis_client.incr(key, amount)
         except Exception as e:
             logger.error(f"Redis incr failed for {key}: {e}")
-            return 0
+            return amount  # Fallback
 
-    def setex(self, key: str, expire: int, value: str):
+    def setex(self, key: str, expire: int, value: str) -> bool:
+        """Set key with expiration"""
         if not self._ensure_connection():
+            logger.warning(f"Redis not available for setex on key: {key}")
             return False
+
         try:
-            return self.redis_client.setex(key, expire, value)
+            result = self.redis_client.setex(key, expire, value)
+            return result is True
         except Exception as e:
             logger.error(f"Redis setex failed for {key}: {e}")
             return False
 
-    def get(self, key: str):
+    def get(self, key: str) -> Optional[str]:
         if not self._ensure_connection():
             return None
+
         try:
             return self.redis_client.get(key)
         except Exception as e:
             logger.error(f"Redis get failed for {key}: {e}")
             return None
 
-    def delete(self, *keys):
+    def delete(self, *keys) -> bool:
         if not self._ensure_connection():
             return False
+
         try:
             return bool(self.redis_client.delete(*keys))
         except Exception as e:
             logger.error(f"Redis delete failed for {keys}: {e}")
             return False
 
-    def exists(self, key: str):
+    def exists(self, key: str) -> bool:
         if not self._ensure_connection():
             return False
+
         try:
             return self.redis_client.exists(key) > 0
         except Exception as e:
             logger.error(f"Redis exists failed for {key}: {e}")
             return False
 
-    def expire(self, key: str, expire: int):
+    def expire(self, key: str, expire: int) -> bool:
         if not self._ensure_connection():
             return False
+
         try:
             return self.redis_client.expire(key, expire)
         except Exception as e:
@@ -111,13 +126,14 @@ class RedisClient:
     def keys(self, pattern: str):
         if not self._ensure_connection():
             return []
+
         try:
             return self.redis_client.keys(pattern)
         except Exception as e:
             logger.error(f"Redis keys failed for pattern {pattern}: {e}")
             return []
 
-    def ping(self):
+    def ping(self) -> bool:
         if not self._ensure_connection():
             return False
         try:
@@ -125,6 +141,35 @@ class RedisClient:
         except Exception:
             return False
 
+    # Additional methods for session service
+    def pipeline(self):
+        """Return pipeline for batch operations"""
+        if not self._ensure_connection():
+            # Return a dummy pipeline that does nothing
+            class DummyPipeline:
+                def execute(self):
+                    return []
+
+                def __getattr__(self, name):
+                    return lambda *args, **kwargs: self
+
+            return DummyPipeline()
+
+        try:
+            return self.redis_client.pipeline()
+        except Exception as e:
+            logger.error(f"Redis pipeline failed: {e}")
+
+            class DummyPipeline:
+                def execute(self):
+                    return []
+
+                def __getattr__(self, name):
+                    return lambda *args, **kwargs: self
+
+            return DummyPipeline()
+
+    # Cache methods
     def cache_product(self, product_id: int, product_data: dict, expire: int = 3600):
         if not self._ensure_connection():
             return False
@@ -198,8 +243,10 @@ class RedisClient:
             return None
 
     def rate_limit_check(self, key: str, limit: int, window: int) -> bool:
+        """Check rate limit with fallback"""
         if not self._ensure_connection():
-            return True
+            return True  # Allow if Redis is down
+
         try:
             current = self.incr(key)
             if current == 1:
@@ -207,7 +254,7 @@ class RedisClient:
             return current <= limit
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
-            return True
+            return True  # Allow if check fails
 
     def delete_pattern(self, pattern: str) -> bool:
         if not self._ensure_connection():
@@ -222,4 +269,5 @@ class RedisClient:
             return False
 
 
+# Global instance
 redis_client = RedisClient()
