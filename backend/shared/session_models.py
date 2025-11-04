@@ -1,6 +1,7 @@
 import re
+from dataclasses import field
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
@@ -36,9 +37,9 @@ class SessionData(BaseModel):
                 raise ValueError('Invalid IP address format')
         return v
 
-    @validator('session_id')
+    @field_validator('session_id')
     def validate_session_id(cls, v):
-        if not re.match(r'^[a-f0-9]{32,64}$', v):
+        if not re.match(r'^[A-Za-z0-9_-]{32,64}$', v):  # Allow URLsafe base64
             raise ValueError('Invalid session ID format')
         return v
 
