@@ -1,5 +1,4 @@
 import html
-
 from fastapi import APIRouter, HTTPException, Depends, Query, status, UploadFile, File, Request, BackgroundTasks
 from typing import Optional, List
 from shared import config, db, sanitize_input, get_logger, require_roles, redis_client, rabbitmq_client
@@ -17,10 +16,8 @@ import os
 import json
 from urllib.parse import urlparse
 import re
-
 router = APIRouter()
 logger = get_logger(__name__)
-
 def validate_product_for_cart(product_id: int, quantity: int, variation_id: Optional[int] = None) -> dict:
     try:
         with db.get_cursor() as cursor:
@@ -62,7 +59,6 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Product data integrity error - contact administrator"
                 )
-
             if product['track_inventory'] and product['stock_status'] != 'on_backorder':
                 stock_quantity = product['stock_quantity'] or 0
                 if quantity > stock_quantity and product['stock_status'] != 'on_backorder':
@@ -114,7 +110,6 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to validate product for cart"
         )
-
 def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None) -> dict:
     try:
         with db.get_cursor() as cursor:
@@ -166,7 +161,6 @@ def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None)
             'stock_quantity': 0,
             'stock_status': 'out_of_stock'
         }
-
 @router.get("/{product_id}/cart-validation")
 async def validate_product_cart_addition(
         product_id: int,
@@ -199,7 +193,6 @@ async def validate_product_cart_addition(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to validate product for cart"
         )
-
 @router.post("/bulk-cart-info")
 async def get_bulk_cart_product_info(
         product_ids: List[int],
@@ -257,7 +250,6 @@ async def get_bulk_cart_product_info(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get product information"
         )
-
 def invalidate_product_cache_comprehensive(product_id: int):
     try:
         keys_to_delete = [
@@ -277,8 +269,6 @@ def invalidate_product_cache_comprehensive(product_id: int):
         logger.info(f"Comprehensively invalidated cache for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to comprehensively invalidate product cache: {e}")
-
-
 def get_cached_products_with_fallback(cache_key: str, fallback_func: callable, expire: int = 1800):
     try:
         cached_data = redis_client.get(cache_key)
@@ -286,7 +276,6 @@ def get_cached_products_with_fallback(cache_key: str, fallback_func: callable, e
             return json.loads(cached_data)
     except Exception as e:
         logger.warning(f"Cache read failed for {cache_key}: {e}")
-
     lock_key = f"lock:{cache_key}"
     try:
         if redis_client.setnx(lock_key, "1") and redis_client.expire(lock_key, 10):
@@ -308,7 +297,6 @@ def get_cached_products_with_fallback(cache_key: str, fallback_func: callable, e
         logger.error(f"Fallback function failed for {cache_key}: {e}")
         redis_client.delete(lock_key)
         return None
-
 def publish_product_event(product_data: dict, event_type: str):
     try:
         message = {
@@ -326,7 +314,6 @@ def publish_product_event(product_data: dict, event_type: str):
         logger.info(f"Product {event_type} event published for product {product_data['id']}")
     except Exception as e:
         logger.error(f"Failed to publish product event: {e}")
-
 def cache_product(product_id: int, product_data: dict, expire: int = 1800):
     try:
         key = f"product:{product_id}"
@@ -334,16 +321,13 @@ def cache_product(product_id: int, product_data: dict, expire: int = 1800):
         logger.info(f"Cached product {product_id}")
     except Exception as e:
         logger.error(f"Failed to cache product: {e}")
-
 def get_cached_product(product_id: int) -> Optional[dict]:
     try:
         key = f"product:{product_id}"
         lock_key = f"product_lock:{product_id}"
-
         data = redis_client.get(key)
         if data:
             return json.loads(data)
-
         if redis_client.setnx(lock_key, "1") and redis_client.expire(lock_key, 10):
             return None
         else:
@@ -353,7 +337,6 @@ def get_cached_product(product_id: int) -> Optional[dict]:
     except Exception as e:
         logger.error(f"Failed to get cached product: {e}")
         return None
-
 def cache_categories(categories_data: List[dict], expire: int = 3600):
     try:
         key = "categories:all"
@@ -361,7 +344,6 @@ def cache_categories(categories_data: List[dict], expire: int = 3600):
         logger.info("Cached categories")
     except Exception as e:
         logger.error(f"Failed to cache categories: {e}")
-
 def get_cached_categories() -> Optional[List[dict]]:
     try:
         key = "categories:all"
@@ -372,8 +354,6 @@ def get_cached_categories() -> Optional[List[dict]]:
     except Exception as e:
         logger.error(f"Failed to get cached categories: {e}")
         return None
-
-
 def invalidate_product_cache(product_id: int):
     try:
         keys_to_delete = [
@@ -393,7 +373,6 @@ def invalidate_product_cache(product_id: int):
         logger.info(f"Targeted cache invalidation for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to invalidate product cache: {e}")
-
 def normalize_image_urls(image_data):
     if not image_data:
         return image_data
@@ -412,7 +391,6 @@ def normalize_image_urls(image_data):
                 normalized.append(img_url)
         return normalized
     return image_data
-
 def update_session_product_views(session, product_id: int, session_id: str):
     try:
         if not session or not session_id:
@@ -426,7 +404,6 @@ def update_session_product_views(session, product_id: int, session_id: str):
         })
     except Exception as e:
         logger.error(f"Failed to update session product views: {e}")
-
 def get_session_wishlist(session):
     try:
         if not session:
@@ -435,7 +412,6 @@ def get_session_wishlist(session):
     except Exception as e:
         logger.error(f"Failed to get session wishlist: {e}")
         return []
-
 def update_session_wishlist(session, session_id: str, product_id: int, action: str):
     try:
         if not session or not session_id:
@@ -453,88 +429,60 @@ def update_session_wishlist(session, session_id: str, product_id: int, action: s
     except Exception as e:
         logger.error(f"Failed to update session wishlist: {e}")
         return False
-
 def validate_uploaded_file(file: UploadFile) -> bool:
-    """
-    Comprehensive file validation for uploaded images
-    Returns True if file is valid, False otherwise
-    """
     try:
-        # Check file size
-        max_size = 5 * 1024 * 1024  # 5MB
-        file.file.seek(0, 2)  # Seek to end
+        max_size = 5 * 1024 * 1024
+        file.file.seek(0, 2)
         file_size = file.file.tell()
-        file.file.seek(0)  # Reset to beginning
-
+        file.file.seek(0)
         if file_size > max_size:
             logger.warning(f"File too large: {file.filename} ({file_size} bytes)")
             return False
-
         if file_size == 0:
             logger.warning(f"Empty file: {file.filename}")
             return False
-
-        # Read first few bytes for magic number validation
         file_content = file.file.read(1024)
-        file.file.seek(0)  # Reset to beginning after reading
-
-        # Basic file extension check
+        file.file.seek(0)
         file_extension = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
         if file_extension not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
             logger.warning(f"Invalid file extension: {file.filename}")
             return False
-
-        # Magic number validation (file signature)
         valid_signatures = {
             b'\xff\xd8\xff': 'jpeg',
             b'\x89PNG\r\n\x1a\n': 'png',
             b'GIF8': 'gif',
             b'RIFF....WEBPVP8': 'webp'
         }
-
         signature_valid = False
         for signature, file_type in valid_signatures.items():
             if file_content.startswith(signature):
                 signature_valid = True
                 break
-
         if not signature_valid:
             logger.warning(f"Invalid file signature: {file.filename}")
             return False
-
-        # Content-type validation (basic)
         allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
         if file.content_type not in allowed_types:
             logger.warning(f"Invalid content type: {file.filename} - {file.content_type}")
             return False
-
-        # Image integrity check using Pillow
         try:
             from PIL import Image
             import io
-
             image = Image.open(io.BytesIO(file_content))
-            image.verify()  # Verify it's a valid image
-
-            # Additional checks
+            image.verify()
             if image.width > 10000 or image.height > 10000:
                 logger.warning(f"Image dimensions too large: {file.filename}")
                 return False
-
-            if image.width * image.height > 25000000:  # 25MP limit
+            if image.width * image.height > 25000000:
                 logger.warning(f"Image resolution too high: {file.filename}")
                 return False
-
         except Exception as e:
             logger.warning(f"Image integrity check failed for {file.filename}: {e}")
             return False
-
         return True
-
     except Exception as e:
         logger.error(f"File validation error for {file.filename}: {e}")
         return False
-
 @router.get("/health", response_model=HealthResponse)
 async def health():
     try:
@@ -568,7 +516,6 @@ async def health():
             categories_count=0,
             timestamp=datetime.utcnow()
         )
-
 @router.get("/site-settings")
 async def get_site_settings(current_user: dict = Depends(get_current_user)):
     user_roles = current_user.get('roles', [])
@@ -626,7 +573,6 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch site settings"
         )
-
 @router.get("/frontend-settings")
 async def get_frontend_settings():
     try:
@@ -657,7 +603,6 @@ async def get_frontend_settings():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch frontend settings"
         )
-
 @router.get("/", response_model=ProductListResponse)
 async def get_products(
         request: Request,
@@ -846,7 +791,6 @@ async def get_products(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch products"
         )
-
 @router.get("/featured", response_model=ProductListResponse)
 async def get_featured_products(
         request: Request,
@@ -954,7 +898,6 @@ async def get_featured_products(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch featured products"
         )
-
 @router.get("/bestsellers", response_model=ProductListResponse)
 async def get_bestseller_products(
         request: Request,
@@ -1062,7 +1005,6 @@ async def get_bestseller_products(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch bestseller products"
         )
-
 @router.get("/new-arrivals", response_model=ProductListResponse)
 async def get_new_arrivals(
         request: Request,
@@ -1170,7 +1112,6 @@ async def get_new_arrivals(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch new arrivals"
         )
-
 @router.get("/{product_id}", response_model=ProductResponse)
 async def get_product(product_id: int, request: Request):
     if product_id <= 0:
@@ -1284,7 +1225,6 @@ async def get_product(product_id: int, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch product"
         )
-
 @router.get("/stock-status/bulk")
 async def get_bulk_stock_status(
         product_ids: List[int] = Query(...),
@@ -1336,7 +1276,6 @@ async def get_bulk_stock_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get stock status"
         )
-
 @router.get("/slug/{product_slug}", response_model=ProductResponse)
 async def get_product_by_slug(product_slug: str, request: Request):
     try:
@@ -1436,7 +1375,6 @@ async def get_product_by_slug(product_slug: str, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch product"
         )
-
 @router.get("/categories/all", response_model=List[CategoryResponse])
 async def get_categories(
         request: Request,
@@ -1499,7 +1437,6 @@ async def get_categories(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch categories"
         )
-
 @router.get("/categories/{category_id}", response_model=CategoryResponse)
 async def get_category(category_id: int, request: Request):
     try:
@@ -1543,7 +1480,6 @@ async def get_category(category_id: int, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch category"
         )
-
 @router.get("/categories/slug/{category_slug}", response_model=CategoryResponse)
 async def get_category_by_slug(category_slug: str, request: Request):
     try:
@@ -1587,7 +1523,6 @@ async def get_category_by_slug(category_slug: str, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch category"
         )
-
 @router.get("/brands/all", response_model=List[BrandResponse])
 async def get_brands(request: Request, featured: Optional[bool] = Query(None)):
     try:
@@ -1628,7 +1563,6 @@ async def get_brands(request: Request, featured: Optional[bool] = Query(None)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch brands"
         )
-
 @router.get("/brands/{brand_id}", response_model=BrandResponse)
 async def get_brand(brand_id: int, request: Request):
     try:
@@ -1670,7 +1604,6 @@ async def get_brand(brand_id: int, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch brand"
         )
-
 @router.get("/wishlist")
 async def get_wishlist(request: Request, current_user: dict = Depends(get_current_user)):
     try:
@@ -1739,7 +1672,6 @@ async def get_wishlist(request: Request, current_user: dict = Depends(get_curren
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch wishlist"
         )
-
 @router.post("/wishlist/{product_id}")
 async def add_to_wishlist(
         product_id: int,
@@ -1776,7 +1708,6 @@ async def add_to_wishlist(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to add to wishlist"
         )
-
 @router.delete("/wishlist/{product_id}")
 async def remove_from_wishlist(
         product_id: int,
@@ -1806,7 +1737,6 @@ async def remove_from_wishlist(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to remove from wishlist"
         )
-
 @router.get("/session/recommendations")
 async def get_personalized_recommendations(
         request: Request,
@@ -1867,7 +1797,6 @@ async def get_personalized_recommendations(
             """, (limit,))
             products = cursor.fetchall()
             return {"recommendations": products, "source": "featured_fallback"}
-
 @router.post("/admin/products", response_model=ProductResponse)
 async def create_product(
         product_data: ProductCreate,
@@ -2004,7 +1933,6 @@ async def create_product(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create product"
         )
-
 @router.put("/admin/products/{product_id}", response_model=ProductResponse)
 async def update_product(
         product_id: int,
@@ -2129,8 +2057,6 @@ async def update_product(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update product"
         )
-
-
 @router.post("/admin/products/{product_id}/images")
 async def upload_product_images(
         request: Request,
@@ -2146,11 +2072,9 @@ async def upload_product_images(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
-
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
-
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, image_gallery FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
@@ -2159,7 +2083,6 @@ async def upload_product_images(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
-
             invalid_files = []
             valid_files = []
             for file in files:
@@ -2173,17 +2096,14 @@ async def upload_product_images(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid or malicious files detected: {', '.join(invalid_files)}. Only valid JPEG, PNG, GIF, and WebP images are allowed."
                 )
-
             if not valid_files:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="No valid files to upload"
                 )
-
             max_total_files = 20
             uploaded_urls = []
             existing_gallery = []
-
             if product['image_gallery']:
                 try:
                     if isinstance(product['image_gallery'], str):
@@ -2192,14 +2112,12 @@ async def upload_product_images(
                         existing_gallery = product['image_gallery']
                 except:
                     existing_gallery = []
-
             current_file_count = len(existing_gallery)
             if current_file_count + len(valid_files) > max_total_files:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Maximum {max_total_files} images allowed per product. Currently have {current_file_count}, trying to add {len(valid_files)}."
                 )
-
             for file in valid_files:
                 try:
                     original_filename = file.filename
@@ -2207,7 +2125,6 @@ async def upload_product_images(
                         c for c in original_filename if c.isalnum() or c in ('-', '_', '.')).rstrip()
                     if not safe_filename:
                         safe_filename = "image"
-
                     file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
                     if file_extension not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
                         content_type_to_extension = {
@@ -2217,7 +2134,6 @@ async def upload_product_images(
                             'image/webp': 'webp'
                         }
                         file_extension = content_type_to_extension.get(file.content_type, 'jpg')
-
                     unique_filename = f"product_{product_id}_{int(datetime.now().timestamp())}_{len(uploaded_urls)}.{file_extension}"
                     upload_dir = "/app/uploads/products"
                     try:
@@ -2237,66 +2153,52 @@ async def upload_product_images(
                         )
                     file_content = await file.read()
                     file_size = len(file_content)
-                    if file_size > 5 * 1024 * 1024:  # 5MB
+                    if file_size > 5 * 1024 * 1024:
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"File {original_filename} too large. Maximum size is 5MB."
                         )
-
                     try:
                         from PIL import Image
                         import io
                         image = Image.open(io.BytesIO(file_content))
-
                         if hasattr(image, 'tell'):
-                            image.tell()  # Check if image can be processed safely
-
+                            image.tell()
                         if image.mode in ('RGBA', 'LA', 'P'):
                             image = image.convert('RGB')
-
                     except Exception as img_error:
                         logger.error(f"Final image validation failed for {original_filename}: {img_error}")
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"Invalid image file: {original_filename}"
                         )
-
                     with open(file_path, "wb") as buffer:
                         buffer.write(file_content)
-
                     os.chmod(file_path, 0o644)
-
                     image_url = f"/uploads/products/{unique_filename}"
                     uploaded_urls.append(image_url)
-
                     logger.info(f"Successfully uploaded image for product {product_id}: {unique_filename}")
-
                 except HTTPException:
                     raise
                 except Exception as file_error:
                     logger.error(f"Failed to process file {file.filename}: {file_error}")
                     continue
-
             if not uploaded_urls:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to process any files"
                 )
-
             updated_gallery = existing_gallery + uploaded_urls
-
             if not product['main_image_url'] and uploaded_urls:
                 cursor.execute(
                     "UPDATE products SET main_image_url = %s WHERE id = %s",
                     (uploaded_urls[0], product_id)
                 )
                 logger.info(f"Set main image for product {product_id}: {uploaded_urls[0]}")
-
             cursor.execute(
                 "UPDATE products SET image_gallery = %s WHERE id = %s",
                 (str(updated_gallery), product_id)
             )
-
             if background_tasks:
                 cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
                 updated_product = cursor.fetchone()
@@ -2305,9 +2207,7 @@ async def upload_product_images(
                     updated_product,
                     'images_updated'
                 )
-
             invalidate_product_cache(product_id)
-
             return {
                 "success": True,
                 "message": f"Successfully uploaded {len(uploaded_urls)} images",
@@ -2315,7 +2215,6 @@ async def upload_product_images(
                 "total_images": len(updated_gallery),
                 "rejected_files": invalid_files
             }
-
     except HTTPException:
         raise
     except Exception as e:
@@ -2324,7 +2223,6 @@ async def upload_product_images(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload product images"
         )
-
 @router.delete("/admin/products/{product_id}")
 async def delete_product(
         product_id: int,
@@ -2368,7 +2266,6 @@ async def delete_product(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete product"
         )
-
 @router.get("/debug/maintenance")
 async def debug_maintenance():
     config.refresh_cache()
@@ -2377,7 +2274,6 @@ async def debug_maintenance():
         "maintenance_mode_type": str(type(config.maintenance_mode)),
         "maintenance_mode_raw": str(config.maintenance_mode)
     }
-
 @router.get("/debug/settings")
 async def debug_settings():
     config.refresh_cache()
