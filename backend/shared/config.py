@@ -110,10 +110,13 @@ class DatabaseConfig:
         if self._db is None:
             try:
                 from .database import db
+                # Ensure database is initialized
+                if not getattr(db, '_initialized', False):
+                    db.initialize()
                 self._db = db
-                logger.info("Database instance loaded in config")
-            except ImportError:
-                logger.warning("Database not available yet")
+                logger.info("Database instance loaded and initialized in config")
+            except Exception as e:
+                logger.error(f"Failed to initialize database in config: {e}")
                 return None
         return self._db
 

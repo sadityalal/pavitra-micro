@@ -56,8 +56,16 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Product is out of stock"
                 )
+            if product['stock_quantity'] is None:
+                logger.error(f"Product {product_id} has null stock_quantity")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Product data integrity error - contact administrator"
+                )
+
             if product['track_inventory'] and product['stock_status'] != 'on_backorder':
-                if quantity > product['stock_quantity'] and product['stock_status'] != 'on_backorder':
+                stock_quantity = product['stock_quantity'] or 0
+                if quantity > stock_quantity and product['stock_status'] != 'on_backorder':
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Insufficient stock available"

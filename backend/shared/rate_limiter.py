@@ -11,8 +11,8 @@ logger = logging.getLogger(__name__)
 
 class RateLimiter:
     def __init__(self):
-        self.requests_limit = config.rate_limit_requests
-        self.window_seconds = config.rate_limit_window
+        self.requests_limit = config.rate_limit_requests or 100
+        self.window_seconds = config.rate_limit_window or 900
 
     async def check_rate_limit(self, request: Request, identifier: Optional[str] = None):
         if config.debug_mode:
@@ -32,7 +32,7 @@ class RateLimiter:
             if current == 1:
                 redis_client.expire(key, self.window_seconds)
 
-            if current > self.requests_limit:
+            if current is not None and self.requests_limit is not None and current > self.requests_limit:
                 logger.warning(f"Rate limit exceeded for {identifier} - {current}/{self.requests_limit}")
                 raise HTTPException(
                     status_code=429,

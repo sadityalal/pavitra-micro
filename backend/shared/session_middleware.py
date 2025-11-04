@@ -1,7 +1,7 @@
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from typing import Optional, Callable, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 from shared import get_logger, config
 from .session_service import session_service, SessionType, SessionData
@@ -85,6 +85,7 @@ class SessionMiddleware:
             user_id = None
             guest_id = str(uuid.uuid4())
             auth_header = request.headers.get("Authorization")
+
             if auth_header and auth_header.startswith("Bearer "):
                 try:
                     from .security import verify_token
@@ -110,7 +111,20 @@ class SessionMiddleware:
             if session:
                 logger.info(f"Created new {session_type.value} session: {session.session_id}")
             else:
-                logger.error("Failed to create session")
+                logger.error("Failed to create session - session service returned None")
+                # Create a basic session as fallback
+                session = SessionData(
+                    session_id=session_service.generate_session_id(),
+                    session_type=session_type,
+                    user_id=user_id,
+                    guest_id=guest_id,
+                    cart_items={},
+                    created_at=datetime.utcnow(),
+                    last_activity=datetime.utcnow(),
+                    ip_address=request.client.host if request.client else 'unknown',
+                    user_agent=request.headers.get("user-agent", ""),
+                    expires_at=datetime.utcnow() + timedelta(days=1)
+                )
             return session
         except Exception as e:
             logger.error(f"Failed to create new session: {e}")

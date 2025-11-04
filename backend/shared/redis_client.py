@@ -28,7 +28,7 @@ class RedisClient:
             self.redis_client = redis.Redis(
                 host=config.redis_host,
                 port=config.redis_port,
-                password=config.redis_password if config.redis_password else None,
+                password=config.redis_password,
                 db=config.redis_db,
                 decode_responses=True,
                 socket_connect_timeout=5,
