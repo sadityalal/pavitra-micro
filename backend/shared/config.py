@@ -33,75 +33,163 @@ class DatabaseConfig:
         missing_configs = {
             'environment_variables': [],
             'site_settings': [],
-            'frontend_settings': []
+            'frontend_settings': [],
+            'session_settings': []
         }
+
         env_required = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'JWT_SECRET']
         for env_var in env_required:
             if not os.getenv(env_var):
                 missing_configs['environment_variables'].append(env_var)
-        site_settings_to_check = [
-            'enable_reviews', 'enable_wishlist', 'enable_guest_checkout',
-            'max_cart_quantity_per_product', 'max_cart_items_total', 'cart_session_timeout_minutes',
-            'debug_mode', 'app_debug', 'log_level', 'cors_origins',
-            'rate_limit_requests', 'rate_limit_window',
-            'razorpay_test_mode', 'stripe_test_mode', 'razorpay_key_id', 'razorpay_secret',
-            'stripe_publishable_key', 'stripe_secret_key',
-            'email_notifications', 'sms_notifications', 'push_notifications',
-            'telegram_notifications', 'whatsapp_notifications',
-            'max_upload_size', 'allowed_file_types',
-            'refund_policy_days', 'auto_refund_enabled', 'refund_processing_fee',
-            'redis_host', 'redis_port', 'redis_password', 'redis_db',
-            'rabbitmq_host', 'rabbitmq_port', 'rabbitmq_user', 'rabbitmq_password',
-            'smtp_host', 'smtp_port', 'smtp_username', 'smtp_password',
-            'telegram_bot_token', 'telegram_chat_id', 'whatsapp_api_url', 'whatsapp_api_token'
-        ]
-        for setting in site_settings_to_check:
-            try:
-                value = self._get_setting(setting, None)
-                if value is None or value == '':
+
+        # Get ALL site settings dynamically
+        all_site_settings = self._get_all_site_settings()
+        if not all_site_settings:
+            missing_configs['site_settings'].append('ALL_SITE_SETTINGS')
+        else:
+            # Check for critical site settings
+            critical_site_settings = ['log_level', 'debug_mode', 'maintenance_mode']
+            for setting in critical_site_settings:
+                if setting not in all_site_settings:
                     missing_configs['site_settings'].append(setting)
-            except Exception:
-                missing_configs['site_settings'].append(setting)
-        frontend_settings_to_check = [
-            'app_name', 'app_description',
-            'email_from', 'email_from_name',
-            'default_currency', 'supported_currencies', 'default_country', 'default_gst_rate',
-            'site_name', 'site_description', 'currency', 'currency_symbol',
-            'site_phone', 'site_email', 'business_hours',
-            'min_order_amount', 'free_shipping_min_amount', 'free_shipping_threshold',
-            'return_period_days'
-        ]
-        for setting in frontend_settings_to_check:
-            try:
-                value = self.get_frontend_setting(setting, None)
-                if value is None or value == '':
+
+        # Get ALL frontend settings dynamically
+        all_frontend_settings = self._get_all_frontend_settings()
+        if not all_frontend_settings:
+            missing_configs['frontend_settings'].append('ALL_FRONTEND_SETTINGS')
+        else:
+            # Check for critical frontend settings
+            critical_frontend_settings = ['site_name', 'default_currency', 'currency_symbol']
+            for setting in critical_frontend_settings:
+                if setting not in all_frontend_settings:
                     missing_configs['frontend_settings'].append(setting)
-            except Exception:
-                missing_configs['frontend_settings'].append(setting)
+
+        # Get ALL session settings dynamically
+        all_session_settings = self._get_all_session_settings()
+        if not all_session_settings:
+            missing_configs['session_settings'].append('ALL_SESSION_SETTINGS')
+        else:
+            # Check for critical session settings
+            critical_session_settings = ['session_inactivity_timeout', 'user_session_duration',
+                                         'guest_session_duration']
+            for setting in critical_session_settings:
+                if setting not in all_session_settings:
+                    missing_configs['session_settings'].append(setting)
+
         return missing_configs
+
+    def _get_all_site_settings(self) -> Dict[str, Any]:
+        """Get ALL site settings dynamically"""
+        db = self._get_db()
+        if not db:
+            return {}
+
+        connection = None
+        try:
+            connection = db.get_connection()
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("SELECT setting_key, setting_value, setting_type FROM site_settings")
+            results = cursor.fetchall()
+
+            settings = {}
+            for row in results:
+                settings[row['setting_key']] = self._convert_value_by_type(row['setting_value'], row['setting_type'])
+
+            return settings
+        except Exception as e:
+            logger.error(f"Failed to get all site settings: {e}")
+            return {}
+        finally:
+            if connection and connection.is_connected():
+                connection.close()
+
+    def _get_all_frontend_settings(self) -> Dict[str, Any]:
+        """Get ALL frontend settings dynamically"""
+        db = self._get_db()
+        if not db:
+            return {}
+
+        connection = None
+        try:
+            connection = db.get_connection()
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("SELECT setting_key, setting_value, setting_type FROM frontend_settings")
+            results = cursor.fetchall()
+
+            settings = {}
+            for row in results:
+                settings[row['setting_key']] = self._convert_value_by_type(row['setting_value'], row['setting_type'])
+
+            return settings
+        except Exception as e:
+            logger.error(f"Failed to get all frontend settings: {e}")
+            return {}
+        finally:
+            if connection and connection.is_connected():
+                connection.close()
+
+    def _get_all_session_settings(self) -> Dict[str, Any]:
+        """Get ALL session settings dynamically"""
+        db = self._get_db()
+        if not db:
+            return {}
+
+        connection = None
+        try:
+            connection = db.get_connection()
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("SELECT setting_key, setting_value, setting_type FROM session_settings")
+            results = cursor.fetchall()
+
+            settings = {}
+            for row in results:
+                settings[row['setting_key']] = self._convert_value_by_type(row['setting_value'], row['setting_type'])
+
+            return settings
+        except Exception as e:
+            logger.error(f"Failed to get all session settings: {e}")
+            return {}
+        finally:
+            if connection and connection.is_connected():
+                connection.close()
 
     def is_configuration_complete(self) -> bool:
         missing_configs = self.validate_all_configurations()
         return (
                 len(missing_configs['environment_variables']) == 0 and
                 len(missing_configs['site_settings']) == 0 and
-                len(missing_configs['frontend_settings']) == 0
+                len(missing_configs['frontend_settings']) == 0 and
+                len(missing_configs['session_settings']) == 0
         )
 
     def get_configuration_status(self) -> Dict[str, Any]:
         missing_configs = self.validate_all_configurations()
+
+        # Get counts of available settings
+        site_count = len(self._get_all_site_settings())
+        frontend_count = len(self._get_all_frontend_settings())
+        session_count = len(self._get_all_session_settings())
+
         status = {
             'is_complete': self.is_configuration_complete(),
             'missing_configurations': missing_configs,
+            'available_settings': {
+                'site_settings_count': site_count,
+                'frontend_settings_count': frontend_count,
+                'session_settings_count': session_count,
+                'total_settings': site_count + frontend_count + session_count
+            },
             'summary': {
                 'total_missing': (
                         len(missing_configs['environment_variables']) +
                         len(missing_configs['site_settings']) +
-                        len(missing_configs['frontend_settings'])
+                        len(missing_configs['frontend_settings']) +
+                        len(missing_configs['session_settings'])
                 ),
                 'environment_variables_missing': len(missing_configs['environment_variables']),
                 'site_settings_missing': len(missing_configs['site_settings']),
-                'frontend_settings_missing': len(missing_configs['frontend_settings'])
+                'frontend_settings_missing': len(missing_configs['frontend_settings']),
+                'session_settings_missing': len(missing_configs['session_settings'])
             }
         }
         return status
@@ -110,7 +198,6 @@ class DatabaseConfig:
         if self._db is None:
             try:
                 from .database import db
-                # Ensure database is initialized
                 if not getattr(db, '_initialized', False):
                     db.initialize()
                 self._db = db
@@ -125,11 +212,9 @@ class DatabaseConfig:
         if current_time - self._last_settings_check < 5:
             return
         self._last_settings_check = current_time
-
         db = self._get_db()
         if not db:
             return
-
         connection = None
         try:
             connection = db.get_connection()
@@ -137,26 +222,22 @@ class DatabaseConfig:
             cursor.execute("""
                 SELECT MAX(GREATEST(
                     COALESCE((SELECT MAX(updated_at) FROM site_settings), '1970-01-01'),
-                    COALESCE((SELECT MAX(updated_at) FROM frontend_settings), '1970-01-01')
+                    COALESCE((SELECT MAX(updated_at) FROM frontend_settings), '1970-01-01'),
+                    COALESCE((SELECT MAX(updated_at) FROM session_settings), '1970-01-01')
                 )) as last_update
             """)
             result = cursor.fetchone()
             if result and result['last_update']:
-                # Handle both string and datetime objects
                 last_update = result['last_update']
                 if hasattr(last_update, 'timestamp'):
-                    # It's a datetime object
                     new_version = int(last_update.timestamp())
                 else:
-                    # It's a string, parse it
                     try:
                         from datetime import datetime
                         dt = datetime.fromisoformat(str(last_update).replace('Z', '+00:00'))
                         new_version = int(dt.timestamp())
                     except (ValueError, AttributeError):
-                        # Fallback to current time if parsing fails
                         new_version = int(current_time)
-
                 if new_version > self._settings_version:
                     logger.info("Settings updated in database, clearing cache")
                     self._cache.clear()
@@ -169,6 +250,7 @@ class DatabaseConfig:
                 connection.close()
 
     def _get_setting(self, key: str, default: Any = None) -> Any:
+        """Get setting from site_settings table"""
         self._check_settings_version()
         current_time = time.time()
         if (key in self._cache and
@@ -192,8 +274,7 @@ class DatabaseConfig:
             cursor.execute("SELECT setting_value, setting_type FROM site_settings WHERE setting_key = %s", (key,))
             result = cursor.fetchone()
             if result:
-                db_type = result['setting_type']
-                value = self._convert_value_by_type(result['setting_value'], db_type)
+                value = self._convert_value_by_type(result['setting_value'], result['setting_type'])
                 self._cache[key] = value
                 self._cache_timestamps[key] = current_time
                 logger.debug(f"Loaded setting {key} from site_settings: {value}")
@@ -208,6 +289,7 @@ class DatabaseConfig:
                 connection.close()
 
     def get_frontend_setting(self, key: str, default: Any = None) -> Any:
+        """Get setting from frontend_settings table"""
         self._check_settings_version()
         current_time = time.time()
         cache_key = f"frontend_{key}"
@@ -215,7 +297,6 @@ class DatabaseConfig:
                 cache_key in self._cache_timestamps and
                 current_time - self._cache_timestamps[cache_key] < self._cache_duration):
             return self._cache[cache_key]
-        # Check environment first
         env_key = key.upper()
         if env_key in os.environ:
             value = os.environ[env_key]
@@ -242,7 +323,7 @@ class DatabaseConfig:
                 self._cache_timestamps[cache_key] = current_time
                 logger.debug(f"Loaded frontend setting {key} from frontend_settings: {value}")
                 return value
-            # Fallback to site_settings if not found in frontend_settings
+            # Fallback to site_settings for backward compatibility
             cursor.execute("SELECT setting_value, setting_type FROM site_settings WHERE setting_key = %s", (key,))
             result = cursor.fetchone()
             if result:
@@ -259,17 +340,57 @@ class DatabaseConfig:
             if connection and connection.is_connected():
                 connection.close()
 
+    def _get_session_setting(self, key: str, default: Any = None) -> Any:
+        """Get setting from session_settings table"""
+        self._check_settings_version()
+        current_time = time.time()
+        cache_key = f"session_{key}"
+        if (cache_key in self._cache and
+                cache_key in self._cache_timestamps and
+                current_time - self._cache_timestamps[cache_key] < self._cache_duration):
+            return self._cache[cache_key]
+        env_key = f"SESSION_{key.upper()}"
+        if env_key in os.environ:
+            value = os.environ[env_key]
+            value = self._convert_value(value, type(default))
+            self._cache[cache_key] = value
+            self._cache_timestamps[cache_key] = current_time
+            return value
+        db = self._get_db()
+        if not db:
+            return default
+        connection = None
+        try:
+            connection = db.get_connection()
+            cursor = connection.cursor(dictionary=True)
+            cursor.execute("""
+                SELECT setting_value, setting_type 
+                FROM session_settings 
+                WHERE setting_key = %s
+            """, (key,))
+            result = cursor.fetchone()
+            if result:
+                value = self._convert_value_by_type(result['setting_value'], result['setting_type'])
+                self._cache[cache_key] = value
+                self._cache_timestamps[cache_key] = current_time
+                logger.debug(f"Loaded session setting {key} from session_settings: {value}")
+                return value
+            return default
+        except Exception as e:
+            logger.warning(f"Failed to get session setting {key}: {e}, using default: {default}")
+            return default
+        finally:
+            if connection and connection.is_connected():
+                connection.close()
+
     def _convert_value_by_type(self, value: str, db_type: str) -> Any:
         if value is None:
             return None
-
         if db_type == 'boolean':
-            # Handle case when value comes as string "TRUE"/"FALSE" from database
             if isinstance(value, bool):
                 return value
             if isinstance(value, (int, float)):
                 return bool(value)
-            # Handle string values
             if isinstance(value, str):
                 normalized_value = value.strip().lower()
                 true_values = ['true', '1', 'yes', 'on', 't', 'y']
@@ -297,7 +418,6 @@ class DatabaseConfig:
             except json.JSONDecodeError:
                 return []
         elif db_type == 'list':
-            # Handle the new 'list' type
             if isinstance(value, str):
                 try:
                     return json.loads(value)
@@ -306,7 +426,7 @@ class DatabaseConfig:
                         return [item.strip() for item in value.split(',')]
                     return [value]
             return value
-        else:  # string type
+        else:
             return str(value)
 
     def _convert_value(self, value: str, target_type: Any) -> Any:
@@ -328,7 +448,15 @@ class DatabaseConfig:
         self._last_settings_check = 0
         logger.info("Configuration cache forcefully refreshed")
 
-    # ===== SITE SETTINGS (Admin-managed microservice environment variables) =====
+    def refresh_session_config(self):
+        """Refresh session configuration cache"""
+        session_keys = [k for k in self._cache.keys() if k.startswith('session_')]
+        for key in session_keys:
+            self._cache.pop(key, None)
+            self._cache_timestamps.pop(key, None)
+        logger.info("Session configuration cache refreshed")
+
+    # Site Settings Properties (ALL your 126+ values will be available)
     @property
     def db_host(self) -> str:
         return os.getenv('DB_HOST', '')
@@ -367,6 +495,7 @@ class DatabaseConfig:
         port_key = f"{service_name.upper()}_SERVICE_PORT"
         return int(os.getenv(port_key, '0'))
 
+    # Site Settings
     @property
     def redis_host(self) -> str:
         return self._get_setting('redis_host', '')
@@ -431,66 +560,61 @@ class DatabaseConfig:
     def whatsapp_api_token(self) -> str:
         return self._get_setting('whatsapp_api_token', '')
 
-    # System behavior controls
     @property
     def enable_reviews(self) -> bool:
-        return self._get_setting('enable_reviews', None)
+        return self._get_setting('enable_reviews', True)
 
     @property
     def enable_wishlist(self) -> bool:
-        return self._get_setting('enable_wishlist', None)
+        return self._get_setting('enable_wishlist', True)
 
     @property
     def enable_guest_checkout(self) -> bool:
-        return self._get_setting('enable_guest_checkout', None)
+        return self._get_setting('enable_guest_checkout', True)
 
-    # System limits
     @property
     def max_cart_quantity_per_product(self) -> int:
-        return self._get_setting('max_cart_quantity_per_product', None)
+        return self._get_setting('max_cart_quantity_per_product', 10)
 
     @property
     def max_cart_items_total(self) -> int:
-        return self._get_setting('max_cart_items_total', None)
+        return self._get_setting('max_cart_items_total', 50)
 
     @property
     def cart_session_timeout_minutes(self) -> int:
-        return self._get_setting('cart_session_timeout_minutes', None)
+        return self._get_setting('cart_session_timeout_minutes', 30)
 
-    # Operational settings
     @property
     def debug_mode(self) -> bool:
-        return self._get_setting('debug_mode', None)
+        return self._get_setting('debug_mode', False)
 
     @property
     def app_debug(self) -> bool:
-        return self._get_setting('app_debug', None)
+        return self._get_setting('app_debug', False)
 
     @property
     def log_level(self) -> str:
-        return self._get_setting('log_level', '')
+        return self._get_setting('log_level', 'INFO')
 
     @property
     def cors_origins(self) -> List[str]:
         return self._get_setting('cors_origins', [])
 
-    # Security/Performance
     @property
     def rate_limit_requests(self) -> int:
-        return self._get_setting('rate_limit_requests', None)
+        return self._get_setting('rate_limit_requests', 100)
 
     @property
     def rate_limit_window(self) -> int:
-        return self._get_setting('rate_limit_window', None)
+        return self._get_setting('rate_limit_window', 900)
 
-    # Payment configuration
     @property
     def razorpay_test_mode(self) -> bool:
-        return self._get_setting('razorpay_test_mode', None)
+        return self._get_setting('razorpay_test_mode', True)
 
     @property
     def stripe_test_mode(self) -> bool:
-        return self._get_setting('stripe_test_mode', None)
+        return self._get_setting('stripe_test_mode', True)
 
     @property
     def razorpay_key_id(self) -> str:
@@ -508,69 +632,70 @@ class DatabaseConfig:
     def stripe_secret_key(self) -> str:
         return self._get_setting('stripe_secret_key', '')
 
-    # Notification controls
     @property
     def email_notifications(self) -> bool:
-        return self._get_setting('email_notifications', None)
+        return self._get_setting('email_notifications', True)
 
     @property
     def sms_notifications(self) -> bool:
-        return self._get_setting('sms_notifications', None)
+        return self._get_setting('sms_notifications', False)
 
     @property
     def push_notifications(self) -> bool:
-        return self._get_setting('push_notifications', None)
+        return self._get_setting('push_notifications', False)
 
     @property
     def telegram_notifications(self) -> bool:
-        return self._get_setting('telegram_notifications', None)
+        return self._get_setting('telegram_notifications', False)
 
     @property
     def whatsapp_notifications(self) -> bool:
-        return self._get_setting('whatsapp_notifications', None)
+        return self._get_setting('whatsapp_notifications', False)
 
-    # System limits
     @property
     def max_upload_size(self) -> int:
-        return self._get_setting('max_upload_size', None)
+        return self._get_setting('max_upload_size', 5242880)
 
     @property
     def allowed_file_types(self) -> List[str]:
         return self._get_setting('allowed_file_types', [])
 
-    # Business rules
     @property
     def refund_policy_days(self) -> int:
-        return self._get_setting('refund_policy_days', None)
+        return self._get_setting('refund_policy_days', 30)
 
     @property
     def auto_refund_enabled(self) -> bool:
-        return self._get_setting('auto_refund_enabled', None)
+        return self._get_setting('auto_refund_enabled', True)
 
     @property
     def refund_processing_fee(self) -> float:
-        return self._get_setting('refund_processing_fee', None)
+        return self._get_setting('refund_processing_fee', 0.0)
 
-    # ===== FRONTEND SETTINGS (Static content for webpages) =====
+    @property
+    def maintenance_mode(self) -> bool:
+        return self._get_setting('maintenance_mode', False)
+
+    # Frontend Settings
     @property
     def app_name(self) -> str:
-        return self.get_frontend_setting('app_name', '')
+        return self.get_frontend_setting('app_name', 'Pavitra Trading')
 
     @property
     def app_description(self) -> str:
-        return self.get_frontend_setting('app_description', '')
+        return self.get_frontend_setting('app_description', 'Your trusted online shopping destination')
 
     @property
     def email_from(self) -> str:
-        return self.get_frontend_setting('email_from', '')
+        return self.get_frontend_setting('email_from', 'noreply@pavitra-trading.com')
 
     @property
     def email_from_name(self) -> str:
-        return self.get_frontend_setting('email_from_name', '')
+        return self.get_frontend_setting('email_from_name', 'Pavitra Trading')
 
     @property
     def default_currency(self) -> str:
-        return self.get_frontend_setting('default_currency', '')
+        return self.get_frontend_setting('default_currency', 'INR')
 
     @property
     def supported_currencies(self) -> List[str]:
@@ -578,27 +703,27 @@ class DatabaseConfig:
 
     @property
     def default_country(self) -> str:
-        return self.get_frontend_setting('default_country', '')
+        return self.get_frontend_setting('default_country', 'IN')
 
     @property
     def default_gst_rate(self) -> float:
-        return self.get_frontend_setting('default_gst_rate', None)
+        return self.get_frontend_setting('default_gst_rate', 18.0)
 
     @property
     def site_name(self) -> str:
-        return self.get_frontend_setting('site_name', '')
+        return self.get_frontend_setting('site_name', 'Pavitra Trading')
 
     @property
     def site_description(self) -> str:
-        return self.get_frontend_setting('site_description', '')
+        return self.get_frontend_setting('site_description', 'Your trusted online shopping destination')
 
     @property
     def currency(self) -> str:
-        return self.get_frontend_setting('currency', '')
+        return self.get_frontend_setting('currency', 'INR')
 
     @property
     def currency_symbol(self) -> str:
-        return self.get_frontend_setting('currency_symbol', '')
+        return self.get_frontend_setting('currency_symbol', '₹')
 
     @property
     def site_phone(self) -> str:
@@ -614,23 +739,77 @@ class DatabaseConfig:
 
     @property
     def min_order_amount(self) -> float:
-        return self.get_frontend_setting('min_order_amount', None)
+        return self.get_frontend_setting('min_order_amount', 0.0)
 
     @property
     def free_shipping_min_amount(self) -> float:
-        return self.get_frontend_setting('free_shipping_min_amount', None)
+        return self.get_frontend_setting('free_shipping_min_amount', 500.0)
 
     @property
     def free_shipping_threshold(self) -> float:
-        return self.get_frontend_setting('free_shipping_threshold', None)
+        return self.get_frontend_setting('free_shipping_threshold', 999.0)
 
     @property
     def return_period_days(self) -> int:
-        return self.get_frontend_setting('return_period_days', None)
+        return self.get_frontend_setting('return_period_days', 10)
 
-    @property
-    def maintenance_mode(self) -> bool:
-        return self._get_setting('maintenance_mode', None)
+    # Session Settings
+    def get_session_config(self) -> Dict[str, Any]:
+        """Get comprehensive session configuration from database"""
+        return {
+            # Session timeouts
+            'inactivity_timeout': self._get_session_setting('session_inactivity_timeout', 1800),
+            'guest_session_duration': self._get_session_setting('guest_session_duration', 86400),
+            'user_session_duration': self._get_session_setting('user_session_duration', 2592000),
+            'max_session_age': self._get_session_setting('max_session_age', 604800),
+            'session_timeout': self._get_session_setting('session_timeout', 3600),
+
+            # Session limits
+            'max_sessions_per_user': self._get_session_setting('max_sessions_per_user', 5),
+            'session_rotation_interval': self._get_session_setting('session_rotation_interval', 3600),
+            'session_cleanup_interval': self._get_session_setting('session_cleanup_interval', 86400),
+
+            # Rate limiting
+            'session_rate_limit_attempts': self._get_session_setting('session_rate_limit_attempts', 10),
+            'session_rate_limit_window': self._get_session_setting('session_rate_limit_window', 60),
+            'rate_limit_login_attempts': self._get_session_setting('rate_limit_login_attempts', 10),
+            'rate_limit_login_window': self._get_session_setting('rate_limit_login_window', 900),
+            'rate_limit_session_create': self._get_session_setting('rate_limit_session_create', 5),
+            'rate_limit_session_access': self._get_session_setting('rate_limit_session_access', 50),
+            'rate_limit_session_update': self._get_session_setting('rate_limit_session_update', 20),
+            'rate_limit_session_delete': self._get_session_setting('rate_limit_session_delete', 10),
+
+            # Login security
+            'max_login_attempts': self._get_session_setting('max_login_attempts', 5),
+            'login_lockout_minutes': self._get_session_setting('login_lockout_minutes', 15),
+            'login_rate_limit_window': self._get_session_setting('login_rate_limit_window', 900),
+            'max_failed_attempts': self._get_session_setting('max_failed_attempts', 5),
+            'failed_attempts_window': self._get_session_setting('failed_attempts_window', 900),
+
+            # Token settings
+            'token_expiry_hours': self._get_session_setting('token_expiry_hours', 24),
+
+            # Security features
+            'enable_csrf_protection': self._get_session_setting('enable_csrf_protection', True),
+            'enable_ip_validation': self._get_session_setting('enable_ip_validation', True),
+            'enable_user_agent_validation': self._get_session_setting('enable_user_agent_validation', True),
+            'enable_session_rotation': self._get_session_setting('enable_session_rotation', True),
+            'require_security_token': self._get_session_setting('require_security_token', True),
+            'enable_secure_cookies': self._get_session_setting('enable_secure_cookies', True),
+            'enable_session_fingerprinting': self._get_session_setting('enable_session_fingerprinting', True),
+
+            # Cookie settings
+            'cookie_samesite': self._get_session_setting('cookie_samesite', 'Strict'),
+            'cookie_httponly': self._get_session_setting('cookie_httponly', True),
+            'cookie_secure': self._get_session_setting('cookie_secure', True)
+        }
+
+    def get_security_config(self) -> Dict[str, Any]:
+        """Get security-specific configuration"""
+        session_config = self.get_session_config()
+        return {k: v for k, v in session_config.items() if any(
+            term in k for term in ['enable', 'require', 'cookie', 'max_failed', 'failed_attempts']
+        )}
 
 
 config = DatabaseConfig()

@@ -10,7 +10,8 @@ from .redis_client import redis_client
 from .rabbitmq_client import rabbitmq_client
 from .auth_middleware import get_current_user, require_roles, require_permissions
 from .rate_limiter import rate_limiter
-from .session_middleware import SessionMiddleware, get_session, get_session_id
+from .session_middleware import SecureSessionMiddleware, get_session, get_session_id, is_new_session
+from .session_models import SessionData, SessionType
 
 __all__ = [
     'config',
@@ -30,8 +31,14 @@ __all__ = [
     'require_roles',
     'require_permissions',
     'rate_limiter',
-    'SessionMiddleware',
+    'SecureSessionMiddleware',
     'get_session',
     'get_session_id',
+    'is_new_session',
     'session_service',
+    'SessionData',
+    'SessionType',
 ]
+
+# Backward compatibility
+SessionMiddleware = SecureSessionMiddleware

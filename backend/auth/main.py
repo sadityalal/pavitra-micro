@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from shared import config, setup_logging, get_logger, db
-from shared.session_middleware import SessionMiddleware
+from shared.session_middleware import SecureSessionMiddleware
 from .routes import router
 
 setup_logging("auth-service")
@@ -17,19 +17,23 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
-app.add_middleware(SessionMiddleware)
+# Security middleware
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0"])
+app.add_middleware(SecureSessionMiddleware)
 
+# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=[
         "Content-Type",
         "Authorization",
         "X-Requested-With",
-        "X-Session-ID",
+        "X-Secure-Session-ID",
+        "X-Security-Token",
+        "X-CSRF-Token",
         "Cookie"
     ],
     max_age=600,
@@ -39,6 +43,8 @@ app.add_middleware(
 @app.middleware("http")
 async def secure_cors_headers(request: Request, call_next):
     response = await call_next(request)
+
+    # CORS headers
     origin = request.headers.get('origin')
     if origin and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
@@ -47,17 +53,20 @@ async def secure_cors_headers(request: Request, call_next):
 
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     response.headers[
-        'Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Session-ID, Cookie'
+        'Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Secure-Session-ID, X-Security-Token, X-CSRF-Token, Cookie'
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     response.headers['Access-Control-Max-Age'] = '600'
+
+    # Security headers
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
+    response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
 
-    # Forward session ID if present
+    # Session header
     session_id = getattr(request.state, 'session_id', None)
     if session_id:
-        response.headers['X-Session-ID'] = session_id
+        response.headers['X-Secure-Session-ID'] = session_id
 
     return response
 
@@ -66,10 +75,12 @@ async def secure_cors_headers(request: Request, call_next):
 async def secure_options_handler(path: str, request: Request):
     origin = request.headers.get('origin')
     response = JSONResponse(content={"method": "OPTIONS"})
+
     if origin and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Session-ID'
+        response.headers[
+            'Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Secure-Session-ID, X-Security-Token, X-CSRF-Token'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Max-Age'] = '600'
 
@@ -110,6 +121,13 @@ async def startup_event():
     try:
         db.initialize()
         logger.info("✅ Database initialized successfully")
+
+        # Test Redis connection
+        if hasattr(db, 'redis_client'):
+            if db.redis_client.ping():
+                logger.info("✅ Redis connection verified")
+            else:
+                logger.error("❌ Redis connection failed")
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
 
@@ -127,7 +145,8 @@ async def health():
                 "service": "auth",
                 "database": "connected",
                 "app_name": config.app_name,
-                "maintenance_mode": config.maintenance_mode
+                "maintenance_mode": config.maintenance_mode,
+                "session_service": "active"
             }
         else:
             logger.error(f"Database health check failed: {health_data.get('error')}")
@@ -159,7 +178,8 @@ async def root():
         "message": f"{config.app_name} - Auth Service",
         "version": "1.0.0",
         "environment": "development" if config.debug_mode else "production",
-        "maintenance_mode": config.maintenance_mode
+        "maintenance_mode": config.maintenance_mode,
+        "session_management": "secure"
     }
 
 

@@ -69,6 +69,7 @@ def track_failed_login(identifier: str) -> bool:
         logger.error(f"Failed login tracking error: {e}")
         return True
 
+
 def reset_failed_login(identifier: str):
     try:
         redis_client.delete(f"login_fails:{identifier}")
@@ -76,11 +77,13 @@ def reset_failed_login(identifier: str):
     except Exception as e:
         logger.error(f"Failed to reset login attempts: {e}")
 
+
 def validate_username(username: str) -> bool:
     if not username:
         return False
     pattern = r'^[a-zA-Z0-9_]{3,30}$'
     return re.match(pattern, username) is not None
+
 
 def publish_user_registration_event(user_data: dict):
     try:
@@ -112,6 +115,7 @@ def publish_user_registration_event(user_data: dict):
             logger.error("Cannot publish user registration event - RabbitMQ not connected")
     except Exception as e:
         logger.error(f"Failed to publish user registration event: {e}")
+
 
 def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor) -> int:
     try:
@@ -163,6 +167,7 @@ def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor) -> 
         logger.error(f"Cart migration failed: {e}")
         return 0
 
+
 def _validate_registration_data(email: Optional[str], phone: Optional[str], username: Optional[str],
                                 password: str) -> None:
     if not email and not phone and not username:
@@ -197,6 +202,7 @@ def _validate_registration_data(email: Optional[str], phone: Optional[str], user
             detail=password_validation["message"]
         )
 
+
 def _check_existing_users(cursor, email: Optional[str], phone: Optional[str], username: Optional[str]) -> None:
     if email:
         cursor.execute("SELECT id FROM users WHERE email = %s", (email,))
@@ -219,6 +225,7 @@ def _check_existing_users(cursor, email: Optional[str], phone: Optional[str], us
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username already taken"
             )
+
 
 def _setup_user_account(cursor, user_id: int) -> tuple[list, list]:
     cursor.execute("SELECT id FROM user_roles WHERE name = 'customer'")
@@ -254,6 +261,7 @@ def _setup_user_account(cursor, user_id: int) -> tuple[list, list]:
     if not roles:
         roles.add('customer')
     return list(roles), list(permissions)
+
 
 @router.post("/register", response_model=Token)
 async def register_user(
@@ -306,6 +314,8 @@ async def register_user(
                     current_session, user_id, cursor
                 )
                 logger.info(f"Migrated {migrated_items_count} cart items from guest session during registration")
+
+            # Create new user session using secure session service
             session_data = {
                 'session_type': SessionType.USER,
                 'user_id': user_id,
@@ -315,20 +325,16 @@ async def register_user(
                 'cart_items': {}
             }
             new_session = session_service.create_session(session_data)
-            if new_session and response:
-                response.set_cookie(
-                    key="session_id",
-                    value=new_session.session_id,
-                    max_age=SESSION_TIMEOUT,
-                    httponly=True,
-                    secure=not config.debug_mode,
-                    samesite="Lax",
-                    path="/"
-                )
+
+            # Session cookie is now handled by middleware - no need to set it manually
+            if new_session:
                 logger.info(f"User session created for new user {user_id}")
+
+            # Clean up old guest session
             if current_session_id and current_session and current_session.session_type == SessionType.GUEST:
                 session_service.delete_session(current_session_id)
                 logger.info("Deleted guest session after successful registration migration")
+
             if background_tasks:
                 cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
                 user = cursor.fetchone()
@@ -336,6 +342,11 @@ async def register_user(
                     publish_user_registration_event,
                     user
                 )
+
+            # Get token expiry from database configuration
+            session_config = config.get_session_config()
+            token_expiry_hours = session_config['token_expiry_hours']
+
             access_token = create_access_token(
                 data={
                     "sub": str(user_id),
@@ -343,13 +354,13 @@ async def register_user(
                     "roles": roles,
                     "permissions": permissions
                 },
-                expires_delta=timedelta(hours=TOKEN_EXPIRY_HOURS)
+                expires_delta=timedelta(hours=token_expiry_hours)
             )
             logger.info(f"User registered successfully: {email or phone or username}")
             return Token(
                 access_token=access_token,
                 token_type="bearer",
-                expires_in=TOKEN_EXPIRY_HOURS * 3600,
+                expires_in=token_expiry_hours * 3600,
                 user_roles=roles,
                 user_permissions=permissions
             )
@@ -361,6 +372,7 @@ async def register_user(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed due to server error"
         )
+
 
 @router.get("/site-settings")
 async def get_site_settings(current_user: dict = Depends(get_current_user)):
@@ -420,7 +432,7 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             detail="Failed to fetch site settings"
         )
 
-# NEW ADMIN-ONLY ENDPOINT TO GET ALL SETTINGS
+
 @router.get("/admin/all-settings")
 async def get_all_settings(current_user: dict = Depends(get_current_user)):
     user_roles = current_user.get('roles', [])
@@ -519,6 +531,7 @@ async def get_all_settings(current_user: dict = Depends(get_current_user)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch all settings"
         )
+
 
 @router.get("/frontend-settings")
 async def get_frontend_settings():
@@ -718,28 +731,26 @@ async def logout_user(
         user_id = current_user['sub']
         auth_header = request.headers.get("Authorization")
         session_id = get_session_id(request)
-        # Delete session
+
+        # Delete session using secure session service
         if session_id:
             session_service.delete_session(session_id)
             logger.info(f"Session deleted for user {user_id}")
+
         # Blacklist token
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
             blacklist_token(token)
             logger.info(f"JWT token invalidated for user {user_id}")
-        # Clear session cookie
-        response.delete_cookie(
-            key="session_id",
-            path="/",
-            secure=not config.debug_mode,
-            httponly=True,
-            samesite="Lax"
-        )
+
+        # Cookie deletion is handled by middleware - no need to manually delete
+
         logger.info(f"User {user_id} logged out successfully")
         return {"message": "Logged out successfully"}
     except Exception as e:
         logger.error(f"Logout failed: {e}")
         return {"message": "Logged out successfully"}  # Always return success to client
+
 
 @router.post("/refresh", response_model=Token)
 async def refresh_token(
@@ -759,11 +770,17 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token"
         )
-    # Refresh session activity
+
+    # Refresh session activity using secure session service
     session_id = get_session_id(request)
     if session_id:
         session_service.update_session_activity(session_id)
         logger.info(f"Session activity refreshed for user {payload['sub']}")
+
+    # Get token expiry from database configuration
+    session_config = config.get_session_config()
+    token_expiry_hours = session_config['token_expiry_hours']
+
     # Create new token
     new_token = create_access_token(
         data={
@@ -772,16 +789,17 @@ async def refresh_token(
             "roles": payload.get('roles', []),
             "permissions": payload.get('permissions', [])
         },
-        expires_delta=timedelta(hours=TOKEN_EXPIRY_HOURS)
+        expires_delta=timedelta(hours=token_expiry_hours)
     )
     logger.info(f"Token refreshed successfully for user {payload['sub']}")
     return Token(
         access_token=new_token,
         token_type="bearer",
-        expires_in=TOKEN_EXPIRY_HOURS * 3600,
+        expires_in=token_expiry_hours * 3600,
         user_roles=payload.get('roles', []),
         user_permissions=payload.get('permissions', [])
     )
+
 
 @router.post("/forgot-password")
 async def forgot_password(email: str = Form(...)):
@@ -796,15 +814,19 @@ async def forgot_password(email: str = Form(...)):
             cursor.execute("SELECT id, first_name FROM users WHERE email = %s", (email,))
             user = cursor.fetchone()
             if user:
+                # Get token expiry from database configuration
+                session_config = config.get_session_config()
+                token_expiry_hours = session_config['token_expiry_hours']
+
                 # Create reset token
                 reset_token = create_access_token(
                     data={"sub": str(user['id']), "type": "password_reset"},
-                    expires_delta=timedelta(hours=1)
+                    expires_delta=timedelta(hours=token_expiry_hours)
                 )
                 # Store reset token in Redis
                 redis_client.setex(
                     f"password_reset:{user['id']}",
-                    3600,  # 1 hour expiry
+                    token_expiry_hours * 3600,  # Use database configuration
                     reset_token
                 )
                 logger.info(f"Password reset initiated for user {user['id']}")
@@ -817,29 +839,34 @@ async def forgot_password(email: str = Form(...)):
             detail="Password reset failed"
         )
 
+
 @router.post("/reset-password")
 async def reset_password(token: str = Form(...), new_password: str = Form(...)):
     try:
         config.refresh_cache()
         if config.maintenance_mode:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,detail="Service is under maintenance. Please try again later.")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail="Service is under maintenance. Please try again later.")
         payload = verify_token(token)
         if not payload or payload.get('type') != 'password_reset':
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Invalid reset token")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid reset token")
         user_id = int(payload['sub'])
         try:
             stored_token = redis_client.get(f"password_reset:{user_id}")
         except Exception as redis_error:
             logger.error(f"Redis unavailable during password reset: {redis_error}")
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,detail="Service temporarily unavailable")
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                                detail="Service temporarily unavailable")
         if not stored_token or stored_token != token:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Invalid or expired reset token")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired reset token")
         if len(new_password) < 8:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,detail="Password must be at least 8 characters long")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST,
+                                detail="Password must be at least 8 characters long")
         with db.get_cursor() as cursor:
             new_password_hash = get_password_hash(new_password)
-            cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s",(new_password_hash, user_id))
-            cursor.execute("INSERT INTO password_history (user_id, password_hash) VALUES (%s, %s)",(user_id, new_password_hash))
+            cursor.execute("UPDATE users SET password_hash = %s WHERE id = %s", (new_password_hash, user_id))
+            cursor.execute("INSERT INTO password_history (user_id, password_hash) VALUES (%s, %s)",
+                           (user_id, new_password_hash))
             try:
                 redis_client.delete(f"password_reset:{user_id}")
             except Exception as e:
@@ -850,7 +877,8 @@ async def reset_password(token: str = Form(...), new_password: str = Form(...)):
         raise
     except Exception as e:
         logger.error(f"Password reset failed: {e}")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,detail="Password reset failed")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password reset failed")
+
 
 @router.get("/roles", response_model=List[RoleResponse])
 async def get_roles():
@@ -859,106 +887,4 @@ async def get_roles():
             cursor.execute("""
                 SELECT id, name, description FROM user_roles
                 WHERE is_system_role = 1
-                ORDER BY name
-            """)
-            roles = cursor.fetchall()
-            return [
-                RoleResponse(
-                    id=role['id'],
-                    name=role['name'],
-                    description=role['description'],
-                    permissions=[]
-                )
-                for role in roles
-            ]
-    except Exception as e:
-        logger.error(f"Failed to fetch roles: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch roles"
-        )
-
-@router.post("/check-permission", response_model=PermissionCheck)
-async def check_permission(permission: str, request: Request):
-    try:
-        current_user = await get_current_user(request)
-        user_permissions = current_user.get('permissions', [])
-        has_access = permission in user_permissions
-        return PermissionCheck(
-            permission=permission,
-            has_access=has_access
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Permission check failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Permission check failed"
-        )
-
-@router.get("/debug/maintenance")
-async def debug_maintenance():
-    config.refresh_cache()
-    return {
-        "maintenance_mode": config.maintenance_mode,
-        "maintenance_mode_type": str(type(config.maintenance_mode)),
-        "maintenance_mode_raw": str(config.maintenance_mode)
-    }
-
-@router.get("/debug/settings")
-async def debug_settings():
-    config.refresh_cache()
-    return {
-        "maintenance_mode": config.maintenance_mode,
-        "debug_mode": config.debug_mode,
-        "app_debug": config.app_debug,
-        "log_level": config.log_level,
-        "cors_origins": config.cors_origins,
-        "cache_info": {
-            "cache_size": len(config._cache) if hasattr(config, '_cache') else 0,
-            "cache_keys": list(config._cache.keys()) if hasattr(config, '_cache') else []
-        }
-    }
-
-@router.get("/session/info")
-async def get_session_info(request: Request, current_user: dict = Depends(get_current_user)):
-    try:
-        session = get_session(request)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-        return {
-            "session_id": session.session_id,
-            "session_type": session.session_type,
-            "user_id": session.user_id,
-            "guest_id": session.guest_id,
-            "created_at": session.created_at,
-            "last_activity": session.last_activity,
-            "expires_at": session.expires_at,
-            "cart_items_count": len(session.cart_items) if session.cart_items else 0
-        }
-    except Exception as e:
-        logger.error(f"Failed to get session info: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get session information"
-        )
-
-@router.post("/session/refresh")
-async def refresh_user_session(request: Request, response: Response):
-    try:
-        session_id = get_session_id(request)
-        if not session_id:
-            raise HTTPException(status_code=404, detail="Session not found")
-        success = session_service.update_session_activity(session_id)
-        if not success:
-            raise HTTPException(status_code=404, detail="Session expired")
-        return {"message": "Session refreshed successfully"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to refresh session: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to refresh session"
-        )
+                ORDER
