@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from shared import config, setup_logging, get_logger, db
-from shared.session_middleware import SessionMiddleware, get_session_id
+from shared.session_middleware import SecureSessionMiddleware, get_session_id
 from .notification_routes import router as notification_router
 from .routes import router
 
@@ -19,7 +19,7 @@ app = FastAPI(
 )
 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
-app.add_middleware(SessionMiddleware)
+app.add_middleware(SecureSessionMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,7 +30,7 @@ app.add_middleware(
         "Content-Type",
         "Authorization",
         "X-Requested-With",
-        "X-Session-ID",  # Add session header support
+        "X-Session-ID",
         "X-Guest-Id",
         "Cookie"
     ],
@@ -43,6 +43,7 @@ app.add_middleware(
 async def secure_cors_headers(request: Request, call_next):
     response = await call_next(request)
     origin = request.headers.get('origin')
+
     if origin and config.cors_origins and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
@@ -54,7 +55,6 @@ async def secure_cors_headers(request: Request, call_next):
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
 
-    # Add session ID to response headers for microservices
     session_id = get_session_id(request)
     if session_id:
         response.headers['X-Session-ID'] = session_id
@@ -66,6 +66,7 @@ async def secure_cors_headers(request: Request, call_next):
 async def secure_options_handler(path: str, request: Request):
     origin = request.headers.get('origin')
     response = JSONResponse(content={"method": "OPTIONS"})
+
     if origin and config.cors_origins and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
