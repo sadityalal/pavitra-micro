@@ -3,11 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from shared import config, setup_logging, get_logger, db
-from shared.session_middleware import SessionMiddleware
+from shared.session_middleware import SessionMiddleware, get_session_id
 from .notification_routes import router as notification_router
 from .routes import router
+
 setup_logging("user-service")
 logger = get_logger(__name__)
+
 app = FastAPI(
     title=f"{config.app_name} - User Service",
     description=config.app_description,
@@ -15,8 +17,10 @@ app = FastAPI(
     docs_url="/docs" if not config.maintenance_mode else None,
     redoc_url="/redoc" if not config.maintenance_mode else None
 )
+
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 app.add_middleware(SessionMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins if config.cors_origins else [],
@@ -26,12 +30,15 @@ app.add_middleware(
         "Content-Type",
         "Authorization",
         "X-Requested-With",
+        "X-Session-ID",  # Add session header support
         "X-Guest-Id",
         "Cookie"
     ],
-    expose_headers=["set-cookie"],
+    expose_headers=["set-cookie", "X-Session-ID"],
     max_age=600,
 )
+
+
 @app.middleware("http")
 async def secure_cors_headers(request: Request, call_next):
     response = await call_next(request)
@@ -39,13 +46,22 @@ async def secure_cors_headers(request: Request, call_next):
     if origin and config.cors_origins and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Session-ID'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Max-Age'] = '600'
+
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
+
+    # Add session ID to response headers for microservices
+    session_id = get_session_id(request)
+    if session_id:
+        response.headers['X-Session-ID'] = session_id
+
     return response
+
+
 @app.options("/{path:path}")
 async def secure_options_handler(path: str, request: Request):
     origin = request.headers.get('origin')
@@ -53,22 +69,29 @@ async def secure_options_handler(path: str, request: Request):
     if origin and config.cors_origins and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Session-ID'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Max-Age'] = '600'
+
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     return response
+
+
 app.include_router(notification_router, prefix="/api/v1/users")
+
+
 @app.middleware("http")
 async def maintenance_mode_middleware(request, call_next):
     maintenance_exempt_paths = [
         "/health", "/docs", "/redoc", "/refresh-config",
         "/api/v1/users/health", "/api/v1/users/debug/test"
     ]
+
     if any(request.url.path.startswith(path) for path in maintenance_exempt_paths):
         response = await call_next(request)
         return response
+
     config.refresh_cache()
     if config.maintenance_mode is True:
         logger.warning(f"Maintenance mode blocking request to: {request.url.path}")
@@ -76,9 +99,14 @@ async def maintenance_mode_middleware(request, call_next):
             status_code=503,
             detail="Service is under maintenance. Please try again later."
         )
+
     response = await call_next(request)
     return response
+
+
 app.include_router(router, prefix="/api/v1/users")
+
+
 @app.get("/health")
 async def health():
     try:
@@ -104,6 +132,8 @@ async def health():
             status_code=503,
             detail="Service unhealthy"
         )
+
+
 @app.post("/refresh-config")
 async def refresh_config():
     config.refresh_cache()
@@ -112,6 +142,8 @@ async def refresh_config():
         "maintenance_mode": config.maintenance_mode if config.maintenance_mode is not None else False,
         "timestamp": "updated"
     }
+
+
 @app.get("/")
 async def root():
     return {
@@ -120,10 +152,13 @@ async def root():
         "environment": "development" if config.debug_mode else "production",
         "maintenance_mode": config.maintenance_mode if config.maintenance_mode is not None else False
     }
+
+
 if __name__ == "__main__":
     import uvicorn
+
     port = config.get_service_port('user')
-    logger.info(f"Starting Service on port {port}")
+    logger.info(f"Starting User Service on port {port}")
     uvicorn.run(
         app,
         host="0.0.0.0",

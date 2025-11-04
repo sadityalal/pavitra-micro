@@ -8,6 +8,7 @@ from .routes import router
 
 setup_logging("auth-service")
 logger = get_logger(__name__)
+
 app = FastAPI(
     title=f"{config.app_name} - Auth Service",
     description=config.app_description,
@@ -15,9 +16,10 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc"
 )
-# Need to fix this hardcoded urls from config.py and site-settings table
+
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 app.add_middleware(SessionMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins,
@@ -26,7 +28,9 @@ app.add_middleware(
     allow_headers=[
         "Content-Type",
         "Authorization",
-        "X-Requested-With"
+        "X-Requested-With",
+        "X-Session-ID",
+        "Cookie"
     ],
     max_age=600,
 )
@@ -40,14 +44,23 @@ async def secure_cors_headers(request: Request, call_next):
         response.headers['Access-Control-Allow-Origin'] = origin
     elif config.cors_origins and config.cors_origins[0] == '*':
         response.headers['Access-Control-Allow-Origin'] = '*'
+
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
-    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Guest-Id, Cookie'
+    response.headers[
+        'Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Session-ID, Cookie'
     response.headers['Access-Control-Allow-Credentials'] = 'true'
     response.headers['Access-Control-Max-Age'] = '600'
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['X-XSS-Protection'] = '1; mode=block'
+
+    # Forward session ID if present
+    session_id = getattr(request.state, 'session_id', None)
+    if session_id:
+        response.headers['X-Session-ID'] = session_id
+
     return response
+
 
 @app.options("/{path:path}")
 async def secure_options_handler(path: str, request: Request):
@@ -56,41 +69,40 @@ async def secure_options_handler(path: str, request: Request):
     if origin and origin in config.cors_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Session-ID'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Max-Age'] = '600'
+
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     return response
 
+
 @app.middleware("http")
 async def maintenance_mode_middleware(request, call_next):
-    # Skip maintenance check for health endpoints and docs
     maintenance_exempt_paths = [
         "/health", "/docs", "/redoc", "/refresh-config",
         "/api/v1/auth/health", "/api/v1/auth/site-settings",
         "/api/v1/auth/debug/maintenance", "/api/v1/auth/debug/settings"
     ]
-    
+
     if any(request.url.path.startswith(path) for path in maintenance_exempt_paths):
         response = await call_next(request)
         return response
-    
-    # Check maintenance mode with fresh config
+
     config.refresh_cache()
-    
-    # DEBUG: Log the actual value and type
     logger.info(f"DEBUG Middleware: maintenance_mode={config.maintenance_mode}, type={type(config.maintenance_mode)}")
-    
+
     if config.maintenance_mode:
         logger.warning(f"Maintenance mode blocking request to: {request.url.path}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Service is under maintenance. Please try again later."
         )
-    
+
     response = await call_next(request)
     return response
+
 
 @app.on_event("startup")
 async def startup_event():
@@ -101,7 +113,9 @@ async def startup_event():
     except Exception as e:
         logger.error(f"❌ Database initialization failed: {e}")
 
+
 app.include_router(router, prefix="/api/v1/auth")
+
 
 @app.get("/health")
 async def health():
@@ -128,6 +142,7 @@ async def health():
             detail="Service unhealthy"
         )
 
+
 @app.post("/refresh-config")
 async def refresh_config():
     config.refresh_cache()
@@ -137,6 +152,7 @@ async def refresh_config():
         "timestamp": "updated"
     }
 
+
 @app.get("/")
 async def root():
     return {
@@ -145,10 +161,11 @@ async def root():
         "environment": "development" if config.debug_mode else "production",
         "maintenance_mode": config.maintenance_mode
     }
-## DEBUG
+
+
 @app.get("/debug/cors-config")
 async def debug_cors_config():
-    config.refresh_cache()  # Force refresh
+    config.refresh_cache()
     return {
         "cors_origins": config.cors_origins,
         "cors_origins_type": str(type(config.cors_origins)),
@@ -160,14 +177,13 @@ async def debug_cors_config():
 if __name__ == "__main__":
     import uvicorn
 
-    port = config.get_service_port('auth')  # or 'product', 'user'
-    logger.info(f"🚀 Starting Service on port {port}")
-
+    port = config.get_service_port('auth')
+    logger.info(f"🚀 Starting Auth Service on port {port}")
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=port,
         log_level=config.log_level.lower(),
         access_log=True,
-        reload=config.debug_mode  # Auto-reload in debug mode
+        reload=config.debug_mode
     )

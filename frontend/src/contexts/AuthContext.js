@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { authService } from '../services/authService';
+import { sessionManager } from '../services/api';
 
 const AuthContext = createContext();
 
@@ -36,17 +37,34 @@ export const AuthProvider = ({ children }) => {
       try {
         const token = localStorage.getItem('auth_token');
         if (token) {
-          setIsAuthenticated(true);
-          setUser({
-            id: 'user_id',
-            email: 'user@example.com',
-            roles: ['customer'],
-            permissions: []
-          });
+          // Verify token is still valid by making a simple API call
+          try {
+            const userProfile = await authService.getSiteSettings().catch(() => null);
+            if (userProfile) {
+              setIsAuthenticated(true);
+              setUser({
+                id: 'user_id',
+                email: 'user@example.com',
+                roles: ['customer'],
+                permissions: []
+              });
+              console.log('✅ User authenticated from stored token');
+            } else {
+              // Token is invalid
+              localStorage.removeItem('auth_token');
+              sessionManager.clearSession();
+              console.log('❌ Stored token is invalid, clearing auth state');
+            }
+          } catch (verifyError) {
+            console.error('Token verification failed:', verifyError);
+            localStorage.removeItem('auth_token');
+            sessionManager.clearSession();
+          }
         }
       } catch (error) {
         console.error('Auth check failed:', error);
         localStorage.removeItem('auth_token');
+        sessionManager.clearSession();
       } finally {
         setLoading(false);
       }
@@ -57,29 +75,51 @@ export const AuthProvider = ({ children }) => {
   const login = async (credentials) => {
     try {
       setLoading(true);
+      console.log('🔐 Attempting login with credentials:', {
+        login_id: credentials.login_id,
+        password_length: credentials.password ? credentials.password.length : 0
+      });
+
       const response = await authService.login(credentials);
+
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
+
         const userData = {
           id: 'user_id',
           email: credentials.login_id,
-          roles: response.user_roles || [],
+          first_name: response.user?.first_name,
+          last_name: response.user?.last_name,
+          roles: response.user_roles || ['customer'],
           permissions: response.user_permissions || []
         };
+
         setUser(userData);
         setIsAuthenticated(true);
 
-        // Trigger cart refresh after login
+        // Clear any existing guest session and use authenticated session
+        sessionManager.clearSession();
+        console.log('✅ Login successful, guest session cleared');
+
+        // Notify other components about auth state change
         const cartEvent = new CustomEvent('authStateChanged', {
-          detail: { action: 'login', user: userData }
+          detail: {
+            action: 'login',
+            user: userData,
+            sessionType: 'authenticated'
+          }
         });
         document.dispatchEvent(cartEvent);
 
         success('Login successful! Welcome back.');
         return response;
+      } else {
+        throw new Error('No access token received from server');
       }
     } catch (err) {
       console.error('Login failed:', err);
+
+      // Enhanced error handling with specific messages
       if (err.response?.status === 401) {
         error('Invalid credentials. Please check your email/username and password.');
       } else if (err.response?.status === 422) {
@@ -88,6 +128,10 @@ export const AuthProvider = ({ children }) => {
         error('Too many login attempts. Please try again later.');
       } else if (err.response?.status === 503) {
         error('Service is under maintenance. Please try again later.');
+      } else if (err.response?.data?.detail) {
+        error(err.response.data.detail);
+      } else if (err.message) {
+        error(err.message);
       } else {
         error('Login failed. Please try again.');
       }
@@ -99,48 +143,53 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      console.log('🔐 Logging out user...');
       await authService.logout();
       success('You have been successfully logged out');
+    } catch (err) {
+      console.error('Logout API call failed:', err);
+      error('There was an issue during logout, but you have been logged out locally.');
+    } finally {
+      // Always clear local state regardless of API call success
+      localStorage.removeItem('auth_token');
+      sessionManager.clearSession();
+      setUser(null);
+      setIsAuthenticated(false);
 
-      // Clear cart state immediately
+      console.log('✅ Local auth state cleared');
+
+      // Notify other components about logout
       const cartEvent = new CustomEvent('authStateChanged', {
-        detail: { action: 'logout' }
+        detail: {
+          action: 'logout',
+          sessionType: 'guest'
+        }
       });
       document.dispatchEvent(cartEvent);
 
+      // Redirect to home after a short delay
       setTimeout(() => {
         navigate('/');
       }, 500);
-    } catch (err) {
-      console.error('Logout error:', err);
-      error('There was an issue during logout, but you have been logged out locally.');
-
-      // Still clear cart state even if logout API fails
-      const cartEvent = new CustomEvent('authStateChanged', {
-        detail: { action: 'logout' }
-      });
-      document.dispatchEvent(cartEvent);
-
-      localStorage.removeItem('auth_token');
-      setUser(null);
-      setIsAuthenticated(false);
-      setTimeout(() => {
-        navigate('/');
-      }, 1500);
-    } finally {
-      localStorage.removeItem('auth_token');
-      setUser(null);
-      setIsAuthenticated(false);
     }
   };
 
   const register = async (userData) => {
     try {
       setLoading(true);
-      console.log('Registering user with data:', userData);
+      console.log('👤 Registering user with data:', {
+        first_name: userData.first_name,
+        last_name: userData.last_name,
+        email: userData.email,
+        phone: userData.phone,
+        username: userData.username
+      });
+
       const response = await authService.register(userData);
+
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
+
         const userData = {
           id: 'user_id',
           email: userData.email,
@@ -149,20 +198,33 @@ export const AuthProvider = ({ children }) => {
           roles: response.user_roles || ['customer'],
           permissions: response.user_permissions || []
         };
+
         setUser(userData);
         setIsAuthenticated(true);
 
-        // Trigger cart refresh after registration
+        // Clear any existing guest session
+        sessionManager.clearSession();
+        console.log('✅ Registration successful, guest session cleared');
+
+        // Notify other components
         const cartEvent = new CustomEvent('authStateChanged', {
-          detail: { action: 'register', user: userData }
+          detail: {
+            action: 'register',
+            user: userData,
+            sessionType: 'authenticated'
+          }
         });
         document.dispatchEvent(cartEvent);
 
         success('Registration successful! Welcome to our platform.');
         return response;
+      } else {
+        throw new Error('No access token received from server');
       }
     } catch (err) {
       console.error('Registration failed:', err);
+
+      // Enhanced error handling
       if (err.response?.status === 422) {
         const validationErrors = err.response.data.detail;
         if (Array.isArray(validationErrors)) {
@@ -180,6 +242,8 @@ export const AuthProvider = ({ children }) => {
         error('Email, phone, or username already exists. Please use different credentials.');
       } else if (err.response?.status === 503) {
         error('Service is under maintenance. Registration is temporarily unavailable.');
+      } else if (err.message) {
+        error(err.message);
       } else {
         error('Registration failed. Please try again.');
       }
@@ -192,6 +256,8 @@ export const AuthProvider = ({ children }) => {
   const forgotPassword = async (email) => {
     try {
       setLoading(true);
+      console.log('🔑 Requesting password reset for:', email);
+
       await authService.forgotPassword(email);
       success('If the email exists, a password reset link has been sent.');
     } catch (err) {
@@ -206,6 +272,8 @@ export const AuthProvider = ({ children }) => {
   const resetPassword = async (token, newPassword) => {
     try {
       setLoading(true);
+      console.log('🔑 Resetting password with token');
+
       await authService.resetPassword(token, newPassword);
       success('Password reset successfully. You can now login with your new password.');
     } catch (err) {
@@ -234,7 +302,48 @@ export const AuthProvider = ({ children }) => {
   };
 
   const refreshUser = async () => {
-    // Implementation for refreshing user data
+    try {
+      console.log('🔄 Refreshing user data...');
+      // This would typically call an endpoint to get fresh user data
+      // For now, we'll just return the current user
+      return user;
+    } catch (error) {
+      console.error('Failed to refresh user:', error);
+      throw error;
+    }
+  };
+
+  const getAuthHeaders = () => {
+    const headers = {};
+
+    const token = localStorage.getItem('auth_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const sessionId = sessionManager.getSession();
+    if (sessionId) {
+      headers['X-Session-ID'] = sessionId;
+    }
+
+    return headers;
+  };
+
+  const getSessionInfo = async () => {
+    try {
+      const response = await fetch('/api/v1/users/session/info', {
+        credentials: 'include',
+        headers: getAuthHeaders()
+      });
+
+      if (response.ok) {
+        return await response.json();
+      }
+      return null;
+    } catch (error) {
+      console.error('Failed to get session info:', error);
+      return null;
+    }
   };
 
   const value = {
@@ -249,7 +358,9 @@ export const AuthProvider = ({ children }) => {
     hasRole,
     hasPermission,
     isAdmin,
-    refreshUser
+    refreshUser,
+    getAuthHeaders,
+    getSessionInfo
   };
 
   return (

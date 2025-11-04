@@ -1,83 +1,88 @@
-import { productApi, authApi } from './api';
+import { productApi, authApi, sessionManager } from './api';
 import { getProductImageUrl } from '../utils/helpers';
 
 export const productService = {
   getFeaturedProducts: async () => {
     try {
-      console.log('📦 Fetching featured products...');
+      console.log('📦 Fetching featured products with session...');
       const response = await productApi.get('/api/v1/products/featured?page_size=12');
       console.log('📦 Featured products response received');
+
+      // Check for session ID in response
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+      }
+
       return response.data.products || [];
     } catch (error) {
       console.error('❌ Error fetching featured products:', error);
-      
-      // Don't return mock data for session/auth issues
       if (error.response?.status === 401 || error.response?.status === 403) {
         throw new Error('Session issue. Please refresh the page.');
       }
-      
       if (error.response?.status === 503) {
         throw new Error('Service temporarily unavailable. Please try again later.');
       }
-      
-      // Only return mock data for network errors, not for session issues
       if (!error.response) {
         console.log('🌐 Network error, returning mock data');
         return getMockProducts();
       }
-      
       throw error;
     }
   },
 
   getBestSellers: async () => {
     try {
-      console.log('📦 Fetching best sellers...');
+      console.log('📦 Fetching best sellers with session...');
       const response = await productApi.get('/api/v1/products/bestsellers?page_size=12');
       console.log('📦 Best sellers response received');
+
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+      }
+
       return response.data.products || [];
     } catch (error) {
       console.error('❌ Error fetching best sellers:', error);
-      
       if (error.response?.status === 401 || error.response?.status === 403) {
         throw new Error('Session issue. Please refresh the page.');
       }
-      
       if (error.response?.status === 503) {
         throw new Error('Service temporarily unavailable. Please try again later.');
       }
-      
       if (!error.response) {
         console.log('🌐 Network error, returning mock data');
         return getMockProducts();
       }
-      
       throw error;
     }
   },
 
   getNewArrivals: async () => {
     try {
-      console.log('📦 Fetching new arrivals...');
+      console.log('📦 Fetching new arrivals with session...');
       const response = await productApi.get('/api/v1/products/new-arrivals?page_size=12');
       console.log('📦 New arrivals response received');
+
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+      }
+
       return response.data.products || [];
     } catch (error) {
       console.error('❌ Error fetching new arrivals:', error);
-      
       if (error.response?.status === 401 || error.response?.status === 403) {
         throw new Error('Session issue. Please refresh the page.');
       }
-      
       if (error.response?.status === 503) {
         throw new Error('Service temporarily unavailable. Please try again later.');
       }
-      
       if (!error.response) {
         console.log('🌐 Network error, returning mock data');
         return getMockProducts();
       }
-      
       throw error;
     }
   },
@@ -87,18 +92,21 @@ export const productService = {
       console.log(`📦 Fetching product by ID: ${productId}`);
       const response = await productApi.get(`/api/v1/products/${productId}`);
       console.log('📦 Product by ID response received');
+
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+      }
+
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching product:', error);
-      
       if (error.response?.status === 404) {
         throw new Error('Product not found.');
       }
-      
       if (error.response?.status === 401 || error.response?.status === 403) {
         throw new Error('Session issue. Please refresh the page.');
       }
-      
       throw error;
     }
   },
@@ -108,18 +116,21 @@ export const productService = {
       console.log(`📦 Fetching product by slug: ${productSlug}`);
       const response = await productApi.get(`/api/v1/products/slug/${productSlug}`);
       console.log('📦 Product by slug response received');
+
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+      }
+
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching product by slug:', error);
-      
       if (error.response?.status === 404) {
         throw new Error('Product not found.');
       }
-      
       if (error.response?.status === 401 || error.response?.status === 403) {
         throw new Error('Session issue. Please refresh the page.');
       }
-      
       throw error;
     }
   },
@@ -129,18 +140,21 @@ export const productService = {
       console.log('📦 Fetching products with params:', params);
       const response = await productApi.get('/api/v1/products/', { params });
       console.log('📦 Products response received');
+
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+      }
+
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching products:', error);
-      
       if (error.response?.status === 401 || error.response?.status === 403) {
         throw new Error('Session issue. Please refresh the page.');
       }
-      
       if (error.response?.status === 503) {
         throw new Error('Service temporarily unavailable. Please try again later.');
       }
-      
       throw error;
     }
   },
@@ -150,20 +164,22 @@ export const productService = {
       console.log('📦 Fetching categories...');
       const response = await productApi.get('/api/v1/products/categories/all');
       console.log('📦 Categories response received');
+
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+      }
+
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching categories:', error);
-      
       if (error.response?.status === 401 || error.response?.status === 403) {
         throw new Error('Session issue. Please refresh the page.');
       }
-      
-      // Return empty array instead of throwing for categories to prevent UI breakage
       if (error.response?.status === 503 || !error.response) {
         console.log('🌐 Network error, returning empty categories');
         return [];
       }
-      
       throw error;
     }
   },
@@ -173,18 +189,21 @@ export const productService = {
       console.log(`📦 Fetching category by slug: ${categorySlug}`);
       const response = await productApi.get(`/api/v1/products/categories/slug/${categorySlug}`);
       console.log('📦 Category by slug response received');
+
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+      }
+
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching category:', error);
-      
       if (error.response?.status === 404) {
         throw new Error('Category not found.');
       }
-      
       if (error.response?.status === 401 || error.response?.status === 403) {
         throw new Error('Session issue. Please refresh the page.');
       }
-      
       throw error;
     }
   },
@@ -195,29 +214,38 @@ export const productService = {
       const params = { search: query, ...filters };
       const response = await productApi.get('/api/v1/products/', { params });
       console.log('📦 Search response received');
+
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+      }
+
       return response.data;
     } catch (error) {
       console.error('❌ Error searching products:', error);
-      
       if (error.response?.status === 401 || error.response?.status === 403) {
         throw new Error('Session issue. Please refresh the page.');
       }
-      
       if (error.response?.status === 503) {
         throw new Error('Service temporarily unavailable. Please try again later.');
       }
-      
-      // Return empty results for search errors
       return { products: [], total_count: 0 };
     }
   },
 
-  // Helper method to initialize session for guest users
   initializeGuestSession: async () => {
     try {
       console.log('🔄 ProductService: Initializing guest session...');
       const response = await productApi.get('/api/v1/products/featured?page_size=1');
-      console.log('✅ ProductService: Guest session initialized');
+
+      const sessionId = response.headers['x-session-id'];
+      if (sessionId) {
+        sessionManager.setSession(sessionId);
+        console.log('✅ ProductService: Guest session initialized with ID:', sessionId);
+      } else {
+        console.log('✅ ProductService: Guest session initialized (no session ID returned)');
+      }
+
       return response.data;
     } catch (error) {
       console.error('❌ ProductService: Failed to initialize guest session:', error);
@@ -226,7 +254,6 @@ export const productService = {
   }
 };
 
-// Mock data fallback (only for network errors, not session issues)
 const getMockProducts = () => [
   {
     id: 1,

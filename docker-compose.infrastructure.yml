@@ -37,8 +37,8 @@ services:
     command: redis-server --appendonly yes --requirepass ${REDIS_PASSWORD:-redis123}
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-redis123}
-    volumes:
-      - ./redis_data:/data
+#    volumes:
+#      - ./redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redis123}", "ping"]
       interval: 10s
