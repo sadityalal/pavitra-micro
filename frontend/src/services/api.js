@@ -1,19 +1,19 @@
 import axios from 'axios';
 
-const createApiInstance = (baseURL) => {
+const createApiInstance = (basePath = '') => {
   const instance = axios.create({
-    baseURL,
+    baseURL: `/api/v1${basePath}`, // This goes through nginx proxy
     withCredentials: true, // This is crucial for cookies
   });
 
   instance.interceptors.request.use(
     (config) => {
-      console.log(`🚀 Making ${config.method?.toUpperCase()} request to: ${config.url}`);
+      console.log(`🚀 Making ${config.method?.toUpperCase()} request to: ${config.baseURL}${config.url}`);
       console.log(`🍪 Current cookies:`, document.cookie);
-      
+
       // Ensure withCredentials is always true
       config.withCredentials = true;
-      
+
       const token = localStorage.getItem('auth_token');
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
@@ -29,10 +29,8 @@ const createApiInstance = (baseURL) => {
     }
   );
 
-  // Add response interceptor to handle session cookies
   instance.interceptors.response.use(
     (response) => {
-      // Log any set-cookie headers from response
       if (response.headers['set-cookie']) {
         console.log('🍪 Server set cookies in response:', response.headers['set-cookie']);
       }
@@ -47,11 +45,11 @@ const createApiInstance = (baseURL) => {
   return instance;
 };
 
-
-export const authApi = createApiInstance(process.env.REACT_APP_AUTH_URL || 'http://localhost:8001');
-export const userApi = createApiInstance(process.env.REACT_APP_USER_URL || 'http://localhost:8004');
-export const productApi = createApiInstance(process.env.REACT_APP_PRODUCT_URL || 'http://localhost:8002');
-export const orderApi = createApiInstance(process.env.REACT_APP_ORDER_URL || 'http://localhost:8003');
-export const paymentApi = createApiInstance(process.env.REACT_APP_PAYMENT_URL || 'http://localhost:8005');
+// Create API instances that match your nginx routes
+export const authApi = createApiInstance('/auth');      // → /api/v1/auth/
+export const userApi = createApiInstance('/users');     // → /api/v1/users/
+export const productApi = createApiInstance('/products'); // → /api/v1/products/
+export const orderApi = createApiInstance('/orders');   // → /api/v1/orders/
+export const paymentApi = createApiInstance('/payments'); // → /api/v1/payments/
 
 export default { authApi, userApi, productApi, orderApi, paymentApi };

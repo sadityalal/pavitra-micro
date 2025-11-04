@@ -125,9 +125,11 @@ class DatabaseConfig:
         if current_time - self._last_settings_check < 5:
             return
         self._last_settings_check = current_time
+
         db = self._get_db()
         if not db:
             return
+
         connection = None
         try:
             connection = db.get_connection()
@@ -140,7 +142,21 @@ class DatabaseConfig:
             """)
             result = cursor.fetchone()
             if result and result['last_update']:
-                new_version = int(result['last_update'].timestamp())
+                # Handle both string and datetime objects
+                last_update = result['last_update']
+                if hasattr(last_update, 'timestamp'):
+                    # It's a datetime object
+                    new_version = int(last_update.timestamp())
+                else:
+                    # It's a string, parse it
+                    try:
+                        from datetime import datetime
+                        dt = datetime.fromisoformat(str(last_update).replace('Z', '+00:00'))
+                        new_version = int(dt.timestamp())
+                    except (ValueError, AttributeError):
+                        # Fallback to current time if parsing fails
+                        new_version = int(current_time)
+
                 if new_version > self._settings_version:
                     logger.info("Settings updated in database, clearing cache")
                     self._cache.clear()
