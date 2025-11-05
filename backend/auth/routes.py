@@ -351,7 +351,6 @@ async def register_user(
                 new_session = session_service.create_session(session_data)
                 logger.info(f"Created new user session: {new_session.session_id}")
 
-            # CRITICAL FIX: Always set the new session cookie
             if new_session and response:
                 session_config = config.get_session_config()
                 session_timeout = session_config.get('user_session_duration', 2592000)
@@ -364,7 +363,10 @@ async def register_user(
                     samesite="Lax",
                     path="/"
                 )
-                logger.info(f"Set user session cookie for user {user_id}: {new_session.session_id}")
+                # Also update the request state with new session
+                request.state.session = new_session
+                request.state.session_id = new_session.session_id
+                logger.info(f"Set user session cookie for user {user['id']}: {new_session.session_id}")
 
             if background_tasks:
                 cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
@@ -715,8 +717,8 @@ async def login_user(
                     new_session = session_service.create_session(session_data)
                     logger.info(f"Created new user session: {new_session.session_id}")
 
-            # CRITICAL FIX: Always set the new session cookie
             if new_session and response:
+                session_config = config.get_session_config()
                 session_timeout = session_config.get('user_session_duration', 2592000)
                 response.set_cookie(
                     key="session_id",
@@ -727,6 +729,9 @@ async def login_user(
                     samesite="Lax",
                     path="/"
                 )
+                # Also update the request state with new session
+                request.state.session = new_session
+                request.state.session_id = new_session.session_id
                 logger.info(f"Set user session cookie for user {user['id']}: {new_session.session_id}")
 
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))

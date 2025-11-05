@@ -47,6 +47,9 @@ class SecureSessionMiddleware:
             security_token = request.headers.get(self.security_header_name)
             is_new_session = False
             session = None
+
+            original_session_id = session_id
+
             if session_id:
                 session = session_service.get_session(
                     session_id,
@@ -59,6 +62,7 @@ class SecureSessionMiddleware:
                 else:
                     session_id = None
                     logger.debug(f"Invalid session ID provided: {session_id}")
+
             if not session:
                 should_create_session = self._should_create_session(request)
                 if should_create_session:
@@ -69,20 +73,33 @@ class SecureSessionMiddleware:
                         logger.info(f"Created new guest session: {session_id}")
                 else:
                     logger.debug("Skipping session creation for non-browser request")
+
             request.state.session = session
             request.state.session_id = session_id
             request.state.is_new_session = is_new_session
+            request.state.original_session_id = original_session_id  # Store original for comparison
 
             async def session_send_wrapper(message):
                 if message["type"] == "http.response.start":
+                    # Get current session state (might have changed during request processing)
+                    current_session = getattr(request.state, 'session', None)
+                    current_session_id = getattr(request.state, 'session_id', None)
+                    current_is_new_session = getattr(request.state, 'is_new_session', False)
+
                     await self._set_response_headers(
-                        message, session, session_id, is_new_session, request
+                        message, current_session, current_session_id, current_is_new_session, request
                     )
                 await send(message)
+            try:
+                response = await self.app(scope, receive, session_send_wrapper)
+                return response
+            except Exception as e:
+                logger.error(f"Request processing error: {e}")
+                raise
 
-            return await self.app(scope, receive, session_send_wrapper)
         except Exception as e:
             logger.error(f"Secure session middleware error: {e}")
+            # Fallback to original send without session handling
             return await self.app(scope, receive, send)
 
     def _get_session_id(self, request: Request) -> Optional[str]:
@@ -102,43 +119,51 @@ class SecureSessionMiddleware:
 
     async def _set_response_headers(self, message, session, session_id, is_new_session, request):
         headers = message.get("headers", [])
-        endpoint_set_session = any(
-            header[0] in [b"set-cookie", b"x-session-id"]
-            for header in headers
-        )
-        if endpoint_set_session:
-            logger.debug("Endpoint already set session headers, but will update x-secure-session-id")
-            # DON'T RETURN HERE - CONTINUE TO UPDATE HEADERS
 
+        # Get original session ID for migration detection
+        original_session_id = getattr(request.state, 'original_session_id', None)
+
+        # Check if session was migrated during request processing
+        migrated_session_id = None
+        if (session and
+                hasattr(session, 'session_id') and
+                original_session_id and
+                session.session_id != original_session_id):
+            migrated_session_id = session.session_id
+            logger.info(f"Session migrated from {original_session_id} to {migrated_session_id}")
+
+        # Use migrated session ID if available, otherwise use current
+        final_session_id = migrated_session_id if migrated_session_id else session_id
+
+        # Remove any existing session headers to avoid conflicts
         headers = [header for header in headers if not (
-                header[0] in [b"set-cookie", b"x-session-id", b"x-csrf-token"] and
+                header[0] in [b"set-cookie", b"x-session-id", b"x-secure-session-id", b"x-csrf-token"] and
                 (self.session_cookie_name.encode() in header[1] if header[0] == b"set-cookie" else True)
         )]
-        new_session_id = None
-        for header in headers:
-            if header[0] == b"set-cookie" and self.session_cookie_name.encode() in header[1]:
-                cookie_value = header[1].decode()
-                import re
-                match = re.search(r'session_id=([^;]+)', cookie_value)
-                if match:
-                    new_session_id = match.group(1)
-                    break
-        final_session_id = new_session_id if new_session_id else session_id
+
+        # Set session headers with the correct session ID
         if final_session_id:
             headers.append([b"x-secure-session-id", final_session_id.encode()])
             if session and session.csrf_token:
                 headers.append([b"x-csrf-token", session.csrf_token.encode()])
-            logger.debug(f"Forwarding session ID: {final_session_id}")
-        if is_new_session and session and session_id and self.enable_secure_cookies:
-            cookie_value = self._build_secure_cookie(session_id, session)
+            logger.debug(f"Setting session ID in headers: {final_session_id}")
+
+        # Set cookie for new sessions or migrated sessions
+        should_set_cookie = (is_new_session or migrated_session_id) and session and self.enable_secure_cookies
+        if should_set_cookie:
+            cookie_session_id = migrated_session_id if migrated_session_id else final_session_id
+            cookie_value = self._build_secure_cookie(cookie_session_id, session)
             headers.append([b"set-cookie", cookie_value.encode()])
-            logger.info(f"Set session cookie: {session_id}")
+            logger.info(f"Set session cookie: {cookie_session_id}")
+
+        # Add security headers
         headers.extend([
             [b"x-content-type-options", b"nosniff"],
             [b"x-frame-options", b"DENY"],
             [b"x-xss-protection", b"1; mode=block"],
             [b"strict-transport-security", b"max-age=31536000; includeSubDomains"]
         ])
+
         message["headers"] = headers
 
     def _build_secure_cookie(self, session_id: str, session: SessionData) -> str:
