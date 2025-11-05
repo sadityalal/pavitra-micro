@@ -23,18 +23,15 @@ export const CartProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const { isAuthenticated, user } = useAuth();
 
-  // Initialize session by calling user service (primary session creator)
   const initializeSession = async () => {
     try {
       console.log('🔄 Initializing session via user service...');
-      // Call user service health endpoint to trigger session creation
       const response = await fetch('/api/v1/users/health', {
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
         },
       });
-
       if (response.ok) {
         const sessionId = response.headers.get('x-session-id');
         if (sessionId) {
@@ -55,21 +52,16 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-
-      // Ensure session is initialized for guest users
       if (!isAuthenticated && !sessionManager.getSession()) {
         await initializeSession();
       }
-
       const cartData = await cartService.getCart();
       console.log('🛒 CartContext: Fetched cart data:', cartData);
-
       setCart({
         items: cartData.items || [],
         subtotal: cartData.subtotal || 0,
         total_items: cartData.total_items || 0
       });
-
     } catch (error) {
       console.error('🛒 CartContext: Error fetching cart:', error);
       setError(error.message);
@@ -87,21 +79,13 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-
       console.log('🛒 Adding to cart with shared session...');
-
-      // Ensure session is initialized
       if (!isAuthenticated && !sessionManager.getSession()) {
         await initializeSession();
       }
-
       const result = await cartService.addToCart(productId, quantity, variationId);
       console.log('🛒 Add to cart result:', result);
-
-      // Refresh cart data
       await fetchCart();
-
-      // Notify other components
       const event = new CustomEvent('cartUpdated', {
         detail: {
           action: 'add',
@@ -110,9 +94,7 @@ export const CartProvider = ({ children }) => {
         }
       });
       document.dispatchEvent(event);
-
       return result;
-
     } catch (error) {
       console.error('🛒 CartContext: Error adding to cart:', error);
       setError(error.message);
@@ -126,10 +108,8 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-
       await cartService.updateCartItem(cartItemId, quantity);
       await fetchCart();
-
     } catch (error) {
       console.error('🛒 CartContext: Error updating cart:', error);
       setError(error.message);
@@ -143,10 +123,8 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-
       await cartService.removeFromCart(cartItemId);
       await fetchCart();
-
     } catch (error) {
       console.error('🛒 CartContext: Error removing from cart:', error);
       setError(error.message);
@@ -160,10 +138,8 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
-
       await cartService.clearCart();
       await fetchCart();
-
     } catch (error) {
       console.error('🛒 CartContext: Error clearing cart:', error);
       setError(error.message);
@@ -173,30 +149,25 @@ export const CartProvider = ({ children }) => {
     }
   };
 
-  // Initialize session on component mount for guest users
   useEffect(() => {
     if (!isAuthenticated) {
       initializeSession();
     }
   }, [isAuthenticated]);
 
-  // Refresh cart when auth state changes
   useEffect(() => {
     console.log('🔄 Auth state changed, refreshing cart...', { isAuthenticated, userId: user?.id });
     fetchCart();
   }, [isAuthenticated, user?.id]);
 
-  // Event listeners for cart updates
   useEffect(() => {
     const handleCartUpdate = () => {
       console.log('🛒 CartContext: Cart update event received, refreshing cart...');
       fetchCart();
     };
-
     const handleAuthStateChange = (event) => {
       console.log('🔐 CartContext: Auth state change event received:', event.detail);
       if (event.detail.action === 'logout') {
-        // Clear cart and session on logout
         setCart({
           items: [],
           subtotal: 0,
@@ -206,17 +177,14 @@ export const CartProvider = ({ children }) => {
       }
       fetchCart();
     };
-
     document.addEventListener('cartUpdated', handleCartUpdate);
     document.addEventListener('authStateChanged', handleAuthStateChange);
-
     return () => {
       document.removeEventListener('cartUpdated', handleCartUpdate);
       document.removeEventListener('authStateChanged', handleAuthStateChange);
     };
   }, []);
 
-  // Initial cart fetch
   useEffect(() => {
     fetchCart();
   }, []);

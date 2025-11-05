@@ -37,7 +37,6 @@ export const AuthProvider = ({ children }) => {
       try {
         const token = localStorage.getItem('auth_token');
         if (token) {
-          // Verify token is still valid by making a simple API call
           try {
             const userProfile = await authService.getSiteSettings().catch(() => null);
             if (userProfile) {
@@ -50,7 +49,6 @@ export const AuthProvider = ({ children }) => {
               });
               console.log('✅ User authenticated from stored token');
             } else {
-              // Token is invalid
               localStorage.removeItem('auth_token');
               sessionManager.clearSession();
               console.log('❌ Stored token is invalid, clearing auth state');
@@ -79,12 +77,9 @@ export const AuthProvider = ({ children }) => {
         login_id: credentials.login_id,
         password_length: credentials.password ? credentials.password.length : 0
       });
-
       const response = await authService.login(credentials);
-
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
-
         const userData = {
           id: 'user_id',
           email: credentials.login_id,
@@ -93,15 +88,10 @@ export const AuthProvider = ({ children }) => {
           roles: response.user_roles || ['customer'],
           permissions: response.user_permissions || []
         };
-
         setUser(userData);
         setIsAuthenticated(true);
-
-        // Clear any existing guest session and use authenticated session
         sessionManager.clearSession();
         console.log('✅ Login successful, guest session cleared');
-
-        // Notify other components about auth state change
         const cartEvent = new CustomEvent('authStateChanged', {
           detail: {
             action: 'login',
@@ -110,7 +100,6 @@ export const AuthProvider = ({ children }) => {
           }
         });
         document.dispatchEvent(cartEvent);
-
         success('Login successful! Welcome back.');
         return response;
       } else {
@@ -118,8 +107,6 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('Login failed:', err);
-
-      // Enhanced error handling with specific messages
       if (err.response?.status === 401) {
         error('Invalid credentials. Please check your email/username and password.');
       } else if (err.response?.status === 422) {
@@ -150,15 +137,11 @@ export const AuthProvider = ({ children }) => {
       console.error('Logout API call failed:', err);
       error('There was an issue during logout, but you have been logged out locally.');
     } finally {
-      // Always clear local state regardless of API call success
       localStorage.removeItem('auth_token');
       sessionManager.clearSession();
       setUser(null);
       setIsAuthenticated(false);
-
       console.log('✅ Local auth state cleared');
-
-      // Notify other components about logout
       const cartEvent = new CustomEvent('authStateChanged', {
         detail: {
           action: 'logout',
@@ -166,8 +149,6 @@ export const AuthProvider = ({ children }) => {
         }
       });
       document.dispatchEvent(cartEvent);
-
-      // Redirect to home after a short delay
       setTimeout(() => {
         navigate('/');
       }, 500);
@@ -184,12 +165,9 @@ export const AuthProvider = ({ children }) => {
         phone: userData.phone,
         username: userData.username
       });
-
       const response = await authService.register(userData);
-
       if (response.access_token) {
         localStorage.setItem('auth_token', response.access_token);
-
         const userData = {
           id: 'user_id',
           email: userData.email,
@@ -198,15 +176,10 @@ export const AuthProvider = ({ children }) => {
           roles: response.user_roles || ['customer'],
           permissions: response.user_permissions || []
         };
-
         setUser(userData);
         setIsAuthenticated(true);
-
-        // Clear any existing guest session
         sessionManager.clearSession();
         console.log('✅ Registration successful, guest session cleared');
-
-        // Notify other components
         const cartEvent = new CustomEvent('authStateChanged', {
           detail: {
             action: 'register',
@@ -215,7 +188,6 @@ export const AuthProvider = ({ children }) => {
           }
         });
         document.dispatchEvent(cartEvent);
-
         success('Registration successful! Welcome to our platform.');
         return response;
       } else {
@@ -223,8 +195,6 @@ export const AuthProvider = ({ children }) => {
       }
     } catch (err) {
       console.error('Registration failed:', err);
-
-      // Enhanced error handling
       if (err.response?.status === 422) {
         const validationErrors = err.response.data.detail;
         if (Array.isArray(validationErrors)) {
@@ -257,7 +227,6 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       console.log('🔑 Requesting password reset for:', email);
-
       await authService.forgotPassword(email);
       success('If the email exists, a password reset link has been sent.');
     } catch (err) {
@@ -273,7 +242,6 @@ export const AuthProvider = ({ children }) => {
     try {
       setLoading(true);
       console.log('🔑 Resetting password with token');
-
       await authService.resetPassword(token, newPassword);
       success('Password reset successfully. You can now login with your new password.');
     } catch (err) {
@@ -304,8 +272,6 @@ export const AuthProvider = ({ children }) => {
   const refreshUser = async () => {
     try {
       console.log('🔄 Refreshing user data...');
-      // This would typically call an endpoint to get fresh user data
-      // For now, we'll just return the current user
       return user;
     } catch (error) {
       console.error('Failed to refresh user:', error);
@@ -315,17 +281,14 @@ export const AuthProvider = ({ children }) => {
 
   const getAuthHeaders = () => {
     const headers = {};
-
     const token = localStorage.getItem('auth_token');
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-
     const sessionId = sessionManager.getSession();
     if (sessionId) {
       headers['X-Session-ID'] = sessionId;
     }
-
     return headers;
   };
 
@@ -335,7 +298,6 @@ export const AuthProvider = ({ children }) => {
         credentials: 'include',
         headers: getAuthHeaders()
       });
-
       if (response.ok) {
         return await response.json();
       }
