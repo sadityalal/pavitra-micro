@@ -42,10 +42,20 @@ export const CartProvider = ({ children }) => {
         }
         return true;
       }
+      return false;
     } catch (error) {
       console.error('❌ Failed to initialize session:', error);
       return false;
     }
+  };
+
+  // Add this function to ensure session is always available
+  const ensureSession = async () => {
+    if (!isAuthenticated && !sessionManager.getSession()) {
+      console.log('🔄 Ensuring guest session for cart operations...');
+      return await initializeSession();
+    }
+    return true;
   };
 
   const fetchCart = async () => {
@@ -79,13 +89,15 @@ export const CartProvider = ({ children }) => {
     try {
       setLoading(true);
       setError(null);
+
+      // Ensure session exists before adding to cart
+      await ensureSession();
+
       console.log('🛒 Adding to cart with shared session...');
-      if (!isAuthenticated && !sessionManager.getSession()) {
-        await initializeSession();
-      }
       const result = await cartService.addToCart(productId, quantity, variationId);
       console.log('🛒 Add to cart result:', result);
       await fetchCart();
+
       const event = new CustomEvent('cartUpdated', {
         detail: {
           action: 'add',
@@ -94,6 +106,7 @@ export const CartProvider = ({ children }) => {
         }
       });
       document.dispatchEvent(event);
+
       return result;
     } catch (error) {
       console.error('🛒 CartContext: Error adding to cart:', error);
@@ -165,6 +178,7 @@ export const CartProvider = ({ children }) => {
       console.log('🛒 CartContext: Cart update event received, refreshing cart...');
       fetchCart();
     };
+
     const handleAuthStateChange = (event) => {
       console.log('🔐 CartContext: Auth state change event received:', event.detail);
       if (event.detail.action === 'logout') {
@@ -177,8 +191,10 @@ export const CartProvider = ({ children }) => {
       }
       fetchCart();
     };
+
     document.addEventListener('cartUpdated', handleCartUpdate);
     document.addEventListener('authStateChanged', handleAuthStateChange);
+
     return () => {
       document.removeEventListener('cartUpdated', handleCartUpdate);
       document.removeEventListener('authStateChanged', handleAuthStateChange);
@@ -198,7 +214,8 @@ export const CartProvider = ({ children }) => {
     removeFromCart,
     clearCart,
     refreshCart: fetchCart,
-    initializeSession
+    initializeSession,
+    ensureSession
   };
 
   return (

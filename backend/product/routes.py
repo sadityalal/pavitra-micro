@@ -179,10 +179,10 @@ def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None)
 
 @router.get("/{product_id}/cart-validation")
 async def validate_product_cart_addition(
-        product_id: int,
-        quantity: int = Query(1, ge=1),
-        variation_id: Optional[int] = Query(None),
-        request: Request = None
+    product_id: int,
+    quantity: int = Query(1, ge=1),
+    variation_id: Optional[int] = Query(None),
+    request: Request = None
 ):
     try:
         await rate_limiter.check_rate_limit(request)

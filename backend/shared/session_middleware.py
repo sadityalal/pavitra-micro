@@ -168,19 +168,18 @@ class SecureSessionMiddleware:
         return "; ".join(cookie_parts)
 
     def _should_create_session(self, request: Request) -> bool:
-        """Always create session for web requests, be more selective for API calls"""
+        if request.url.path.startswith('/api/v1/users/cart') or \
+                request.url.path.startswith('/api/v1/products'):
+            return True
 
-        # Always create session for these paths (frontend routes)
         frontend_paths = ['/', '/products', '/cart', '/checkout', '/login', '/register']
         if any(request.url.path.startswith(path) for path in frontend_paths):
             return True
 
-        # Don't create sessions for health checks, static files, etc.
         no_session_paths = ['/health', '/favicon.ico', '/metrics', '/docs', '/redoc', '/openapi.json', '/static/']
         if any(request.url.path.startswith(path) for path in no_session_paths):
             return False
 
-        # For API calls, check if it's a frontend-initiated request
         has_frontend_indicators = any([
             request.headers.get('origin'),
             request.headers.get('referer'),
@@ -189,7 +188,6 @@ class SecureSessionMiddleware:
             request.headers.get('x-requested-with') == 'XMLHttpRequest',
             request.headers.get('user-agent', '').lower() in ['mozilla', 'chrome', 'safari', 'firefox']
         ])
-
         return has_frontend_indicators
 
     async def _create_new_guest_session(self, request: Request) -> Optional[SessionData]:

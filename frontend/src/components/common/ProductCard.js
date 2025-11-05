@@ -17,13 +17,16 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
       console.log('ProductCard: Adding product to cart:', product.id);
       await addToCart(product.id, 1);
       console.log('ProductCard: Product added to cart successfully');
-
       if (onAddToCart) {
         onAddToCart(product);
       }
     } catch (error) {
       console.error('ProductCard: Failed to add to cart:', error);
-      alert(error.message || 'Failed to add product to cart');
+      if (error.message.includes('session') || error.message.includes('Session')) {
+        alert('Please refresh the page and try again. Session issue detected.');
+      } else {
+        alert(error.message || 'Failed to add product to cart');
+      }
     } finally {
       setAddingToCart(false);
     }

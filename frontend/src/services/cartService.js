@@ -23,15 +23,18 @@ export const cartService = {
       const payload = {
         quantity: parseInt(quantity)
       };
+
       if (variationId) {
         payload.variation_id = variationId;
       }
+
       const response = await userApi.post(`/cart/${productId}`, payload);
       console.log('🛒 ADD TO CART - Success:', response.data);
       return response.data;
     } catch (error) {
       console.error('🛒 ADD TO CART - Error:', error);
       console.error('🛒 Error response:', error.response?.data);
+
       if (error.response?.status === 401) {
         throw new Error('Session issue. Please refresh the page.');
       } else if (error.response?.status === 404) {
