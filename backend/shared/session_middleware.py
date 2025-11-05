@@ -101,66 +101,44 @@ class SecureSessionMiddleware:
         return bool(re.match(r'^[A-Za-z0-9_-]{32,64}$', session_id))
 
     async def _set_response_headers(self, message, session, session_id, is_new_session, request):
-        """Set session-related response headers"""
         headers = message.get("headers", [])
-
-        # Check if endpoint already set session headers
         endpoint_set_session = any(
             header[0] in [b"set-cookie", b"x-session-id"]
             for header in headers
         )
-
         if endpoint_set_session:
-            logger.debug("Endpoint already set session headers, skipping middleware session handling")
-            # Still add security headers but skip session headers
-            headers.extend([
-                [b"x-content-type-options", b"nosniff"],
-                [b"x-frame-options", b"DENY"],
-                [b"x-xss-protection", b"1; mode=block"],
-                [b"strict-transport-security", b"max-age=31536000; includeSubDomains"]
-            ])
-            message["headers"] = headers
-            return
+            logger.debug("Endpoint already set session headers, but will update x-secure-session-id")
+            # DON'T RETURN HERE - CONTINUE TO UPDATE HEADERS
 
-        # Remove existing session headers (only if endpoint didn't set them)
         headers = [header for header in headers if not (
                 header[0] in [b"set-cookie", b"x-session-id", b"x-csrf-token"] and
                 (self.session_cookie_name.encode() in header[1] if header[0] == b"set-cookie" else True)
         )]
-
-        # FIX: Check if there's a new session ID in set-cookie headers
         new_session_id = None
         for header in headers:
             if header[0] == b"set-cookie" and self.session_cookie_name.encode() in header[1]:
-                # Extract new session ID from set-cookie header
                 cookie_value = header[1].decode()
                 import re
                 match = re.search(r'session_id=([^;]+)', cookie_value)
                 if match:
                     new_session_id = match.group(1)
                     break
-
-        # Use new session ID if available, otherwise use the original one
         final_session_id = new_session_id if new_session_id else session_id
-
         if final_session_id:
             headers.append([b"x-secure-session-id", final_session_id.encode()])
             if session and session.csrf_token:
                 headers.append([b"x-csrf-token", session.csrf_token.encode()])
             logger.debug(f"Forwarding session ID: {final_session_id}")
-
         if is_new_session and session and session_id and self.enable_secure_cookies:
             cookie_value = self._build_secure_cookie(session_id, session)
             headers.append([b"set-cookie", cookie_value.encode()])
             logger.info(f"Set session cookie: {session_id}")
-
         headers.extend([
             [b"x-content-type-options", b"nosniff"],
             [b"x-frame-options", b"DENY"],
             [b"x-xss-protection", b"1; mode=block"],
             [b"strict-transport-security", b"max-age=31536000; includeSubDomains"]
         ])
-
         message["headers"] = headers
 
     def _build_secure_cookie(self, session_id: str, session: SessionData) -> str:
