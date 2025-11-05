@@ -1,7 +1,7 @@
 import html
 from fastapi import APIRouter, HTTPException, Depends, Query, status, UploadFile, File, Request, BackgroundTasks
 from typing import Optional, List
-from shared import config, db, sanitize_input, get_logger, require_roles, redis_client, rabbitmq_client
+from shared import config, db, sanitize_input, get_logger, redis_client, rabbitmq_client
 from shared.auth_middleware import get_current_user
 from shared.rate_limiter import rate_limiter
 from shared.session_middleware import get_session, get_session_id
@@ -16,8 +16,10 @@ import os
 import json
 from urllib.parse import urlparse
 import re
+
 router = APIRouter()
 logger = get_logger(__name__)
+
 def validate_product_for_cart(product_id: int, quantity: int, variation_id: Optional[int] = None) -> dict:
     try:
         with db.get_cursor() as cursor:
@@ -36,6 +38,7 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found or not available"
                 )
+
             config.refresh_cache()
             max_cart_quantity = getattr(config, 'max_cart_quantity_per_product', 20)
             product_max_quantity = product['max_cart_quantity']
@@ -43,22 +46,26 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
                 max_quantity = min(product_max_quantity, max_cart_quantity)
             else:
                 max_quantity = max_cart_quantity
+
             if product['status'] != 'active':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Product is not available"
                 )
+
             if product['stock_status'] == 'out_of_stock':
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Product is out of stock"
                 )
+
             if product['stock_quantity'] is None:
                 logger.error(f"Product {product_id} has null stock_quantity")
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Product data integrity error - contact administrator"
                 )
+
             if product['track_inventory'] and product['stock_status'] != 'on_backorder':
                 stock_quantity = product['stock_quantity'] or 0
                 if quantity > stock_quantity and product['stock_status'] != 'on_backorder':
@@ -66,11 +73,13 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Insufficient stock available"
                     )
+
             if quantity > max_quantity:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Maximum {max_quantity} items can be added to cart per order"
                 )
+
             if variation_id:
                 cursor.execute("""
                     SELECT stock_quantity, stock_status
@@ -93,6 +102,7 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Only {variation['stock_quantity']} items available for this variation"
                     )
+
             return {
                 'id': product['id'],
                 'name': product['name'],
@@ -110,6 +120,8 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to validate product for cart"
         )
+
+
 def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None) -> dict:
     try:
         with db.get_cursor() as cursor:
@@ -129,6 +141,7 @@ def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None)
                     'stock_quantity': 0,
                     'stock_status': 'out_of_stock'
                 }
+
             max_quantity = product['max_cart_quantity'] or 20
             variation_stock = None
             if variation_id:
@@ -143,6 +156,7 @@ def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None)
                         'stock_quantity': variation['stock_quantity'],
                         'stock_status': variation['stock_status']
                     }
+
             return {
                 'available': True,
                 'max_quantity': max_quantity,
@@ -161,6 +175,8 @@ def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None)
             'stock_quantity': 0,
             'stock_status': 'out_of_stock'
         }
+
+
 @router.get("/{product_id}/cart-validation")
 async def validate_product_cart_addition(
         product_id: int,
@@ -175,6 +191,7 @@ async def validate_product_cart_addition(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Quantity must be at least 1"
             )
+
         product_data = validate_product_for_cart(product_id, quantity, variation_id)
         return {
             "valid": True,
@@ -193,6 +210,8 @@ async def validate_product_cart_addition(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to validate product for cart"
         )
+
+
 @router.post("/bulk-cart-info")
 async def get_bulk_cart_product_info(
         product_ids: List[int],
@@ -207,6 +226,7 @@ async def get_bulk_cart_product_info(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Maximum 50 products allowed per request"
             )
+
         with db.get_cursor() as cursor:
             placeholders = ','.join(['%s'] * len(product_ids))
             query = f"""
@@ -233,6 +253,7 @@ async def get_bulk_cart_product_info(
                     'available': True,
                     'track_inventory': bool(product['track_inventory'])
                 }
+
             result_products = []
             for pid in product_ids:
                 if pid in product_map:
@@ -243,6 +264,7 @@ async def get_bulk_cart_product_info(
                         'available': False,
                         'stock_status': 'out_of_stock'
                     })
+
             return {"products": result_products}
     except Exception as e:
         logger.error(f"Failed to get bulk cart info: {e}")
@@ -250,6 +272,8 @@ async def get_bulk_cart_product_info(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get product information"
         )
+
+
 def invalidate_product_cache_comprehensive(product_id: int):
     try:
         keys_to_delete = [
@@ -269,6 +293,8 @@ def invalidate_product_cache_comprehensive(product_id: int):
         logger.info(f"Comprehensively invalidated cache for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to comprehensively invalidate product cache: {e}")
+
+
 def get_cached_products_with_fallback(cache_key: str, fallback_func: callable, expire: int = 1800):
     try:
         cached_data = redis_client.get(cache_key)
@@ -276,6 +302,7 @@ def get_cached_products_with_fallback(cache_key: str, fallback_func: callable, e
             return json.loads(cached_data)
     except Exception as e:
         logger.warning(f"Cache read failed for {cache_key}: {e}")
+
     lock_key = f"lock:{cache_key}"
     try:
         if redis_client.setnx(lock_key, "1") and redis_client.expire(lock_key, 10):
@@ -297,6 +324,8 @@ def get_cached_products_with_fallback(cache_key: str, fallback_func: callable, e
         logger.error(f"Fallback function failed for {cache_key}: {e}")
         redis_client.delete(lock_key)
         return None
+
+
 def publish_product_event(product_data: dict, event_type: str):
     try:
         message = {
@@ -314,6 +343,8 @@ def publish_product_event(product_data: dict, event_type: str):
         logger.info(f"Product {event_type} event published for product {product_data['id']}")
     except Exception as e:
         logger.error(f"Failed to publish product event: {e}")
+
+
 def cache_product(product_id: int, product_data: dict, expire: int = 1800):
     try:
         key = f"product:{product_id}"
@@ -321,6 +352,8 @@ def cache_product(product_id: int, product_data: dict, expire: int = 1800):
         logger.info(f"Cached product {product_id}")
     except Exception as e:
         logger.error(f"Failed to cache product: {e}")
+
+
 def get_cached_product(product_id: int) -> Optional[dict]:
     try:
         key = f"product:{product_id}"
@@ -328,6 +361,7 @@ def get_cached_product(product_id: int) -> Optional[dict]:
         data = redis_client.get(key)
         if data:
             return json.loads(data)
+
         if redis_client.setnx(lock_key, "1") and redis_client.expire(lock_key, 10):
             return None
         else:
@@ -337,6 +371,8 @@ def get_cached_product(product_id: int) -> Optional[dict]:
     except Exception as e:
         logger.error(f"Failed to get cached product: {e}")
         return None
+
+
 def cache_categories(categories_data: List[dict], expire: int = 3600):
     try:
         key = "categories:all"
@@ -344,6 +380,8 @@ def cache_categories(categories_data: List[dict], expire: int = 3600):
         logger.info("Cached categories")
     except Exception as e:
         logger.error(f"Failed to cache categories: {e}")
+
+
 def get_cached_categories() -> Optional[List[dict]]:
     try:
         key = "categories:all"
@@ -354,6 +392,8 @@ def get_cached_categories() -> Optional[List[dict]]:
     except Exception as e:
         logger.error(f"Failed to get cached categories: {e}")
         return None
+
+
 def invalidate_product_cache(product_id: int):
     try:
         keys_to_delete = [
@@ -373,6 +413,8 @@ def invalidate_product_cache(product_id: int):
         logger.info(f"Targeted cache invalidation for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to invalidate product cache: {e}")
+
+
 def normalize_image_urls(image_data):
     if not image_data:
         return image_data
@@ -391,19 +433,25 @@ def normalize_image_urls(image_data):
                 normalized.append(img_url)
         return normalized
     return image_data
+
+
 def update_session_product_views(session, product_id: int, session_id: str):
     try:
         if not session or not session_id:
             return
+
         viewed_products = getattr(session, 'viewed_products', [])
         if product_id not in viewed_products:
             viewed_products.insert(0, product_id)
             viewed_products = viewed_products[:50]
+
         session_service.update_session_data(session_id, {
             'viewed_products': viewed_products
         })
     except Exception as e:
         logger.error(f"Failed to update session product views: {e}")
+
+
 def get_session_wishlist(session):
     try:
         if not session:
@@ -412,10 +460,13 @@ def get_session_wishlist(session):
     except Exception as e:
         logger.error(f"Failed to get session wishlist: {e}")
         return []
+
+
 def update_session_wishlist(session, session_id: str, product_id: int, action: str):
     try:
         if not session or not session_id:
             return False
+
         wishlist_items = getattr(session, 'wishlist_items', [])
         if action == 'add':
             if product_id not in wishlist_items:
@@ -423,12 +474,15 @@ def update_session_wishlist(session, session_id: str, product_id: int, action: s
         elif action == 'remove':
             if product_id in wishlist_items:
                 wishlist_items.remove(product_id)
+
         return session_service.update_session_data(session_id, {
             'wishlist_items': wishlist_items
         })
     except Exception as e:
         logger.error(f"Failed to update session wishlist: {e}")
         return False
+
+
 def validate_uploaded_file(file: UploadFile) -> bool:
     try:
         max_size = 5 * 1024 * 1024
@@ -441,30 +495,36 @@ def validate_uploaded_file(file: UploadFile) -> bool:
         if file_size == 0:
             logger.warning(f"Empty file: {file.filename}")
             return False
+
         file_content = file.file.read(1024)
         file.file.seek(0)
         file_extension = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
         if file_extension not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
             logger.warning(f"Invalid file extension: {file.filename}")
             return False
+
         valid_signatures = {
             b'\xff\xd8\xff': 'jpeg',
             b'\x89PNG\r\n\x1a\n': 'png',
             b'GIF8': 'gif',
             b'RIFF....WEBPVP8': 'webp'
         }
+
         signature_valid = False
         for signature, file_type in valid_signatures.items():
             if file_content.startswith(signature):
                 signature_valid = True
                 break
+
         if not signature_valid:
             logger.warning(f"Invalid file signature: {file.filename}")
             return False
+
         allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
         if file.content_type not in allowed_types:
             logger.warning(f"Invalid content type: {file.filename} - {file.content_type}")
             return False
+
         try:
             from PIL import Image
             import io
@@ -479,10 +539,13 @@ def validate_uploaded_file(file: UploadFile) -> bool:
         except Exception as e:
             logger.warning(f"Image integrity check failed for {file.filename}: {e}")
             return False
+
         return True
     except Exception as e:
         logger.error(f"File validation error for {file.filename}: {e}")
         return False
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health():
     try:
@@ -495,6 +558,7 @@ async def health():
                 categories_count=0,
                 timestamp=datetime.utcnow()
             )
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT COUNT(*) as count FROM products WHERE status = 'active'")
             products_count = cursor.fetchone()['count']
@@ -516,6 +580,8 @@ async def health():
             categories_count=0,
             timestamp=datetime.utcnow()
         )
+
+
 @router.get("/site-settings")
 async def get_site_settings(current_user: dict = Depends(get_current_user)):
     user_roles = current_user.get('roles', [])
@@ -524,6 +590,7 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin access required"
         )
+
     try:
         config.refresh_cache()
         settings = {
@@ -573,6 +640,8 @@ async def get_site_settings(current_user: dict = Depends(get_current_user)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch site settings"
         )
+
+
 @router.get("/frontend-settings")
 async def get_frontend_settings():
     try:
@@ -603,6 +672,8 @@ async def get_frontend_settings():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch frontend settings"
         )
+
+
 @router.get("/", response_model=ProductListResponse)
 async def get_products(
         request: Request,
@@ -630,12 +701,19 @@ async def get_products(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
-            session_service.update_session_activity(session_id)
+            try:
+                session_service.update_session_activity(session_id)
+            except Exception as e:
+                logger.warning(f"Failed to update session activity: {e}")
+
         logger.info(f"🔍 Fetching products with filters - search: {search}, category_id: {category_id}, page: {page}")
+
         query_conditions = ["p.status = 'active'"]
         query_params = []
+
         if search:
             search_condition = """
                 (MATCH(p.name, p.short_description, p.description) AGAINST (%s IN BOOLEAN MODE)
@@ -644,42 +722,56 @@ async def get_products(
             query_conditions.append(search_condition)
             search_term = f"%{sanitize_input(search)}%"
             query_params.extend([search, search_term, search_term, search_term])
+
         if category_id:
             query_conditions.append("p.category_id = %s")
             query_params.append(category_id)
+
         if brand_id:
             query_conditions.append("p.brand_id = %s")
             query_params.append(brand_id)
+
         if category_slug:
             query_conditions.append("c.slug = %s")
             query_params.append(sanitize_input(category_slug))
+
         if brand_slug:
             query_conditions.append("b.slug = %s")
             query_params.append(sanitize_input(brand_slug))
+
         if min_price is not None:
             query_conditions.append("p.base_price >= %s")
             query_params.append(min_price)
+
         if max_price is not None:
             query_conditions.append("p.base_price <= %s")
             query_params.append(max_price)
+
         if in_stock:
             query_conditions.append("p.stock_status = 'in_stock'")
+
         if featured is not None:
             query_conditions.append("p.is_featured = %s")
             query_params.append(featured)
+
         if trending is not None:
             query_conditions.append("p.is_trending = %s")
             query_params.append(trending)
+
         if bestseller is not None:
             query_conditions.append("p.is_bestseller = %s")
             query_params.append(bestseller)
+
         where_clause = " AND ".join(query_conditions) if query_conditions else "1=1"
+
         valid_sort_columns = ["name", "base_price", "created_at", "view_count", "total_sold", "wishlist_count"]
         valid_sort_orders = ["asc", "desc"]
+
         if sort_by not in valid_sort_columns:
             sort_by = "created_at"
         if sort_order not in valid_sort_orders:
             sort_order = "desc"
+
         with db.get_cursor() as cursor:
             products_query = f"""
                 SELECT
@@ -714,6 +806,7 @@ async def get_products(
                 """
                 cursor.execute(count_query, query_params)
                 total_count = cursor.fetchone()['total']
+
             logger.info(f"📦 Products fetched: {len(products)}, total: {total_count}")
             product_list = []
             for product in products:
@@ -722,6 +815,7 @@ async def get_products(
                 safe_description = html.escape(product['description']) if product['description'] else ""
                 specification = None
                 image_gallery = None
+
                 if product['specification']:
                     try:
                         if isinstance(product['specification'], str):
@@ -730,6 +824,7 @@ async def get_products(
                             specification = product['specification']
                     except:
                         specification = None
+
                 if product['image_gallery']:
                     try:
                         if isinstance(product['image_gallery'], str):
@@ -738,8 +833,10 @@ async def get_products(
                             image_gallery = product['image_gallery']
                     except:
                         image_gallery = None
+
                 main_image_url = normalize_image_urls(product['main_image_url'])
                 image_gallery = normalize_image_urls(image_gallery)
+
                 product_list.append(ProductResponse(
                     id=product['id'],
                     uuid=product['uuid'],
@@ -773,6 +870,7 @@ async def get_products(
                     created_at=product['created_at'],
                     updated_at=product['updated_at']
                 ))
+
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 1
             logger.info(f"✅ Successfully returning {len(product_list)} products")
             return ProductListResponse(
@@ -791,6 +889,8 @@ async def get_products(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch products"
         )
+
+
 @router.get("/featured", response_model=ProductListResponse)
 async def get_featured_products(
         request: Request,
@@ -898,6 +998,8 @@ async def get_featured_products(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch featured products"
         )
+
+
 @router.get("/bestsellers", response_model=ProductListResponse)
 async def get_bestseller_products(
         request: Request,
@@ -1119,6 +1221,7 @@ async def get_product(product_id: int, request: Request):
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid product ID"
         )
+
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
@@ -1127,15 +1230,23 @@ async def get_product(product_id: int, request: Request):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session = get_session(request)
         session_id = get_session_id(request)
+
         if session_id:
-            session_service.update_session_activity(session_id)
-            update_session_product_views(session, product_id, session_id)
+            try:
+                session_service.update_session_activity(session_id)
+                if session:
+                    update_session_product_views(session, product_id, session_id)
+            except Exception as e:
+                logger.warning(f"Failed to update session views: {e}")
+
         cached_product = get_cached_product(product_id)
         if cached_product:
             logger.info(f"Returning cached product {product_id}")
             return ProductResponse(**cached_product)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -1155,11 +1266,14 @@ async def get_product(product_id: int, request: Request):
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             cursor.execute("""
                 UPDATE products SET view_count = view_count + 1 WHERE id = %s
             """, (product_id,))
+
             specification = None
             image_gallery = None
+
             if product['specification']:
                 try:
                     if isinstance(product['specification'], str):
@@ -1168,6 +1282,7 @@ async def get_product(product_id: int, request: Request):
                         specification = product['specification']
                 except:
                     specification = None
+
             if product['image_gallery']:
                 try:
                     if isinstance(product['image_gallery'], str):
@@ -1176,6 +1291,7 @@ async def get_product(product_id: int, request: Request):
                         image_gallery = product['image_gallery']
                 except:
                     image_gallery = None
+
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(image_gallery)
             max_cart_quantity = product['max_cart_quantity'] or 20
@@ -1217,6 +1333,7 @@ async def get_product(product_id: int, request: Request):
             )
             cache_product(product_id, product_response.dict())
             return product_response
+
     except HTTPException:
         raise
     except Exception as e:
@@ -1745,8 +1862,13 @@ async def get_personalized_recommendations(
     try:
         session = get_session(request)
         session_id = get_session_id(request)
+
         if session_id:
-            session_service.update_session_activity(session_id)
+            try:
+                session_service.update_session_activity(session_id)
+            except Exception as e:
+                logger.warning(f"Failed to update session activity: {e}")
+
         if not session:
             with db.get_cursor() as cursor:
                 cursor.execute("""
@@ -1757,8 +1879,10 @@ async def get_personalized_recommendations(
                 """, (limit,))
                 products = cursor.fetchall()
                 return {"recommendations": products, "source": "featured"}
+
         viewed_products = getattr(session, 'viewed_products', [])
         wishlist_items = getattr(session, 'wishlist_items', [])
+
         with db.get_cursor() as cursor:
             if viewed_products:
                 placeholders = ','.join(['%s'] * len(viewed_products))

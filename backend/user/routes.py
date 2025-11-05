@@ -140,24 +140,19 @@ def invalidate_user_cache(user_id: int):
 
 
 async def get_current_user_or_session(request: Request):
-    """
-    Unified approach: Always use session first
-    """
     try:
-        # First try to get authenticated user
+        # First, try to get authenticated user
         try:
             current_user = await get_current_user(request)
             session = get_session(request)
             session_id = get_session_id(request)
 
-            # Ensure session exists for authenticated user
+            # If we have a user but no session, create one
             if not session and session_id:
-                # Try to repair or get session
                 session_service.validate_and_repair_session(session_id)
                 session = session_service.get_session(session_id)
 
             if not session:
-                # Create user session if it doesn't exist
                 session_data = {
                     'session_type': SessionType.USER,
                     'user_id': current_user['sub'],
@@ -177,24 +172,27 @@ async def get_current_user_or_session(request: Request):
                 "session_id": session.session_id if session else None
             }
         except HTTPException:
-            # User is not authenticated, check for guest session
+            # User is not authenticated, use guest session
             pass
 
-        # Check for existing session
+        # Get or create guest session
         session = get_session(request)
         session_id = get_session_id(request)
 
         if session and session_id:
             # Validate and use existing session
-            session_service.validate_and_repair_session(session_id)
-            return {
-                "user_id": None,
-                "is_guest": True,
-                "session": session,
-                "session_id": session_id
-            }
+            try:
+                session_service.validate_and_repair_session(session_id)
+                return {
+                    "user_id": None,
+                    "is_guest": True,
+                    "session": session,
+                    "session_id": session_id
+                }
+            except Exception as e:
+                logger.warning(f"Session validation failed, creating new: {e}")
+                # Fall through to create new session
 
-        # Create new guest session
         guest_id = str(uuid.uuid4())
         session_data = {
             'session_type': SessionType.GUEST,
@@ -215,33 +213,39 @@ async def get_current_user_or_session(request: Request):
                 "session_id": session.session_id
             }
         else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create session"
-            )
+            # Ultimate fallback - create minimal session data
+            logger.error("Session creation failed completely, using minimal session")
+            return {
+                "user_id": None,
+                "is_guest": True,
+                "session": None,
+                "session_id": f"minimal_{guest_id}",
+                "cart_items": {}  # Provide empty cart as fallback
+            }
 
     except Exception as e:
         logger.error(f"Critical error in get_current_user_or_session: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Session initialization failed"
-        )
+        # Return minimal data to prevent complete failure
+        return {
+            "user_id": None,
+            "is_guest": True,
+            "session": None,
+            "session_id": f"error_fallback_{uuid.uuid4().hex[:8]}",
+            "cart_items": {}
+        }
 
 
 def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
     try:
         if not guest_session or not guest_session.cart_items:
             return 0
-
         migrated_count = 0
         guest_cart_items = guest_session.cart_items.copy()
-
         for item_key, item_data in guest_cart_items.items():
             try:
                 product_id = item_data['product_id']
                 variation_id = item_data.get('variation_id')
                 quantity = item_data['quantity']
-
                 cursor.execute(
                     "SELECT id, stock_quantity, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
                     (product_id,)
@@ -249,17 +253,14 @@ def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
                 product = cursor.fetchone()
                 if not product:
                     continue
-
                 max_quantity = product['max_cart_quantity'] or 20
                 available_quantity = min(quantity, product['stock_quantity']) if product[
                                                                                      'stock_quantity'] > 0 else quantity
-
                 cursor.execute("""
                     SELECT id, quantity FROM shopping_cart
                     WHERE user_id = %s AND product_id = %s
                     AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
                 """, (user_id, product_id, variation_id, variation_id))
-
                 existing_item = cursor.fetchone()
                 if existing_item:
                     existing_quantity = existing_item['quantity']
@@ -274,14 +275,11 @@ def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
                         INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
                         VALUES (%s, %s, %s, %s)
                     """, (user_id, product_id, variation_id, available_quantity))
-
                 migrated_count += 1
                 logger.info(f"✅ Migrated cart item: product {product_id}, quantity {available_quantity}")
-
             except Exception as e:
                 logger.error(f"❌ Failed to migrate cart item {item_key}: {e}")
                 continue
-
         return migrated_count
     except Exception as e:
         logger.error(f"❌ Cart migration failed: {e}")
@@ -293,13 +291,10 @@ async def _convert_session_cart_to_response(cart_items: Dict[str, Any]) -> CartR
         items = []
         subtotal = 0.0
         total_items = 0
-
         if not cart_items:
             return CartResponse(items=[], subtotal=0.0, total_items=0)
-
         product_ids = []
         item_map = {}
-
         for item_key, item_data in cart_items.items():
             try:
                 if not isinstance(item_data, dict):
@@ -314,10 +309,8 @@ async def _convert_session_cart_to_response(cart_items: Dict[str, Any]) -> CartR
                 }
             except (ValueError, KeyError, AttributeError) as e:
                 continue
-
         if not product_ids:
             return CartResponse(items=[], subtotal=0.0, total_items=0)
-
         with db.get_cursor() as cursor:
             placeholders = ','.join(['%s'] * len(product_ids))
             cursor.execute(f"""
@@ -327,7 +320,6 @@ async def _convert_session_cart_to_response(cart_items: Dict[str, Any]) -> CartR
                 WHERE id IN ({placeholders}) AND status = 'active'
             """, product_ids)
             products = {p['id']: p for p in cursor.fetchall()}
-
         for product_id, product in products.items():
             if product_id in item_map:
                 item_data = item_map[product_id]['data']
@@ -335,7 +327,6 @@ async def _convert_session_cart_to_response(cart_items: Dict[str, Any]) -> CartR
                 item_total = float(product['base_price']) * quantity
                 subtotal += item_total
                 total_items += quantity
-
                 items.append({
                     'id': product_id,
                     'product_id': product_id,
@@ -350,7 +341,6 @@ async def _convert_session_cart_to_response(cart_items: Dict[str, Any]) -> CartR
                     'stock_status': product['stock_status'],
                     'max_cart_quantity': product['max_cart_quantity']
                 })
-
         return CartResponse(
             items=items,
             subtotal=subtotal,
@@ -365,12 +355,10 @@ async def _convert_db_cart_to_response(cart_items: List[Dict]) -> CartResponse:
     items = []
     subtotal = 0.0
     total_items = 0
-
     for item in cart_items:
         item_total = float(item['product_price']) * item['quantity']
         subtotal += item_total
         total_items += item['quantity']
-
         items.append({
             'id': item['id'],
             'product_id': item['product_id'],
@@ -385,7 +373,6 @@ async def _convert_db_cart_to_response(cart_items: List[Dict]) -> CartResponse:
             'stock_status': item['stock_status'],
             'max_cart_quantity': item['max_cart_quantity']
         })
-
     return CartResponse(
         items=items,
         subtotal=subtotal,
@@ -422,7 +409,6 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
         cached_profile = get_cached_user_profile(user_id)
         if cached_profile:
             return UserProfileResponse(**cached_profile)
-
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -435,17 +421,14 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
                 WHERE u.id = %s
             """, (user_id,))
             user = cursor.fetchone()
-
             safe_first_name = html.escape(user['first_name']) if user['first_name'] else ""
             safe_last_name = html.escape(user['last_name']) if user['last_name'] else ""
             safe_email = html.escape(user['email']) if user['email'] else ""
-
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="User not found"
                 )
-
             cursor.execute("""
                 SELECT ur.name as role_name, p.name as permission_name
                 FROM user_role_assignments ura
@@ -454,7 +437,6 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user_id,))
-
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -462,7 +444,6 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
-
             profile_data = UserProfileResponse(
                 id=user['id'],
                 uuid=user['uuid'],
@@ -487,7 +468,6 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
                 created_at=user['created_at'],
                 updated_at=user['updated_at']
             )
-
             cache_user_profile(user_id, profile_data.dict())
             return profile_data
     except Exception as e:
@@ -882,16 +862,23 @@ async def get_cart(
     try:
         await rate_limiter.check_rate_limit(request)
 
+        # Handle case where session creation completely failed
+        if not current_user_or_session.get('session') and not current_user_or_session.get('is_guest'):
+            logger.warning("No session available, returning empty cart")
+            return CartResponse(items=[], subtotal=0.0, total_items=0)
+
         session = current_user_or_session.get('session')
         session_id = current_user_or_session.get('session_id')
 
         if session_id:
-            session_service.update_session_activity(session_id)
+            try:
+                session_service.update_session_activity(session_id)
+            except Exception as e:
+                logger.warning(f"Failed to update session activity: {e}")
 
         if not current_user_or_session.get('is_guest'):
             # Authenticated user - get cart from database
             user_id = current_user_or_session['user_id']
-
             with db.get_cursor() as cursor:
                 cursor.execute("""
                     SELECT
@@ -912,20 +899,24 @@ async def get_cart(
                 cart_data = await _convert_db_cart_to_response(cart_items)
                 return cart_data
         else:
-            # Guest user - get cart from session
+            # Guest user - get cart from session or fallback
             if session and session.cart_items:
                 cart_items = session.cart_items if session.cart_items is not None else {}
                 cart_response = await _convert_session_cart_to_response(cart_items)
                 return cart_response
             else:
-                return CartResponse(items=[], subtotal=0.0, total_items=0)
+                # Check if we have fallback cart items
+                fallback_cart = current_user_or_session.get('cart_items', {})
+                if fallback_cart:
+                    cart_response = await _convert_session_cart_to_response(fallback_cart)
+                    return cart_response
+                else:
+                    return CartResponse(items=[], subtotal=0.0, total_items=0)
 
     except Exception as e:
         logger.error(f"Failed to fetch cart: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch cart"
-        )
+        # Return empty cart instead of error
+        return CartResponse(items=[], subtotal=0.0, total_items=0)
 
 
 @router.post("/cart/{product_id}")
@@ -991,14 +982,12 @@ async def add_to_cart(
         if not current_user_or_session.get('is_guest'):
             # Authenticated user - add to database cart
             user_id = current_user_or_session['user_id']
-
             with db.get_cursor() as cursor:
                 cursor.execute("""
                     SELECT id, quantity FROM shopping_cart
                     WHERE user_id = %s AND product_id = %s
                     AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
                 """, (user_id, product_id, variation_id, variation_id))
-
                 existing_item = cursor.fetchone()
                 if existing_item:
                     new_quantity = existing_item['quantity'] + quantity
@@ -1017,10 +1006,8 @@ async def add_to_cart(
                         INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
                         VALUES (%s, %s, %s, %s)
                     """, (user_id, product_id, variation_id, quantity))
-
                 redis_client.delete(f"user_cart:{user_id}")
                 logger.info(f"Product {product_id} added to database cart for user {user_id}")
-
                 return {"message": "Product added to cart", "session_based": False}
         else:
             # Guest user - add to session cart
@@ -1028,7 +1015,6 @@ async def add_to_cart(
                 try:
                     cart_items = session.cart_items.copy() if session.cart_items is not None else {}
                     item_key = f"{product_id}_{variation_id}" if variation_id else str(product_id)
-
                     if item_key in cart_items:
                         new_quantity = cart_items[item_key]['quantity'] + quantity
                         if new_quantity > max_quantity:
@@ -1043,11 +1029,9 @@ async def add_to_cart(
                             'variation_id': variation_id,
                             'quantity': quantity
                         }
-
                     success = session_service.update_session_data(session_id, {
                         "cart_items": cart_items
                     })
-
                     if success:
                         logger.info(f"Product {product_id} added to session cart")
                         return {"message": "Product added to cart", "session_based": True}
@@ -1057,7 +1041,6 @@ async def add_to_cart(
                             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                             detail="Failed to add to cart"
                         )
-
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -1071,7 +1054,6 @@ async def add_to_cart(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Session not available"
                 )
-
     except HTTPException:
         raise
     except Exception as e:

@@ -158,17 +158,3 @@ def blacklist_token(token: str, expire: int = 86400):
     except Exception as e:
         logger.error(f"Failed to blacklist token: {e}")
         return False
-
-def require_roles(required_roles: List[str]):
-    async def role_dependency(request: Request):
-        user = await get_current_user(request)
-        user_roles = user.get('roles', [])
-        if not any(role in user_roles for role in required_roles):
-            logger.warning(
-                f"User {user['sub']} with roles {user_roles} attempted to access endpoint requiring {required_roles}")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Insufficient role permissions"
-            )
-        return user
-    return role_dependency

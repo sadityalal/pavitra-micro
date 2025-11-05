@@ -37,6 +37,7 @@ class SecureSessionMiddleware:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
         request = Request(scope, receive)
         response = await self._handle_request(request, scope, receive, send)
         return response
@@ -47,7 +48,6 @@ class SecureSessionMiddleware:
             security_token = request.headers.get(self.security_header_name)
             is_new_session = False
             session = None
-
             original_session_id = session_id
 
             if session_id:
@@ -70,36 +70,33 @@ class SecureSessionMiddleware:
                     if session:
                         session_id = session.session_id
                         is_new_session = True
-                        logger.info(f"Created new guest session: {session_id}")
+                        logger.info(f"✅ Created new guest session: {session_id}")
                 else:
                     logger.debug("Skipping session creation for non-browser request")
 
             request.state.session = session
             request.state.session_id = session_id
             request.state.is_new_session = is_new_session
-            request.state.original_session_id = original_session_id  # Store original for comparison
+            request.state.original_session_id = original_session_id
 
             async def session_send_wrapper(message):
                 if message["type"] == "http.response.start":
-                    # Get current session state (might have changed during request processing)
                     current_session = getattr(request.state, 'session', None)
                     current_session_id = getattr(request.state, 'session_id', None)
                     current_is_new_session = getattr(request.state, 'is_new_session', False)
-
                     await self._set_response_headers(
                         message, current_session, current_session_id, current_is_new_session, request
                     )
                 await send(message)
+
             try:
                 response = await self.app(scope, receive, session_send_wrapper)
                 return response
             except Exception as e:
                 logger.error(f"Request processing error: {e}")
                 raise
-
         except Exception as e:
             logger.error(f"Secure session middleware error: {e}")
-            # Fallback to original send without session handling
             return await self.app(scope, receive, send)
 
     def _get_session_id(self, request: Request) -> Optional[str]:
@@ -119,12 +116,9 @@ class SecureSessionMiddleware:
 
     async def _set_response_headers(self, message, session, session_id, is_new_session, request):
         headers = message.get("headers", [])
-
-        # Get original session ID for migration detection
         original_session_id = getattr(request.state, 'original_session_id', None)
-
-        # Check if session was migrated during request processing
         migrated_session_id = None
+
         if (session and
                 hasattr(session, 'session_id') and
                 original_session_id and
@@ -132,23 +126,18 @@ class SecureSessionMiddleware:
             migrated_session_id = session.session_id
             logger.info(f"Session migrated from {original_session_id} to {migrated_session_id}")
 
-        # Use migrated session ID if available, otherwise use current
         final_session_id = migrated_session_id if migrated_session_id else session_id
-
-        # Remove any existing session headers to avoid conflicts
         headers = [header for header in headers if not (
                 header[0] in [b"set-cookie", b"x-session-id", b"x-secure-session-id", b"x-csrf-token"] and
                 (self.session_cookie_name.encode() in header[1] if header[0] == b"set-cookie" else True)
         )]
 
-        # Set session headers with the correct session ID
         if final_session_id:
             headers.append([b"x-secure-session-id", final_session_id.encode()])
             if session and session.csrf_token:
                 headers.append([b"x-csrf-token", session.csrf_token.encode()])
             logger.debug(f"Setting session ID in headers: {final_session_id}")
 
-        # Set cookie for new sessions or migrated sessions
         should_set_cookie = (is_new_session or migrated_session_id) and session and self.enable_secure_cookies
         if should_set_cookie:
             cookie_session_id = migrated_session_id if migrated_session_id else final_session_id
@@ -156,7 +145,6 @@ class SecureSessionMiddleware:
             headers.append([b"set-cookie", cookie_value.encode()])
             logger.info(f"Set session cookie: {cookie_session_id}")
 
-        # Add security headers
         headers.extend([
             [b"x-content-type-options", b"nosniff"],
             [b"x-frame-options", b"DENY"],
@@ -180,23 +168,28 @@ class SecureSessionMiddleware:
         return "; ".join(cookie_parts)
 
     def _should_create_session(self, request: Request) -> bool:
-        if request.url.path in ['/health', '/favicon.ico', '/metrics', '/docs', '/redoc', '/openapi.json']:
-            return False
-        if request.method == 'OPTIONS':
+        """Always create session for web requests, be more selective for API calls"""
+
+        # Always create session for these paths (frontend routes)
+        frontend_paths = ['/', '/products', '/cart', '/checkout', '/login', '/register']
+        if any(request.url.path.startswith(path) for path in frontend_paths):
+            return True
+
+        # Don't create sessions for health checks, static files, etc.
+        no_session_paths = ['/health', '/favicon.ico', '/metrics', '/docs', '/redoc', '/openapi.json', '/static/']
+        if any(request.url.path.startswith(path) for path in no_session_paths):
             return False
 
-        # Check if session already exists in cookies
-        existing_session_id = self._get_session_id(request)
-        if existing_session_id:
-            return False  # Don't create new session if one exists
-
+        # For API calls, check if it's a frontend-initiated request
         has_frontend_indicators = any([
             request.headers.get('origin'),
             request.headers.get('referer'),
             'text/html' in request.headers.get('accept', ''),
             request.headers.get('sec-fetch-mode') == 'navigate',
-            request.headers.get('x-requested-with') == 'XMLHttpRequest'
+            request.headers.get('x-requested-with') == 'XMLHttpRequest',
+            request.headers.get('user-agent', '').lower() in ['mozilla', 'chrome', 'safari', 'firefox']
         ])
+
         return has_frontend_indicators
 
     async def _create_new_guest_session(self, request: Request) -> Optional[SessionData]:
@@ -210,16 +203,38 @@ class SecureSessionMiddleware:
                 'user_agent': request.headers.get("user-agent", ""),
                 'cart_items': {}
             }
+
             session = session_service.create_session(session_data)
+
             if session:
-                logger.info(f"Created new guest session: {session.session_id}")
+                logger.info(f"✅ Created new guest session: {session.session_id}")
                 return session
             else:
-                logger.error("Failed to create guest session - session service returned None")
-                return None
+                logger.error("❌ Session service returned None, creating emergency session")
+                # Emergency fallback - create session directly
+                return self._create_emergency_session(request, guest_id)
+
         except Exception as e:
-            logger.error(f"Failed to create new guest session: {e}")
-            return None
+            logger.error(f"❌ Critical error in guest session creation: {e}")
+            return self._create_emergency_session(request, str(uuid.uuid4()))
+
+    def _create_emergency_session(self, request: Request, guest_id: str) -> SessionData:
+        """Create an emergency session when all else fails"""
+        return SessionData(
+            session_id=f"emergency_{guest_id}",
+            session_type=SessionType.GUEST,
+            user_id=None,
+            guest_id=guest_id,
+            cart_items={},
+            created_at=datetime.utcnow(),
+            last_activity=datetime.utcnow(),
+            ip_address=request.client.host if request.client else 'unknown',
+            user_agent=request.headers.get("user-agent", ""),
+            expires_at=datetime.utcnow() + timedelta(hours=24),
+            security_token=None,
+            csrf_token=None,
+            fingerprint=None
+        )
 
     @property
     def user_session_duration(self):
