@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta
 import re
 import hashlib
+import uuid
 from shared import (
     config, db, verify_password, get_password_hash,
     create_access_token, verify_token, validate_email,
@@ -366,7 +367,7 @@ async def register_user(
                 # Also update the request state with new session
                 request.state.session = new_session
                 request.state.session_id = new_session.session_id
-                logger.info(f"Set user session cookie for user {user['id']}: {new_session.session_id}")
+                logger.info(f"Set user session cookie for user {user_id}: {new_session.session_id}")
 
             if background_tasks:
                 cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
