@@ -1607,8 +1607,12 @@ async def change_password(
 async def get_all_users(
         skip: int = 0,
         limit: int = 100,
-        current_user: dict = Depends(require_roles(["admin", "super_admin"]))
+        current_user: dict = Depends(get_current_user)  # ✅ Simple and working
 ):
+    # Manual role check
+    user_roles = current_user.get('roles', [])
+    if not any(role in ['admin', 'super_admin'] for role in user_roles):
+        raise HTTPException(status_code=403, detail="Admin access required")
     try:
         with db.get_cursor() as cursor:
             cursor.execute("""
@@ -1647,8 +1651,12 @@ async def get_all_users(
 async def update_user_status(
         user_id: int,
         is_active: bool,
-        current_user: dict = Depends(require_roles(["admin", "super_admin"]))
+        current_user: dict = Depends(get_current_user)  # ✅ Fixed
 ):
+    # Manual role check add karo
+    user_roles = current_user.get('roles', [])
+    if not any(role in ['admin', 'super_admin'] for role in user_roles):
+        raise HTTPException(status_code=403, detail="Admin access required")
     try:
         with db.get_cursor() as cursor:
             cursor.execute(
