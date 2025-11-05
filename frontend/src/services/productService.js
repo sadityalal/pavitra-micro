@@ -1,19 +1,16 @@
-import { productApi, authApi, sessionManager } from './api';
+import { productApi, sessionManager } from './api';
 import { getProductImageUrl } from '../utils/helpers';
 
 export const productService = {
   getFeaturedProducts: async () => {
     try {
       console.log('📦 Fetching featured products with session...');
-      const response = await productApi.get('/api/v1/products/featured?page_size=12');
+      const response = await productApi.get('/featured?page_size=12');
       console.log('📦 Featured products response received');
-
-      // Check for session ID in response
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
       }
-
       return response.data.products || [];
     } catch (error) {
       console.error('❌ Error fetching featured products:', error);
@@ -34,14 +31,12 @@ export const productService = {
   getBestSellers: async () => {
     try {
       console.log('📦 Fetching best sellers with session...');
-      const response = await productApi.get('/api/v1/products/bestsellers?page_size=12');
+      const response = await productApi.get('/bestsellers?page_size=12');
       console.log('📦 Best sellers response received');
-
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
       }
-
       return response.data.products || [];
     } catch (error) {
       console.error('❌ Error fetching best sellers:', error);
@@ -62,14 +57,12 @@ export const productService = {
   getNewArrivals: async () => {
     try {
       console.log('📦 Fetching new arrivals with session...');
-      const response = await productApi.get('/api/v1/products/new-arrivals?page_size=12');
+      const response = await productApi.get('/new-arrivals?page_size=12');
       console.log('📦 New arrivals response received');
-
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
       }
-
       return response.data.products || [];
     } catch (error) {
       console.error('❌ Error fetching new arrivals:', error);
@@ -90,14 +83,12 @@ export const productService = {
   getProductById: async (productId) => {
     try {
       console.log(`📦 Fetching product by ID: ${productId}`);
-      const response = await productApi.get(`/api/v1/products/${productId}`);
+      const response = await productApi.get(`/${productId}`);
       console.log('📦 Product by ID response received');
-
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
       }
-
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching product:', error);
@@ -114,14 +105,12 @@ export const productService = {
   getProductBySlug: async (productSlug) => {
     try {
       console.log(`📦 Fetching product by slug: ${productSlug}`);
-      const response = await productApi.get(`/api/v1/products/slug/${productSlug}`);
+      const response = await productApi.get(`/slug/${productSlug}`);
       console.log('📦 Product by slug response received');
-
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
       }
-
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching product by slug:', error);
@@ -138,14 +127,12 @@ export const productService = {
   getProducts: async (params = {}) => {
     try {
       console.log('📦 Fetching products with params:', params);
-      const response = await productApi.get('/api/v1/products/', { params });
+      const response = await productApi.get('/', { params });
       console.log('📦 Products response received');
-
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
       }
-
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching products:', error);
@@ -162,14 +149,12 @@ export const productService = {
   getCategories: async () => {
     try {
       console.log('📦 Fetching categories...');
-      const response = await productApi.get('/api/v1/products/categories/all');
+      const response = await productApi.get('/categories/all');
       console.log('📦 Categories response received');
-
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
       }
-
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching categories:', error);
@@ -187,14 +172,12 @@ export const productService = {
   getCategoryBySlug: async (categorySlug) => {
     try {
       console.log(`📦 Fetching category by slug: ${categorySlug}`);
-      const response = await productApi.get(`/api/v1/products/categories/slug/${categorySlug}`);
+      const response = await productApi.get(`/categories/slug/${categorySlug}`);
       console.log('📦 Category by slug response received');
-
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
       }
-
       return response.data;
     } catch (error) {
       console.error('❌ Error fetching category:', error);
@@ -212,14 +195,12 @@ export const productService = {
     try {
       console.log(`📦 Searching products: ${query}`, filters);
       const params = { search: query, ...filters };
-      const response = await productApi.get('/api/v1/products/', { params });
+      const response = await productApi.get('/', { params });
       console.log('📦 Search response received');
-
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
       }
-
       return response.data;
     } catch (error) {
       console.error('❌ Error searching products:', error);
@@ -236,8 +217,7 @@ export const productService = {
   initializeGuestSession: async () => {
     try {
       console.log('🔄 ProductService: Initializing guest session...');
-      const response = await productApi.get('/api/v1/products/featured?page_size=1');
-
+      const response = await productApi.get('/featured?page_size=1');
       const sessionId = response.headers['x-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
@@ -245,7 +225,6 @@ export const productService = {
       } else {
         console.log('✅ ProductService: Guest session initialized (no session ID returned)');
       }
-
       return response.data;
     } catch (error) {
       console.error('❌ ProductService: Failed to initialize guest session:', error);

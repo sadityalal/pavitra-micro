@@ -4,12 +4,11 @@ export const cartService = {
   getCart: async () => {
     try {
       console.log('🛒 GET CART - Fetching cart data');
-      const response = await userApi.get('/api/v1/users/cart');
+      const response = await userApi.get('/cart');
       console.log('🛒 GET CART - Success:', response.data);
       return response.data;
     } catch (error) {
       console.error('🛒 GET CART - Error:', error);
-      // For guest users, return empty cart structure
       return {
         items: [],
         subtotal: 0,
@@ -21,22 +20,18 @@ export const cartService = {
   addToCart: async (productId, quantity = 1, variationId = null) => {
     try {
       console.log('🛒 ADD TO CART - Starting:', { productId, quantity, variationId });
-
       const payload = {
         quantity: parseInt(quantity)
       };
-
       if (variationId) {
         payload.variation_id = variationId;
       }
-
-      const response = await userApi.post(`/api/v1/users/cart/${productId}`, payload);
+      const response = await userApi.post(`/cart/${productId}`, payload);
       console.log('🛒 ADD TO CART - Success:', response.data);
       return response.data;
     } catch (error) {
       console.error('🛒 ADD TO CART - Error:', error);
       console.error('🛒 Error response:', error.response?.data);
-
       if (error.response?.status === 401) {
         throw new Error('Session issue. Please refresh the page.');
       } else if (error.response?.status === 404) {
@@ -51,7 +46,7 @@ export const cartService = {
 
   updateCartItem: async (cartItemId, quantity) => {
     try {
-      const response = await userApi.put(`/api/v1/users/cart/${cartItemId}`, {
+      const response = await userApi.put(`/cart/${cartItemId}`, {
         quantity: parseInt(quantity)
       });
       return response.data;
@@ -63,7 +58,7 @@ export const cartService = {
 
   removeFromCart: async (cartItemId) => {
     try {
-      const response = await userApi.delete(`/api/v1/users/cart/${cartItemId}`);
+      const response = await userApi.delete(`/cart/${cartItemId}`);
       return response.data;
     } catch (error) {
       console.error('Error removing from cart:', error);
@@ -73,7 +68,7 @@ export const cartService = {
 
   clearCart: async () => {
     try {
-      const response = await userApi.delete('/api/v1/users/cart');
+      const response = await userApi.delete('/cart');
       return response.data;
     } catch (error) {
       console.error('Error clearing cart:', error);

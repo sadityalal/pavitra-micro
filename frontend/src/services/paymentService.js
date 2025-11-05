@@ -1,29 +1,25 @@
 import { paymentApi } from './api';
 
 export const paymentService = {
-  // Create payment
   createPayment: async (paymentData) => {
-    const response = await paymentApi.post('/api/v1/payments', paymentData);
+    const response = await paymentApi.post('/', paymentData);
     return response.data;
   },
 
-  // Process payment
   processPayment: async (paymentId, paymentMethod) => {
-    const response = await paymentApi.post(`/api/v1/payments/${paymentId}/process`, {
+    const response = await paymentApi.post(`/${paymentId}/process`, {
       payment_method: paymentMethod
     });
     return response.data;
   },
 
-  // Get payment status
   getPaymentStatus: async (paymentId) => {
-    const response = await paymentApi.get(`/api/v1/payments/${paymentId}/status`);
+    const response = await paymentApi.get(`/${paymentId}/status`);
     return response.data;
   },
 
-  // Refund payment
   refundPayment: async (paymentId, amount) => {
-    const response = await paymentApi.post(`/api/v1/payments/${paymentId}/refund`, {
+    const response = await paymentApi.post(`/${paymentId}/refund`, {
       amount
     });
     return response.data;

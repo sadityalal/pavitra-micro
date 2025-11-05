@@ -3,9 +3,9 @@ FROM node:18-alpine AS build
 WORKDIR /app
 
 # Copy package files first
-COPY package.json ./
+COPY package*.json ./
 
-# Install dependencies and generate package-lock.json
+# Install dependencies
 RUN npm install
 
 # Copy the rest of the application

@@ -1,33 +1,28 @@
 import { orderApi } from './api';
 
 export const orderService = {
-  // Create order
   createOrder: async (orderData) => {
-    const response = await orderApi.post('/api/v1/orders', orderData);
+    const response = await orderApi.post('/', orderData);
     return response.data;
   },
 
-  // Get user orders
   getUserOrders: async () => {
-    const response = await orderApi.get('/api/v1/orders');
+    const response = await orderApi.get('/');
     return response.data;
   },
 
-  // Get order by ID
   getOrderById: async (orderId) => {
-    const response = await orderApi.get(`/api/v1/orders/${orderId}`);
+    const response = await orderApi.get(`/${orderId}`);
     return response.data;
   },
 
-  // Cancel order
   cancelOrder: async (orderId) => {
-    const response = await orderApi.put(`/api/v1/orders/${orderId}/cancel`);
+    const response = await orderApi.put(`/${orderId}/cancel`);
     return response.data;
   },
 
-  // Get order status
   getOrderStatus: async (orderId) => {
-    const response = await orderApi.get(`/api/v1/orders/${orderId}/status`);
+    const response = await orderApi.get(`/${orderId}/status`);
     return response.data;
   }
 };

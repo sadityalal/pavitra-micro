@@ -28,15 +28,16 @@ class SessionManager {
 
 export const sessionManager = new SessionManager();
 
-const createApiInstance = (basePath = '') => {
+const createApiInstance = (servicePath = '') => {
+  // FIXED: Use proper base URL with /api/v1 prefix
   const instance = axios.create({
-    baseURL: `/api/v1${basePath}`,
+    baseURL: `/api/v1${servicePath}`,
     withCredentials: true,
   });
 
   instance.interceptors.request.use(
     (config) => {
-      console.log(`🚀 Making ${config.method?.toUpperCase()} request to: ${config.baseURL}${config.url}`);
+      console.log(`🚀 Making ${config.method?.toUpperCase()} request to: ${config.url}`);
 
       // Ensure withCredentials is always true for session cookies
       config.withCredentials = true;
@@ -85,6 +86,7 @@ const createApiInstance = (basePath = '') => {
   return instance;
 };
 
+// FIXED: Create instances with proper service paths
 export const authApi = createApiInstance('/auth');
 export const userApi = createApiInstance('/users');
 export const productApi = createApiInstance('/products');
