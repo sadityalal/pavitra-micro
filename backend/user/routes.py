@@ -139,93 +139,57 @@ def invalidate_user_cache(user_id: int):
         logger.error(f"Failed to invalidate user cache: {e}")
 
 
+# Update the get_current_user_or_session function:
+
 async def get_current_user_or_session(request: Request):
     try:
         # First, try to get authenticated user
         try:
             current_user = await get_current_user(request)
-            session = get_session(request)
-            session_id = get_session_id(request)
+            if current_user and current_user.get('sub'):
+                user_id = current_user['sub']
+                ip_address = request.client.host if request.client else 'unknown'
+                user_agent = request.headers.get("user-agent", "")
 
-            # If we have a user but no session, create one
-            if not session and session_id:
-                session_service.validate_and_repair_session(session_id)
-                session = session_service.get_session(session_id)
-
-            if not session:
-                session_data = {
-                    'session_type': SessionType.USER,
-                    'user_id': current_user['sub'],
-                    'guest_id': None,
-                    'ip_address': request.client.host if request.client else 'unknown',
-                    'user_agent': request.headers.get("user-agent", ""),
-                    'cart_items': {}
-                }
-                session = session_service.create_session(session_data)
+                # Get or create user session - ONE SESSION PER USER
+                session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
                 if session:
-                    logger.info(f"Created new user session: {session.session_id}")
-
-            return {
-                "user_id": current_user['sub'],
-                "is_guest": False,
-                "session": session,
-                "session_id": session.session_id if session else None
-            }
+                    return {
+                        "user_id": user_id,
+                        "is_guest": False,
+                        "session": session,
+                        "session_id": session.session_id
+                    }
         except HTTPException:
-            # User is not authenticated, use guest session
+            # User not authenticated, continue as guest
             pass
 
-        # Get or create guest session
-        session = get_session(request)
-        session_id = get_session_id(request)
+        # Handle guest session
+        guest_id = request.cookies.get("guest_id", str(uuid.uuid4()))
+        ip_address = request.client.host if request.client else 'unknown'
+        user_agent = request.headers.get("user-agent", "")
 
-        if session and session_id:
-            # Validate and use existing session
-            try:
-                session_service.validate_and_repair_session(session_id)
-                return {
-                    "user_id": None,
-                    "is_guest": True,
-                    "session": session,
-                    "session_id": session_id
-                }
-            except Exception as e:
-                logger.warning(f"Session validation failed, creating new: {e}")
-                # Fall through to create new session
-
-        guest_id = str(uuid.uuid4())
-        session_data = {
-            'session_type': SessionType.GUEST,
-            'user_id': None,
-            'guest_id': guest_id,
-            'ip_address': request.client.host if request.client else 'unknown',
-            'user_agent': request.headers.get("user-agent", ""),
-            'cart_items': {}
-        }
-        session = session_service.create_session(session_data)
-
+        session = session_service.get_or_create_guest_session(guest_id, ip_address, user_agent)
         if session:
-            logger.info(f"Created new guest session: {session.session_id}")
             return {
                 "user_id": None,
                 "is_guest": True,
                 "session": session,
-                "session_id": session.session_id
+                "session_id": session.session_id,
+                "guest_id": guest_id
             }
-        else:
-            # Ultimate fallback - create minimal session data
-            logger.error("Session creation failed completely, using minimal session")
-            return {
-                "user_id": None,
-                "is_guest": True,
-                "session": None,
-                "session_id": f"minimal_{guest_id}",
-                "cart_items": {}  # Provide empty cart as fallback
-            }
+
+        # Fallback - minimal session data
+        return {
+            "user_id": None,
+            "is_guest": True,
+            "session": None,
+            "session_id": f"minimal_{uuid.uuid4().hex[:8]}",
+            "cart_items": {}
+        }
 
     except Exception as e:
         logger.error(f"Critical error in get_current_user_or_session: {e}")
-        # Return minimal data to prevent complete failure
         return {
             "user_id": None,
             "is_guest": True,

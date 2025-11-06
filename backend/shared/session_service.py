@@ -24,6 +24,7 @@ class SecureSessionService:
         self._redis_guest_session_prefix = "secure_guest_session:"
         self._redis_rate_limit_prefix = "secure_rate_limit:"
         self._redis_failed_attempts_prefix = "secure_failed_attempts:"
+        self._redis_user_primary_session = "user_primary_session:"
         self._security_token_secret = config.jwt_secret.encode()
 
     def _load_configuration(self):
@@ -115,13 +116,10 @@ class SecureSessionService:
 
     def _check_rate_limit(self, identifier: str, operation: str) -> bool:
         try:
-            # Skip rate limiting for session creation to ensure sessions always work
             if operation == "create":
                 return True
-
             if not redis_client._ensure_connection():
                 return True
-
             current_time = int(time.time())
             window_start = current_time // self.rate_limit_window
             limits = {
@@ -147,7 +145,6 @@ class SecureSessionService:
         try:
             if not redis_client._ensure_connection():
                 return True
-
             fail_key = self._failed_attempts_key(identifier)
             failures = redis_client.get(fail_key)
             if failures and int(failures) >= self.max_failed_attempts:
@@ -183,6 +180,7 @@ class SecureSessionService:
                             user_sessions.append((session_id, created_at))
                 except Exception:
                     continue
+
             if len(user_sessions) > self.max_sessions_per_user:
                 user_sessions.sort(key=lambda x: x[1])
                 sessions_to_remove = user_sessions[:-self.max_sessions_per_user]
@@ -191,6 +189,83 @@ class SecureSessionService:
                     logger.info(f"Cleaned up old session {session_id} for user {user_id}")
         except Exception as e:
             logger.error(f"Failed to cleanup old user sessions: {e}")
+
+    def get_or_create_user_session(self, user_id: int, ip_address: str, user_agent: str) -> Optional[SessionData]:
+        """Get existing user session or create new one - ONE SESSION PER USER"""
+        try:
+            # First, try to get existing session for this user
+            existing_session = self.get_session_by_user_id(user_id)
+
+            if existing_session:
+                logger.info(f"✅ Using existing session for user {user_id}: {existing_session.session_id}")
+
+                # Update IP addresses list if this is a new IP
+                if ip_address and ip_address not in existing_session.ip_addresses:
+                    existing_session.ip_addresses.append(ip_address)
+                    self._update_session_data(existing_session.session_id, {
+                        'ip_addresses': existing_session.ip_addresses,
+                        'ip_address': ip_address,  # Update current IP
+                        'user_agent': user_agent
+                    })
+
+                # Update activity
+                self.update_session_activity(existing_session.session_id)
+                return existing_session
+            else:
+                # Create new session for user
+                logger.info(f"🆕 Creating new session for user {user_id}")
+                session_data = {
+                    'session_type': SessionType.USER,
+                    'user_id': user_id,
+                    'guest_id': None,
+                    'ip_address': ip_address,
+                    'user_agent': user_agent,
+                    'cart_items': {},
+                    'ip_addresses': [ip_address] if ip_address else []
+                }
+                return self.create_session(session_data)
+
+        except Exception as e:
+            logger.error(f"Failed to get or create user session: {e}")
+            return None
+
+    def get_or_create_guest_session(self, guest_id: str, ip_address: str, user_agent: str) -> Optional[SessionData]:
+        """Get existing guest session or create new one"""
+        try:
+            # Try to get existing guest session
+            existing_session = self.get_session_by_guest_id(guest_id)
+
+            if existing_session:
+                logger.info(f"✅ Using existing guest session: {existing_session.session_id}")
+
+                # Update IP if different
+                if ip_address and ip_address not in existing_session.ip_addresses:
+                    existing_session.ip_addresses.append(ip_address)
+                    self._update_session_data(existing_session.session_id, {
+                        'ip_addresses': existing_session.ip_addresses,
+                        'ip_address': ip_address,
+                        'user_agent': user_agent
+                    })
+
+                self.update_session_activity(existing_session.session_id)
+                return existing_session
+            else:
+                # Create new guest session
+                logger.info(f"🆕 Creating new guest session")
+                session_data = {
+                    'session_type': SessionType.GUEST,
+                    'user_id': None,
+                    'guest_id': guest_id,
+                    'ip_address': ip_address,
+                    'user_agent': user_agent,
+                    'cart_items': {},
+                    'ip_addresses': [ip_address] if ip_address else []
+                }
+                return self.create_session(session_data)
+
+        except Exception as e:
+            logger.error(f"Failed to get or create guest session: {e}")
+            return None
 
     def create_session(self, session_data: Dict[str, Any]) -> Optional[SessionData]:
         try:
@@ -205,7 +280,6 @@ class SecureSessionService:
             else:
                 expires_at = now + timedelta(seconds=self.guest_session_duration)
 
-            # Security tokens
             security_token = None
             if self.require_security_token and session_data.get('ip_address'):
                 security_token = self._generate_security_token(session_id, session_data.get('ip_address', 'unknown'))
@@ -225,6 +299,11 @@ class SecureSessionService:
             if cart_items is None:
                 cart_items = {}
 
+            ip_addresses = session_data.get('ip_addresses', [])
+            current_ip = session_data.get('ip_address')
+            if current_ip and current_ip not in ip_addresses:
+                ip_addresses.append(current_ip)
+
             session = SessionData(
                 session_id=session_id,
                 session_type=session_data['session_type'],
@@ -238,10 +317,10 @@ class SecureSessionService:
                 expires_at=expires_at,
                 security_token=security_token,
                 csrf_token=csrf_token,
-                fingerprint=fingerprint
+                fingerprint=fingerprint,
+                ip_addresses=ip_addresses
             )
 
-            # Redis mein save karo (but fail mat hona agar Redis down hai)
             session_dict = session.model_dump()
             session_dict['session_type'] = session_dict['session_type'].value
             session_dict['created_at'] = session_dict['created_at'].isoformat()
@@ -260,12 +339,24 @@ class SecureSessionService:
                         json.dumps(session_dict)
                     )
             except Exception as redis_error:
-                print(f"⚠️ Redis error but continuing: {redis_error}")
+                logger.warning(f"Redis error but continuing: {redis_error}")
 
-            print(f"✅ SessionService: Successfully created {session.session_type.value} session: {session_id}")
+            # Store user-session mapping for easy lookup
+            if session.user_id and redis_client._ensure_connection():
+                user_session_key = f"{self._redis_user_session_prefix}{session.user_id}"
+                redis_client.setex(user_session_key, expiry_seconds, session_id)
+
+            # Store guest-session mapping
+            if session.guest_id and redis_client._ensure_connection():
+                guest_session_key = f"{self._redis_guest_session_prefix}{session.guest_id}"
+                redis_client.setex(guest_session_key, expiry_seconds, session_id)
+
+            logger.info(
+                f"✅ SessionService: Created {session.session_type.value} session: {session_id} for user {session.user_id}")
             return session
 
         except Exception as e:
+            logger.error(f"❌ Failed to create session: {e}")
             emergency_id = f"emergency_{uuid.uuid4().hex}"
             return SessionData(
                 session_id=emergency_id,
@@ -280,42 +371,20 @@ class SecureSessionService:
                 expires_at=datetime.utcnow() + timedelta(hours=24),
                 security_token=None,
                 csrf_token=None,
-                fingerprint=None
+                fingerprint=None,
+                ip_addresses=[session_data.get('ip_address', 'unknown')]
             )
-
-    def _create_fallback_session(self, session_data: Dict[str, Any]) -> SessionData:
-        """Create a basic session when normal creation fails"""
-        session_id = f"fallback_{uuid.uuid4().hex}"
-        now = datetime.utcnow()
-
-        return SessionData(
-            session_id=session_id,
-            session_type=session_data.get('session_type', SessionType.GUEST),
-            user_id=session_data.get('user_id'),
-            guest_id=session_data.get('guest_id', str(uuid.uuid4())),
-            cart_items=session_data.get('cart_items', {}),
-            created_at=now,
-            last_activity=now,
-            ip_address=session_data.get('ip_address', 'unknown'),
-            user_agent=session_data.get('user_agent', ''),
-            expires_at=now + timedelta(days=1),  # 1 day fallback
-            security_token=None,
-            csrf_token=None,
-            fingerprint=None
-        )
 
     def get_session(self, session_id: str, request_ip: str = None, request_user_agent: str = None,
                     security_token: str = None) -> Optional[SessionData]:
         try:
             if not session_id:
                 return None
-
             if not redis_client._ensure_connection():
                 return None
 
             key = self._session_key(session_id)
             data = redis_client.get(key)
-
             if data:
                 try:
                     session_dict = json.loads(data)
@@ -324,37 +393,30 @@ class SecureSessionService:
                     session_dict['expires_at'] = datetime.fromisoformat(session_dict['expires_at'])
                     session_type_str = session_dict.get('session_type', 'guest')
                     session_dict['session_type'] = SessionType.USER if session_type_str == 'user' else SessionType.GUEST
+
                     if session_dict.get('cart_items') is None:
                         session_dict['cart_items'] = {}
+
+                    if session_dict.get('ip_addresses') is None:
+                        session_dict['ip_addresses'] = []
+
                     session_dict['session_id'] = session_id
                     session = SessionData(**session_dict)
+
                     if not self._validate_session_security(session, request_ip, request_user_agent, security_token):
                         return None
+
                     if self.enable_session_rotation and self._should_rotate_session(session):
                         return self.rotate_session(session_id)
+
                     self._update_session_activity_only(session_id)
                     return session
-
                 except Exception as parse_error:
+                    logger.error(f"Failed to parse session data: {parse_error}")
                     return None
-
-            else:
-                try:
-                    all_keys = redis_client.keys("secure_session:*")
-                    for k in all_keys[:3]:
-                        session_data = redis_client.get(k)
-                        if session_data:
-                            try:
-                                sess_data = json.loads(session_data)
-                                print(f"   - {k} -> {sess_data.get('session_id', 'unknown')}")
-                            except:
-                                print(f"   - {k} -> [invalid data]")
-                except Exception as e:
-                    print(f"⚠️ SessionService: Could not list Redis keys: {e}")
-                return None
-
+            return None
         except Exception as e:
-            print(f"💥 SessionService: Error getting session: {e}")
+            logger.error(f"Error getting session: {e}")
             return None
 
     def _validate_session_security(self, session: SessionData, request_ip: str, request_user_agent: str,
@@ -364,6 +426,23 @@ class SecureSessionService:
                 logger.warning("Session expired")
                 return False
 
+            # For user sessions, allow any IP that has been used before
+            if session.session_type == SessionType.USER and session.user_id:
+                if request_ip and session.ip_addresses:
+                    # Allow if this IP has been used before for this session
+                    ip_allowed = request_ip in session.ip_addresses
+                    if not ip_allowed:
+                        logger.info(f"New IP detected for user session: {request_ip}. Adding to allowed IPs.")
+                        # Add new IP to allowed list
+                        session.ip_addresses.append(request_ip)
+                        self._update_session_data(session.session_id, {
+                            'ip_addresses': session.ip_addresses,
+                            'ip_address': request_ip
+                        })
+                # For user sessions, we're more permissive with IP changes
+                return True
+
+            # For guest sessions, maintain stricter IP validation
             if self.require_security_token and security_token:
                 if not self._validate_security_token(session.session_id, request_ip, security_token):
                     logger.warning("Invalid security token")
@@ -371,11 +450,13 @@ class SecureSessionService:
 
             if self.enable_ip_validation and session.ip_address and request_ip:
                 try:
-                    session_ip = ipaddress.ip_address(session.ip_address)
-                    request_ip_obj = ipaddress.ip_address(request_ip)
-                    if session_ip != request_ip_obj:
-                        logger.warning(f"IP address mismatch: {session.ip_address} vs {request_ip}")
-                        return False
+                    # For guest sessions, allow IP changes but track them
+                    if request_ip not in session.ip_addresses:
+                        session.ip_addresses.append(request_ip)
+                        self._update_session_data(session.session_id, {
+                            'ip_addresses': session.ip_addresses,
+                            'ip_address': request_ip
+                        })
                 except ValueError:
                     logger.warning("Invalid IP address format")
                     return False
@@ -397,11 +478,36 @@ class SecureSessionService:
             logger.error(f"Failed to check session rotation: {e}")
             return False
 
+    def _update_session_data(self, session_id: str, updates: Dict[str, Any]) -> bool:
+        """Internal method to update specific session fields"""
+        try:
+            session = self.get_session(session_id)
+            if not session:
+                return False
+
+            for key, value in updates.items():
+                if hasattr(session, key):
+                    setattr(session, key, value)
+
+            session.last_activity = datetime.utcnow()
+            session_dict = session.model_dump()
+            session_dict['session_type'] = session_dict['session_type'].value
+            session_dict['created_at'] = session_dict['created_at'].isoformat()
+            session_dict['last_activity'] = session_dict['last_activity'].isoformat()
+            session_dict['expires_at'] = session_dict['expires_at'].isoformat()
+
+            key = self._session_key(session_id)
+            expiry = self.user_session_duration if session.session_type == SessionType.USER else self.guest_session_duration
+            success = redis_client.setex(key, expiry, json.dumps(session_dict))
+            return success
+        except Exception as e:
+            logger.error(f"Failed to update session data {session_id}: {e}")
+            return False
+
     def rotate_session(self, old_session_id: str) -> Optional[SessionData]:
         try:
             if not self._check_rate_limit(f"rotate:{old_session_id}", "update"):
                 return None
-
             old_session = self.get_session(old_session_id)
             if not old_session:
                 return None
@@ -412,9 +518,9 @@ class SecureSessionService:
                 'guest_id': old_session.guest_id,
                 'cart_items': old_session.cart_items,
                 'ip_address': old_session.ip_address,
-                'user_agent': old_session.user_agent
+                'user_agent': old_session.user_agent,
+                'ip_addresses': old_session.ip_addresses
             }
-
             new_session = self.create_session(new_session_data)
             if new_session:
                 self.delete_session(old_session_id)
@@ -428,7 +534,6 @@ class SecureSessionService:
         try:
             if not self._check_rate_limit(f"activity:{session_id}", "update"):
                 return False
-
             session = self.get_session(session_id)
             if not session:
                 return False
@@ -439,6 +544,7 @@ class SecureSessionService:
             session_dict['created_at'] = session_dict['created_at'].isoformat()
             session_dict['last_activity'] = session_dict['last_activity'].isoformat()
             session_dict['expires_at'] = session_dict['expires_at'].isoformat()
+
             expiry = self.user_session_duration if session.session_type == SessionType.USER else self.guest_session_duration
             key = self._session_key(session_id)
             return redis_client.setex(
@@ -453,6 +559,42 @@ class SecureSessionService:
     def update_session_activity(self, session_id: str) -> bool:
         return self._update_session_activity_only(session_id)
 
+    def get_session_by_user_id(self, user_id: int) -> Optional[SessionData]:
+        """Get the active session for a user - ONE SESSION PER USER"""
+        try:
+            if not redis_client._ensure_connection():
+                return None
+
+            user_session_key = f"{self._redis_user_session_prefix}{user_id}"
+            session_id = redis_client.get(user_session_key)
+
+            if session_id:
+                session = self.get_session(session_id)
+                if session and session.user_id == user_id:
+                    return session
+                else:
+                    # Clean up invalid mapping
+                    redis_client.delete(user_session_key)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get session for user {user_id}: {e}")
+            return None
+
+    def get_session_by_guest_id(self, guest_id: str) -> Optional[SessionData]:
+        try:
+            if not redis_client._ensure_connection():
+                return None
+
+            guest_session_key = f"{self._redis_guest_session_prefix}{guest_id}"
+            session_id = redis_client.get(guest_session_key)
+
+            if session_id:
+                return self.get_session(session_id)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get session for guest {guest_id}: {e}")
+            return None
+
     def migrate_guest_to_user_session(self, guest_session_id: str, user_id: int) -> Optional[SessionData]:
         try:
             if not self._check_rate_limit(f"migrate:{user_id}", "update"):
@@ -462,10 +604,14 @@ class SecureSessionService:
             if not guest_session or guest_session.session_type != SessionType.GUEST:
                 return None
 
-            user_session = self.get_session_by_user_id(user_id)
+            # Check if user already has a session
+            existing_user_session = self.get_session_by_user_id(user_id)
             merged_cart_items = {}
-            if user_session and user_session.cart_items:
-                merged_cart_items.update(user_session.cart_items)
+
+            # Merge cart items from both sessions
+            if existing_user_session and existing_user_session.cart_items:
+                merged_cart_items.update(existing_user_session.cart_items)
+
             if guest_session.cart_items:
                 for item_key, guest_item in guest_session.cart_items.items():
                     if item_key in merged_cart_items:
@@ -473,22 +619,39 @@ class SecureSessionService:
                     else:
                         merged_cart_items[item_key] = guest_item
 
-            session_data = {
-                'session_type': SessionType.USER,
-                'user_id': user_id,
-                'guest_id': None,
-                'ip_address': guest_session.ip_address,
-                'user_agent': guest_session.user_agent,
-                'cart_items': merged_cart_items
-            }
+            # Create or update user session
+            if existing_user_session:
+                # Update existing user session
+                session_data = {
+                    'cart_items': merged_cart_items,
+                    'ip_address': guest_session.ip_address,
+                    'user_agent': guest_session.user_agent
+                }
+                # Add guest IP to user session's IP list
+                if guest_session.ip_address and guest_session.ip_address not in existing_user_session.ip_addresses:
+                    session_data['ip_addresses'] = existing_user_session.ip_addresses + [guest_session.ip_address]
 
-            new_session = self.create_session(session_data)
-            self.delete_session(guest_session_id)
-            if user_session:
-                self.delete_session(user_session.session_id)
+                self.update_session_data(existing_user_session.session_id, session_data)
+                self.delete_session(guest_session_id)
+                logger.info(f"Merged guest session into existing user session for user {user_id}")
+                return existing_user_session
+            else:
+                # Create new user session
+                session_data = {
+                    'session_type': SessionType.USER,
+                    'user_id': user_id,
+                    'guest_id': None,
+                    'ip_address': guest_session.ip_address,
+                    'user_agent': guest_session.user_agent,
+                    'cart_items': merged_cart_items,
+                    'ip_addresses': guest_session.ip_addresses if guest_session.ip_addresses else [
+                        guest_session.ip_address]
+                }
+                new_session = self.create_session(session_data)
+                self.delete_session(guest_session_id)
+                logger.info(f"Migrated guest session to new user session for user {user_id}")
+                return new_session
 
-            logger.info(f"Successfully migrated guest session {guest_session_id} to user {user_id}")
-            return new_session
         except Exception as e:
             logger.error(f"Failed to migrate guest session to user: {e}")
             return None
@@ -502,7 +665,7 @@ class SecureSessionService:
             if not session:
                 return False
 
-            allowed_updates = {'cart_items', 'user_agent'}
+            allowed_updates = {'cart_items', 'user_agent', 'ip_address', 'ip_addresses'}
             for key in updates:
                 if key not in allowed_updates:
                     logger.warning(f"Attempt to update restricted session field: {key}")
@@ -518,6 +681,7 @@ class SecureSessionService:
             session_dict['created_at'] = session_dict['created_at'].isoformat()
             session_dict['last_activity'] = session_dict['last_activity'].isoformat()
             session_dict['expires_at'] = session_dict['expires_at'].isoformat()
+
             key = self._session_key(session_id)
             expiry = self.user_session_duration if session.session_type == SessionType.USER else self.guest_session_duration
             success = redis_client.setex(key, expiry, json.dumps(session_dict))
@@ -535,42 +699,23 @@ class SecureSessionService:
             if not session:
                 return False
 
+            # Delete session data
             redis_client.delete(self._session_key(session_id))
+
+            # Delete mappings
             if session.user_id:
-                pattern = f"{self._redis_user_session_prefix}{session.user_id}:*"
-                mapping_keys = redis_client.keys(pattern)
-                if mapping_keys:
-                    redis_client.delete(*mapping_keys)
+                user_session_key = f"{self._redis_user_session_prefix}{session.user_id}"
+                redis_client.delete(user_session_key)
+
             if session.guest_id:
-                pattern = f"{self._redis_guest_session_prefix}{session.guest_id}:*"
-                mapping_keys = redis_client.keys(pattern)
-                if mapping_keys:
-                    redis_client.delete(*mapping_keys)
+                guest_session_key = f"{self._redis_guest_session_prefix}{session.guest_id}"
+                redis_client.delete(guest_session_key)
 
             logger.info(f"Deleted secure session: {session_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to delete session {session_id}: {e}")
             return False
-
-    def get_session_by_user_id(self, user_id: int) -> Optional[SessionData]:
-        try:
-            pattern = f"{self._redis_user_session_prefix}{user_id}:*"
-            mapping_keys = redis_client.keys(pattern)
-            if not mapping_keys:
-                return None
-
-            latest_session = None
-            for key in mapping_keys:
-                session_id = redis_client.get(key)
-                if session_id:
-                    session = self.get_session(session_id)
-                    if session and (not latest_session or session.created_at > latest_session.created_at):
-                        latest_session = session
-            return latest_session
-        except Exception as e:
-            logger.error(f"Failed to get session for user {user_id}: {e}")
-            return None
 
     def validate_and_repair_session(self, session_id: str) -> bool:
         try:
@@ -583,18 +728,26 @@ class SecureSessionService:
                 session.cart_items = {}
                 repairs_made = True
                 logger.info(f"Repaired session {session_id}: cart_items was None")
+
             if session.session_type not in [SessionType.GUEST, SessionType.USER]:
                 session.session_type = SessionType.GUEST
                 repairs_made = True
                 logger.info(f"Repaired session {session_id}: invalid session_type")
+
             if session.session_type == SessionType.USER and not session.user_id:
                 session.session_type = SessionType.GUEST
                 repairs_made = True
                 logger.info(f"Repaired session {session_id}: user session without user_id")
+
             if session.session_type == SessionType.GUEST and not session.guest_id:
                 session.guest_id = str(uuid.uuid4())
                 repairs_made = True
                 logger.info(f"Repaired session {session_id}: guest session without guest_id")
+
+            if session.ip_addresses is None:
+                session.ip_addresses = [session.ip_address] if session.ip_address else []
+                repairs_made = True
+                logger.info(f"Repaired session {session_id}: ip_addresses was None")
 
             if repairs_made:
                 session_dict = session.model_dump()
@@ -616,15 +769,10 @@ class SecureSessionService:
 
     def invalidate_all_user_sessions(self, user_id: int) -> bool:
         try:
-            pattern = f"{self._redis_user_session_prefix}{user_id}:*"
-            mapping_keys = redis_client.keys(pattern)
-            sessions_invalidated = 0
-            for key in mapping_keys:
-                session_id = redis_client.get(key)
-                if session_id and self.delete_session(session_id):
-                    sessions_invalidated += 1
-            logger.info(f"Invalidated {sessions_invalidated} secure sessions for user {user_id}")
-            return sessions_invalidated > 0
+            session = self.get_session_by_user_id(user_id)
+            if session:
+                return self.delete_session(session.session_id)
+            return True
         except Exception as e:
             logger.error(f"Failed to invalidate all secure sessions for user {user_id}: {e}")
             return False

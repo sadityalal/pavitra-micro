@@ -1,17 +1,14 @@
 import re
 from dataclasses import field
-
 from pydantic import BaseModel, Field, validator, field_validator
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
 import ipaddress
 
-
 class SessionType(str, Enum):
     GUEST = "guest"
     USER = "user"
-
 
 class SessionData(BaseModel):
     session_id: str = Field(..., min_length=32, max_length=64)
@@ -27,6 +24,8 @@ class SessionData(BaseModel):
     security_token: Optional[str] = None
     csrf_token: Optional[str] = None
     fingerprint: Optional[str] = None
+    # Track multiple IPs for the same user session
+    ip_addresses: List[str] = Field(default_factory=list)
 
     @validator('ip_address')
     def validate_ip_address(cls, v):
@@ -39,10 +38,9 @@ class SessionData(BaseModel):
 
     @field_validator('session_id')
     def validate_session_id(cls, v):
-        if not re.match(r'^[A-Za-z0-9_-]{32,64}$', v):  # Allow URLsafe base64
+        if not re.match(r'^[A-Za-z0-9_-]{32,64}$', v):
             raise ValueError('Invalid session ID format')
         return v
-
 
 class SessionCreate(BaseModel):
     session_type: SessionType
@@ -51,7 +49,6 @@ class SessionCreate(BaseModel):
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
     security_token: Optional[str] = None
-
 
 class SessionResponse(BaseModel):
     session_id: str
@@ -62,3 +59,4 @@ class SessionResponse(BaseModel):
     created_at: datetime
     last_activity: datetime
     expires_at: datetime
+    ip_addresses: List[str] = []
