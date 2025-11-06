@@ -11,21 +11,58 @@ import AuthPage from './pages/AuthPage.js';
 import CartPage from './pages/CartPage.js';
 import { useSession } from './hooks/useSession';
 
+
 function App() {
   useSession();
 
   useEffect(() => {
-    const initializeScripts = () => {
-      // Your existing script initialization code
-      console.log('All scripts initialized successfully');
-    };
+  const handleShowToast = (event) => {
+    const { message, type = 'info' } = event.detail;
 
-    const timer = setTimeout(initializeScripts, 500);
+    // Create toast element
+    const toast = document.createElement('div');
+    toast.className = `toast show align-items-center text-bg-${type} border-0`;
+    toast.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      z-index: 9999;
+      min-width: 250px;
+    `;
 
-    return () => {
-      clearTimeout(timer);
-    };
-  }, []);
+    toast.innerHTML = `
+      <div class="d-flex">
+        <div class="toast-body">
+          ${message}
+        </div>
+        <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+      </div>
+    `;
+
+    document.body.appendChild(toast);
+
+    // Auto remove after 5 seconds
+    setTimeout(() => {
+      if (toast.parentNode) {
+        toast.parentNode.removeChild(toast);
+      }
+    }, 5000);
+
+    // Add click to dismiss
+    toast.querySelector('.btn-close').addEventListener('click', () => {
+      if (toast.parentNode) {
+        toast.parentNode.removeChild(toast);
+      }
+    });
+  };
+
+  document.addEventListener('showToast', handleShowToast);
+
+  return () => {
+    document.removeEventListener('showToast', handleShowToast);
+    clearTimeout(timer);
+  };
+}, []);
 
   return (
     <Router>

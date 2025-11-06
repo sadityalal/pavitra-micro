@@ -1,4 +1,3 @@
-// frontend/src/components/common/ProductCard.js
 import React, { useState } from 'react';
 import { formatCurrency } from '../../utils/helpers';
 import { useCartContext } from '../../contexts/CartContext';
@@ -18,35 +17,22 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
     try {
       setAddingToCart(true);
       console.log('ProductCard: Adding product to cart:', product.id);
+
       await addToCart(product.id, 1);
       console.log('ProductCard: Product added to cart successfully');
-
-      success(`${product.name} added to cart successfully!`, 3000);
 
       if (onAddToCart) {
         onAddToCart(product);
       }
+
+      success('Product added to cart!');
+
     } catch (err) {
       console.error('ProductCard: Failed to add to cart:', err);
-      if (err.message.includes('session') || err.message.includes('Session')) {
-        error('Please refresh the page and try again. Session issue detected.');
-      } else {
-        error(err.message || 'Failed to add product to cart');
-      }
+      error(err.message || 'Failed to add product to cart');
+
     } finally {
       setAddingToCart(false);
-    }
-  };
-
-  const handleAddToWishlist = async (product) => {
-    try {
-      // Implement wishlist functionality here
-      success(`${product.name} added to wishlist!`, 3000);
-      if (onAddToWishlist) {
-        onAddToWishlist(product);
-      }
-    } catch (err) {
-      error('Failed to add to wishlist');
     }
   };
 
@@ -74,10 +60,13 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
     main_image_url,
     stock_status,
     is_featured,
-    is_bestseller
+    is_bestseller,
+    stock_quantity
   } = product;
 
   const hasDiscount = compare_price && compare_price > base_price;
+  const isOutOfStock = stock_status !== 'in_stock';
+  const lowStock = stock_quantity > 0 && stock_quantity <= 5;
 
   const getImageUrl = (imagePath) => {
     if (!imagePath || imagePath === 'null' || imagePath === 'undefined') {
@@ -106,8 +95,11 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           )}
           {is_featured && <span className="badge-new">New</span>}
           {is_bestseller && <span className="badge-trending">Trending</span>}
-          {stock_status === 'out_of_stock' && (
+          {isOutOfStock && (
             <span className="badge-out-of-stock">Out of Stock</span>
+          )}
+          {lowStock && !isOutOfStock && (
+            <span className="badge-low-stock">Low Stock</span>
           )}
         </div>
         <img
@@ -120,11 +112,7 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           }}
         />
         <div className="product-actions">
-          <button
-            className="action-btn wishlist-btn"
-            title="Add to Wishlist"
-            onClick={() => handleAddToWishlist(product)}
-          >
+          <button className="action-btn wishlist-btn" title="Add to Wishlist">
             <i className="bi bi-heart"></i>
           </button>
           <button className="action-btn compare-btn" title="Compare">
@@ -135,19 +123,19 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           </button>
         </div>
         <button
-          className={`cart-btn ${stock_status !== 'in_stock' ? 'disabled' : ''}`}
+          className={`cart-btn ${isOutOfStock ? 'disabled' : ''}`}
           onClick={() => handleAddToCart(product)}
-          disabled={stock_status !== 'in_stock' || addingToCart}
+          disabled={isOutOfStock || addingToCart}
         >
           {addingToCart ? (
             <>
               <span className="spinner-border spinner-border-sm me-2"></span>
               Adding...
             </>
-          ) : stock_status === 'in_stock' ? (
-            'Add to Cart'
-          ) : (
+          ) : isOutOfStock ? (
             'Out of Stock'
+          ) : (
+            'Add to Cart'
           )}
         </button>
       </div>
@@ -178,6 +166,11 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
             <span className="current-price">{formatCurrency(base_price)}</span>
           )}
         </div>
+        {lowStock && !isOutOfStock && (
+          <div className="stock-info text-warning small">
+            Only {stock_quantity} left in stock!
+          </div>
+        )}
       </div>
     </div>
   );

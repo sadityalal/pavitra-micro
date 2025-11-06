@@ -10,22 +10,18 @@ const MainHeader = () => {
   const { cart, loading: cartLoading } = useCartContext();
   const [cartItemCount, setCartItemCount] = useState(0);
 
-  // Update cart count when cart changes
   useEffect(() => {
     const totalItems = cart?.total_items || cart?.items?.reduce((total, item) => total + (item.quantity || 0), 0) || 0;
     setCartItemCount(totalItems);
   }, [cart]);
 
-  // Listen for cart update events
   useEffect(() => {
     const handleCartUpdate = () => {
       console.log('🛒 MainHeader: Cart update event received');
-      // Cart count will be updated via the cart context dependency above
     };
 
     const handleAuthStateChange = () => {
       console.log('🔐 MainHeader: Auth state change event received');
-      // Cart count will be updated via the cart context dependency above
     };
 
     document.addEventListener('cartUpdated', handleCartUpdate);
@@ -40,7 +36,6 @@ const MainHeader = () => {
   const handleLogout = async () => {
     try {
       await logout();
-      // Cart will be cleared automatically via the authStateChanged event
     } catch (error) {
       console.error('Logout failed:', error);
     }
@@ -53,6 +48,7 @@ const MainHeader = () => {
           <Link to="/" className="logo d-flex align-items-center">
             <h1 className="sitename">{frontendSettings.site_name || 'Pavitra Trading'}</h1>
           </Link>
+
           <form className="search-form desktop-search-form">
             <div className="input-group">
               <input type="text" className="form-control" placeholder="Search for products" />
@@ -61,10 +57,12 @@ const MainHeader = () => {
               </button>
             </div>
           </form>
+
           <div className="header-actions d-flex align-items-center justify-content-end">
             <button className="header-action-btn mobile-search-toggle d-xl-none" type="button">
               <i className="bi bi-search"></i>
             </button>
+
             <div className="dropdown account-dropdown">
               <button className="header-action-btn" data-bs-toggle="dropdown">
                 <i className="bi bi-person"></i>
@@ -101,9 +99,11 @@ const MainHeader = () => {
                 )}
               </div>
             </div>
+
             <Link to="/wishlist" className="header-action-btn d-none d-md-block">
               <i className="bi bi-heart"></i>
             </Link>
+
             <Link to="/cart" className="header-action-btn position-relative">
               <i className="bi bi-cart3"></i>
               {!cartLoading && cartItemCount > 0 ? (
