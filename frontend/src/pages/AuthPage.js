@@ -1,12 +1,11 @@
-// frontend/src/pages/AuthPage.js
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { useToast } from '../contexts/ToastContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const AuthPage = () => {
   const [isActive, setIsActive] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState({
     login: false,
     register: false,
@@ -30,7 +29,6 @@ const AuthPage = () => {
   });
 
   const { login, register } = useAuth();
-  const { success, error } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -46,6 +44,7 @@ const AuthPage = () => {
 
   const togglePanel = () => {
     setIsActive(!isActive);
+    setError('');
   };
 
   const handleLoginChange = (field, value) => {
@@ -53,6 +52,7 @@ const AuthPage = () => {
       ...prev,
       [field]: value
     }));
+    setError('');
   };
 
   const handleRegisterChange = (field, value) => {
@@ -60,6 +60,7 @@ const AuthPage = () => {
       ...prev,
       [field]: value
     }));
+    setError('');
   };
 
   const togglePasswordVisibility = (field) => {
@@ -76,43 +77,62 @@ const AuthPage = () => {
     if (!registerData.last_name.trim()) {
       return 'Last name is required';
     }
-    if (!registerData.email.trim() && !registerData.phone.trim() && !registerData.username.trim()) {
+
+    // Check that at least one identifier is provided
+    const hasEmail = registerData.email.trim();
+    const hasPhone = registerData.phone.trim();
+    const hasUsername = registerData.username.trim();
+
+    if (!hasEmail && !hasPhone && !hasUsername) {
       return 'Email, phone, or username is required';
     }
+
+    // Validate email if provided
+    if (hasEmail && !/\S+@\S+\.\S+/.test(registerData.email)) {
+      return 'Please enter a valid email address';
+    }
+
+    // Validate phone if provided (basic validation)
+    if (hasPhone && !/^\+?[\d\s-()]{10,}$/.test(registerData.phone)) {
+      return 'Please enter a valid phone number';
+    }
+
+    // Validate username if provided
+    if (hasUsername && !/^[a-zA-Z0-9_]{3,30}$/.test(registerData.username)) {
+      return 'Username must be 3-30 characters and contain only letters, numbers, and underscores';
+    }
+
     if (registerData.password.length < 8) {
       return 'Password must be at least 8 characters long';
     }
+
+    if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(registerData.password)) {
+      return 'Password must contain at least one uppercase letter, one lowercase letter, and one number';
+    }
+
     if (registerData.password !== registerData.confirm_password) {
       return 'Passwords do not match';
     }
+
     return null;
   };
 
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError('');
+
+    if (!loginData.login_id.trim() || !loginData.password) {
+      setError('Please enter both login ID and password');
+      setLoading(false);
+      return;
+    }
 
     try {
       await login(loginData);
-      success('Login successful! Welcome back.', 3000);
       navigate('/');
-    } catch (err) {
-      console.error('Login failed:', err);
-      if (err.response?.status === 401) {
-        error('Invalid credentials. Please check your email/username and password.');
-      } else if (err.response?.status === 422) {
-        error('Invalid input format. Please check your data.');
-      } else if (err.response?.status === 429) {
-        error('Too many login attempts. Please try again later.');
-      } else if (err.response?.status === 503) {
-        error('Service is under maintenance. Please try again later.');
-      } else if (err.response?.data?.detail) {
-        error(err.response.data.detail);
-      } else if (err.message) {
-        error(err.message);
-      } else {
-        error('Login failed. Please try again.');
-      }
+    } catch (error) {
+      // Error is handled in the AuthContext
     } finally {
       setLoading(false);
     }
@@ -121,11 +141,11 @@ const AuthPage = () => {
   const handleRegister = async (e) => {
     e.preventDefault();
     setLoading(true);
+    setError('');
 
-    // Validate data before sending
     const validationError = validateRegisterData();
     if (validationError) {
-      error(validationError);
+      setError(validationError);
       setLoading(false);
       return;
     }
@@ -134,40 +154,24 @@ const AuthPage = () => {
       const registerPayload = {
         first_name: registerData.first_name,
         last_name: registerData.last_name,
-        email: registerData.email,
-        phone: registerData.phone,
-        username: registerData.username,
         password: registerData.password,
         country_id: registerData.country_id
       };
 
-      await register(registerPayload);
-      success('Registration successful! Welcome to our platform.', 3000);
-      navigate('/');
-    } catch (err) {
-      console.error('Registration failed:', err);
-      if (err.response?.status === 422) {
-        const validationErrors = err.response.data.detail;
-        if (Array.isArray(validationErrors)) {
-          const errorMessages = validationErrors.map(err => err.msg || err).join(', ');
-          error(`Validation failed: ${errorMessages}`);
-        } else if (typeof validationErrors === 'string') {
-          error(validationErrors);
-        } else if (validationErrors && typeof validationErrors === 'object') {
-          const errorMessage = Object.values(validationErrors).flat().join(', ');
-          error(`Validation failed: ${errorMessage}`);
-        }
-      } else if (err.response?.data?.detail) {
-        error(err.response.data.detail);
-      } else if (err.response?.status === 400) {
-        error('Email, phone, or username already exists. Please use different credentials.');
-      } else if (err.response?.status === 503) {
-        error('Service is under maintenance. Registration is temporarily unavailable.');
-      } else if (err.message) {
-        error(err.message);
-      } else {
-        error('Registration failed. Please try again.');
+      // Add the identifier based on what was provided
+      if (registerData.email.trim()) {
+        registerPayload.email = registerData.email;
+      } else if (registerData.phone.trim()) {
+        registerPayload.phone = registerData.phone;
+      } else if (registerData.username.trim()) {
+        registerPayload.username = registerData.username;
       }
+
+      console.log('Registration payload:', registerPayload);
+      await register(registerPayload);
+      navigate('/');
+    } catch (error) {
+      // Error is handled in the AuthContext
     } finally {
       setLoading(false);
     }
@@ -175,7 +179,13 @@ const AuthPage = () => {
 
   return (
     <div className={`auth-container ${isActive ? 'active' : ''}`} id="container">
-      {/* Sign Up Form */}
+      {error && (
+        <div className="alert alert-danger alert-dismissible fade show" style={{ position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 1000, minWidth: '300px' }}>
+          <strong>Error:</strong> {error}
+          <button type="button" className="btn-close" onClick={() => setError('')}></button>
+        </div>
+      )}
+
       <div className="form-container sign-up">
         <form onSubmit={handleRegister}>
           <h1>Create Account</h1>
@@ -185,7 +195,7 @@ const AuthPage = () => {
             <a href="#" className="icon"><i className="fa-brands fa-github"></i></a>
             <a href="#" className="icon"><i className="fa-brands fa-linkedin-in"></i></a>
           </div>
-          <span>or use your email for registration</span>
+          <span>or use your information for registration</span>
           <div className="name-fields">
             <input
               type="text"
@@ -220,7 +230,7 @@ const AuthPage = () => {
           />
           <input
             type="text"
-            placeholder="Username (optional)"
+            placeholder="Username"
             value={registerData.username}
             onChange={(e) => handleRegisterChange('username', e.target.value)}
             disabled={loading}
@@ -259,19 +269,11 @@ const AuthPage = () => {
             </span>
           </div>
           <button type="submit" disabled={loading}>
-            {loading ? (
-              <>
-                <span className="spinner-border spinner-border-sm me-2"></span>
-                Creating Account...
-              </>
-            ) : (
-              'Sign Up'
-            )}
+            {loading ? 'Creating Account...' : 'Sign Up'}
           </button>
         </form>
       </div>
 
-      {/* Sign In Form */}
       <div className="form-container sign-in">
         <form onSubmit={handleLogin}>
           <h1>Sign In</h1>
@@ -281,7 +283,7 @@ const AuthPage = () => {
             <a href="#" className="icon"><i className="fa-brands fa-github"></i></a>
             <a href="#" className="icon"><i className="fa-brands fa-linkedin-in"></i></a>
           </div>
-          <span>or use your email password</span>
+          <span>or use your email/password</span>
           <input
             type="text"
             placeholder="Email, Phone or Username *"
@@ -308,19 +310,11 @@ const AuthPage = () => {
           </div>
           <a href="#">Forget Your Password?</a>
           <button type="submit" disabled={loading}>
-            {loading ? (
-              <>
-                <span className="spinner-border spinner-border-sm me-2"></span>
-                Signing In...
-              </>
-            ) : (
-              'Sign In'
-            )}
+            {loading ? 'Signing In...' : 'Sign In'}
           </button>
         </form>
       </div>
 
-      {/* Toggle Container */}
       <div className="toggle-container">
         <div className="toggle">
           <div className="toggle-panel toggle-left">

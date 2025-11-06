@@ -7,28 +7,30 @@ export const authService = {
   },
 
   register: async (userData) => {
-    const formData = new FormData();
-    formData.append('first_name', userData.first_name.trim());
-    formData.append('last_name', userData.last_name.trim());
-    formData.append('password', userData.password);
-    formData.append('country_id', userData.country_id || 1);
+    // Build JSON payload instead of FormData
+    const payload = {
+      first_name: userData.first_name.trim(),
+      last_name: userData.last_name.trim(),
+      password: userData.password,
+      country_id: userData.country_id || 1
+    };
 
+    // Determine auth_type and add the appropriate identifier
     if (userData.email && userData.email.trim()) {
-      formData.append('email', userData.email.trim());
-    }
-    if (userData.phone && userData.phone.trim()) {
-      formData.append('phone', userData.phone.trim());
-    }
-    if (userData.username && userData.username.trim()) {
-      formData.append('username', userData.username.trim());
+      payload.email = userData.email.trim();
+      payload.auth_type = 'email';
+    } else if (userData.phone && userData.phone.trim()) {
+      payload.phone = userData.phone.trim();
+      payload.auth_type = 'mobile';
+    } else if (userData.username && userData.username.trim()) {
+      payload.username = userData.username.trim();
+      payload.auth_type = 'username';
+    } else {
+      throw new Error('Email, phone, or username is required');
     }
 
-    console.log('Sending registration form data:', Object.fromEntries(formData));
-    const response = await authApi.post('/register', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data',
-      },
-    });
+    console.log('Sending registration payload:', payload);
+    const response = await authApi.post('/register', payload);
     return response.data;
   },
 
