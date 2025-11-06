@@ -139,8 +139,6 @@ def invalidate_user_cache(user_id: int):
         logger.error(f"Failed to invalidate user cache: {e}")
 
 
-# Update the get_current_user_or_session function:
-
 async def get_current_user_or_session(request: Request):
     try:
         # First, try to get authenticated user
@@ -164,8 +162,11 @@ async def get_current_user_or_session(request: Request):
             # User not authenticated, continue as guest
             pass
 
-        # Handle guest session
-        guest_id = request.cookies.get("guest_id", str(uuid.uuid4()))
+        # Handle guest session - get existing or create new
+        guest_id = request.cookies.get("guest_id")
+        if not guest_id:
+            guest_id = str(uuid.uuid4())
+
         ip_address = request.client.host if request.client else 'unknown'
         user_agent = request.headers.get("user-agent", "")
 
@@ -179,7 +180,7 @@ async def get_current_user_or_session(request: Request):
                 "guest_id": guest_id
             }
 
-        # Fallback - minimal session data
+        # Fallback - minimal session data (should rarely happen)
         return {
             "user_id": None,
             "is_guest": True,
@@ -1291,36 +1292,37 @@ async def get_session_info(request: Request, current_user: dict = Depends(get_cu
 async def migrate_session_cart_to_user(request: Request, current_user: dict = Depends(get_current_user)):
     try:
         user_id = current_user['sub']
-        session_id = get_session_id(request)
 
-        if not session_id:
-            raise HTTPException(status_code=404, detail="Session not found")
+        # Get the user session (should already exist due to auth)
+        user_session = session_service.get_session_by_user_id(user_id)
+        if not user_session:
+            logger.error(f"No user session found for user {user_id}")
+            raise HTTPException(status_code=404, detail="User session not found")
 
-        session = get_session(request)
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found")
-
+        # Get current guest session if any
+        current_session = get_session(request)
         migrated_count = 0
+
         with db.get_cursor() as cursor:
-            if session.cart_items:
-                migrated_count = migrate_guest_cart_to_user_database(session, user_id, cursor)
+            if current_session and current_session.session_type == SessionType.GUEST:
+                migrated_count = migrate_guest_cart_to_user_database(current_session, user_id, cursor)
+                logger.info(f"🔄 Migrated {migrated_count} cart items from guest session to user {user_id}")
 
-        # Migrate the session from guest to user
-        new_session = session_service.migrate_guest_to_user_session(session_id, user_id)
-
-        if not new_session:
-            logger.error(f"Failed to migrate session during cart migration for user {user_id}")
-            raise HTTPException(status_code=500, detail="Failed to migrate cart and session")
+                # Update user session cart if items were migrated
+                if migrated_count > 0:
+                    # The migration function should handle the database update
+                    # We just need to ensure the session reflects the changes
+                    session_service.update_session_activity(user_session.session_id)
 
         redis_client.delete(f"user_cart:{user_id}")
-        logger.info(f"Cart and session migrated to user for user {user_id}, {migrated_count} items migrated")
+        logger.info(f"Cart migration completed for user {user_id}, {migrated_count} items migrated")
 
         return {
             "message": "Cart migrated successfully",
             "items_migrated": migrated_count,
-            "session_updated": True,
-            "new_session_id": new_session.session_id
+            "session_id": user_session.session_id
         }
+
     except Exception as e:
         logger.error(f"Failed to migrate cart: {e}")
         raise HTTPException(
