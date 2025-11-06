@@ -5,6 +5,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 from shared import config, setup_logging, get_logger, db
 from shared.session_middleware import SecureSessionMiddleware, get_session_id
+from shared.session_service import session_service
 from .business_routes import router as business_router
 from .message_consumer import notification_consumer
 from .routes import router
@@ -22,6 +23,7 @@ app = FastAPI(
 
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1"])
 app.add_middleware(SecureSessionMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=config.cors_origins,
@@ -49,6 +51,7 @@ async def secure_cors_headers(request: Request, call_next):
         response.headers['Access-Control-Allow-Origin'] = origin
     elif config.cors_origins and config.cors_origins[0] == '*':
         response.headers['Access-Control-Allow-Origin'] = '*'
+
     response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     response.headers[
         'Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Secure-Session-ID, X-Security-Token, X-CSRF-Token, Cookie'
@@ -76,6 +79,7 @@ async def secure_options_handler(path: str, request: Request):
             'Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With, X-Secure-Session-ID, X-Security-Token, X-CSRF-Token'
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Max-Age'] = '600'
+
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     return response
@@ -113,7 +117,6 @@ async def startup_event():
         db.initialize()
         logger.info("✅ Database initialized successfully")
 
-        # Start message consumer in background thread
         def start_consumer():
             notification_consumer.start_consuming()
 
@@ -180,7 +183,6 @@ if __name__ == "__main__":
 
     port = config.get_service_port('notification')
     logger.info(f"🚀 Starting Service on port {port}")
-
     uvicorn.run(
         app,
         host="0.0.0.0",

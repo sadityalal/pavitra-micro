@@ -2,8 +2,8 @@ from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
 from typing import Dict, Any
 from shared.auth_middleware import get_current_user
 from shared.session_middleware import get_session_id
+from shared.session_service import session_service
 from .message_consumer import business_alerts
-from shared.session_service import session_service, SessionType
 
 router = APIRouter()
 
@@ -25,9 +25,7 @@ async def send_low_stock_alert(
         request: Request,
         current_user: dict = Depends(require_admin)
 ):
-    """Manually trigger low stock alert"""
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -46,9 +44,7 @@ async def test_business_alert(
         request: Request,
         current_user: dict = Depends(require_admin)
 ):
-    """Test business alert system"""
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -62,7 +58,6 @@ async def test_business_alert(
             'created_at': '2024-01-15 12:00:00',
             'id': 999
         }
-
         business_alerts.send_new_order_alert(test_order)
         return {"success": True, "message": "Test business alert sent"}
     except Exception as e:
@@ -74,9 +69,7 @@ async def test_payment_alert(
         request: Request,
         current_user: dict = Depends(require_admin)
 ):
-    """Test payment alert system"""
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -88,7 +81,6 @@ async def test_payment_alert(
             'status': 'completed',
             'created_at': '2024-01-15 12:00:00'
         }
-
         business_alerts.send_payment_alert(test_payment)
         return {"success": True, "message": "Test payment alert sent"}
     except Exception as e:
@@ -100,9 +92,7 @@ async def test_refund_alert(
         request: Request,
         current_user: dict = Depends(require_admin)
 ):
-    """Test refund alert system"""
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -114,7 +104,6 @@ async def test_refund_alert(
             'reason': 'Test refund',
             'processed_at': '2024-01-15 12:00:00'
         }
-
         business_alerts.send_refund_alert(test_refund)
         return {"success": True, "message": "Test refund alert sent"}
     except Exception as e:

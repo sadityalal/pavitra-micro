@@ -2,11 +2,13 @@ import json
 import time
 import html
 import logging
-from shared import get_logger, rabbitmq_client, db, config
+from shared import get_logger, rabbitmq_client, db, config, session_service
 from .routes import email_service, sms_service, push_service, telegram_service, whatsapp_service, log_notification
 from .notification_router import notification_router
 from datetime import datetime
+
 logger = get_logger(__name__)
+
 
 class BusinessAlertService:
     def __init__(self):

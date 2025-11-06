@@ -12,6 +12,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import json
 import requests
+
 from .models import (
     EmailNotification, SMSNotification, PushNotification,
     TelegramNotification, WhatsAppNotification,
@@ -85,7 +86,6 @@ class SMSService:
                 logger.info(f"SMS notifications disabled, would send to {to_phone}: {message}")
                 return True
 
-            # Placeholder for SMS gateway integration
             logger.info(f"SMS to {to_phone}: {message}")
             return True
         except Exception as e:
@@ -103,7 +103,6 @@ class PushService:
                 logger.info(f"Push notifications disabled, would send to user {to_user_id}: {title} - {message}")
                 return True
 
-            # Placeholder for push notification service
             logger.info(f"Push to user {to_user_id}: {title} - {message}")
             return True
         except Exception as e:
@@ -134,15 +133,14 @@ class TelegramService:
                 'text': message,
                 'parse_mode': parse_mode
             }
-
             response = requests.post(url, json=payload, timeout=10)
+
             if response.status_code == 200:
                 logger.info(f"Telegram message sent successfully to {chat_id}")
                 return True
             else:
                 logger.error(f"Telegram API error: {response.status_code} - {response.text}")
                 return False
-
         except Exception as e:
             logger.error(f"Failed to send Telegram message: {e}")
             return False
@@ -160,7 +158,6 @@ class WhatsAppService:
                 logger.info(f"WhatsApp notifications disabled or configuration missing")
                 return False
 
-            # Placeholder for WhatsApp Business API integration
             logger.info(f"WhatsApp to {to_phone}: {message}")
             return True
         except Exception as e:
@@ -168,7 +165,6 @@ class WhatsAppService:
             return False
 
 
-# Initialize services
 email_service = EmailService()
 sms_service = SMSService()
 push_service = PushService()
@@ -189,7 +185,6 @@ def log_notification(notification_type: str, recipient: str, subject: str = None
 
 
 def get_email_template(template_name: str, template_data: dict) -> tuple:
-    # Sanitize all user inputs first
     sanitized_data = {}
     for key, value in template_data.items():
         if isinstance(value, str):
@@ -197,7 +192,6 @@ def get_email_template(template_name: str, template_data: dict) -> tuple:
         else:
             sanitized_data[key] = value
 
-    # Add safe defaults
     sanitized_data.update({
         "app_name": html.escape(config.app_name),
         "current_year": datetime.now().year,
@@ -320,13 +314,13 @@ def get_email_template(template_name: str, template_data: dict) -> tuple:
     template = templates.get(template_name, templates["welcome_email"])
     subject = template["subject"].format(**sanitized_data)
     html_content = template["html"].format(**sanitized_data)
+
     return subject, html_content
 
 
 @router.get("/health", response_model=HealthResponse)
 async def health(request: Request):
     try:
-        # Update session activity if session exists
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -334,6 +328,7 @@ async def health(request: Request):
         with db.get_cursor() as cursor:
             cursor.execute("SELECT COUNT(*) as count FROM notification_logs")
             notifications_count = cursor.fetchone()['count']
+
             return HealthResponse(
                 status="healthy",
                 service="notification",
@@ -358,18 +353,15 @@ async def send_email_notification(
         current_user: dict = Depends(get_current_user)
 ):
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
 
-        # Get template content
         subject, html_content = get_email_template(
             email_data.template_name.value,
             email_data.template_data
         )
 
-        # Send email in background
         background_tasks.add_task(
             send_email_background,
             email_data.to_email,
@@ -396,14 +388,17 @@ def send_email_background(to_email: str, subject: str, html_content: str, templa
     try:
         success = email_service.send_email(to_email, subject, html_content)
         status = "sent" if success else "failed"
+
         if not success:
             logger.warning(f"Email service returned failure for {to_email}")
+
     except smtplib.SMTPException as e:
         logger.error(f"SMTP error sending email to {to_email}: {e}")
         status = "failed"
     except Exception as e:
         logger.error(f"Unexpected error sending email to {to_email}: {e}")
         status = "failed"
+
     try:
         log_notification(notification_type="email", recipient=to_email, subject=subject, message=html_content[:500],
                          template_name=template_name, status=status)
@@ -419,12 +414,10 @@ async def send_sms_notification(
         current_user: dict = Depends(get_current_user)
 ):
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
 
-        # Send SMS in background
         background_tasks.add_task(
             send_sms_background,
             sms_data.to_phone,
@@ -450,6 +443,7 @@ def send_sms_background(to_phone: str, message: str, template_name: str = None):
     try:
         success = sms_service.send_sms(to_phone, message)
         status = "sent" if success else "failed"
+
         log_notification(
             notification_type="sms",
             recipient=to_phone,
@@ -475,12 +469,10 @@ async def send_push_notification(
         current_user: dict = Depends(get_current_user)
 ):
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
 
-        # Send push in background
         background_tasks.add_task(
             send_push_background,
             push_data.to_user_id,
@@ -507,6 +499,7 @@ def send_push_background(to_user_id: int, title: str, message: str, data: dict =
     try:
         success = push_service.send_push(to_user_id, title, message, data)
         status = "sent" if success else "failed"
+
         log_notification(
             notification_type="push",
             recipient=f"user_{to_user_id}",
@@ -532,12 +525,10 @@ async def send_telegram_notification(
         current_user: dict = Depends(require_roles(["admin", "super_admin"]))
 ):
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
 
-        # Send telegram in background
         background_tasks.add_task(
             send_telegram_background,
             telegram_data.to_chat_id,
@@ -564,6 +555,7 @@ def send_telegram_background(to_chat_id: str, message: str, template_name: str =
     try:
         success = telegram_service.send_message(to_chat_id, message, parse_mode)
         status = "sent" if success else "failed"
+
         log_notification(
             notification_type="telegram",
             recipient=to_chat_id,
@@ -589,12 +581,10 @@ async def send_whatsapp_notification(
         current_user: dict = Depends(require_roles(["admin", "super_admin"]))
 ):
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
 
-        # Send whatsapp in background
         background_tasks.add_task(
             send_whatsapp_background,
             whatsapp_data.to_phone,
@@ -620,6 +610,7 @@ def send_whatsapp_background(to_phone: str, message: str, template_name: str = N
     try:
         success = whatsapp_service.send_message(to_phone, message)
         status = "sent" if success else "failed"
+
         log_notification(
             notification_type="whatsapp",
             recipient=to_phone,
@@ -647,7 +638,6 @@ async def get_notification_logs(
         current_user: dict = Depends(require_roles(["admin", "super_admin"]))
 ):
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -655,9 +645,11 @@ async def get_notification_logs(
         with db.get_cursor() as cursor:
             query_conditions = ["1=1"]
             query_params = []
+
             if notification_type:
                 query_conditions.append("type = %s")
                 query_params.append(notification_type.value)
+
             if recipient:
                 query_conditions.append("recipient LIKE %s")
                 query_params.append(f"%{sanitize_input(recipient)}%")
@@ -671,8 +663,8 @@ async def get_notification_logs(
                 ORDER BY created_at DESC
                 LIMIT %s OFFSET %s
             """, query_params + [page_size, offset])
-            logs = cursor.fetchall()
 
+            logs = cursor.fetchall()
             return [
                 NotificationResponse(
                     id=log['id'],
@@ -701,20 +693,17 @@ async def get_notification_stats(
         current_user: dict = Depends(require_roles(["admin", "super_admin"]))
 ):
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
 
         with db.get_cursor() as cursor:
-            # Total counts
             cursor.execute("SELECT COUNT(*) as total FROM notification_logs")
             total_count = cursor.fetchone()['total']
 
             cursor.execute("SELECT COUNT(*) as failed FROM notification_logs WHERE status = 'failed'")
             failed_count = cursor.fetchone()['failed']
 
-            # Count by type
             cursor.execute("SELECT COUNT(*) as count FROM notification_logs WHERE type = 'email'")
             email_count = cursor.fetchone()['count']
 
@@ -730,7 +719,6 @@ async def get_notification_stats(
             cursor.execute("SELECT COUNT(*) as count FROM notification_logs WHERE type = 'whatsapp'")
             whatsapp_count = cursor.fetchone()['count']
 
-            # Last 24 hours
             cursor.execute("""
                 SELECT COUNT(*) as count FROM notification_logs
                 WHERE created_at >= NOW() - INTERVAL 1 DAY
@@ -761,7 +749,6 @@ async def get_notification_settings(
         current_user: dict = Depends(require_roles(["admin", "super_admin"]))
 ):
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
@@ -792,7 +779,6 @@ async def test_email_notification(
         current_user: dict = Depends(require_roles(["admin", "super_admin"]))
 ):
     try:
-        # Update session activity
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
