@@ -2,7 +2,7 @@ import html
 from fastapi import APIRouter, HTTPException, Depends, Query, status, UploadFile, File, Request, BackgroundTasks
 from typing import Optional, List
 from shared import config, db, sanitize_input, get_logger, redis_client, rabbitmq_client
-from shared.auth_middleware import get_current_user
+from shared.auth_middleware import get_current_user, require_roles
 from shared.rate_limiter import rate_limiter
 from shared.session_middleware import get_session, get_session_id
 from shared.session_service import session_service, SessionType
@@ -19,6 +19,7 @@ import re
 
 router = APIRouter()
 logger = get_logger(__name__)
+
 
 def validate_product_for_cart(product_id: int, quantity: int, variation_id: Optional[int] = None) -> dict:
     try:
@@ -92,11 +93,13 @@ def validate_product_for_cart(product_id: int, quantity: int, variation_id: Opti
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Product variation not found"
                     )
+
                 if variation['stock_status'] == 'out_of_stock':
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Product variation is out of stock"
                     )
+
                 if quantity > variation['stock_quantity'] and variation['stock_status'] != 'on_backorder':
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
@@ -144,6 +147,7 @@ def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None)
 
             max_quantity = product['max_cart_quantity'] or 20
             variation_stock = None
+
             if variation_id:
                 cursor.execute("""
                     SELECT stock_quantity, stock_status
@@ -179,13 +183,14 @@ def get_product_cart_limits(product_id: int, variation_id: Optional[int] = None)
 
 @router.get("/{product_id}/cart-validation")
 async def validate_product_cart_addition(
-    product_id: int,
-    quantity: int = Query(1, ge=1),
-    variation_id: Optional[int] = Query(None),
-    request: Request = None
+        product_id: int,
+        quantity: int = Query(1, ge=1),
+        variation_id: Optional[int] = Query(None),
+        request: Request = None
 ):
     try:
         await rate_limiter.check_rate_limit(request)
+
         if quantity < 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -193,6 +198,7 @@ async def validate_product_cart_addition(
             )
 
         product_data = validate_product_for_cart(product_id, quantity, variation_id)
+
         return {
             "valid": True,
             "product_id": product_id,
@@ -219,8 +225,10 @@ async def get_bulk_cart_product_info(
 ):
     try:
         await rate_limiter.check_rate_limit(request)
+
         if not product_ids:
             return {"products": []}
+
         if len(product_ids) > 50:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -239,6 +247,7 @@ async def get_bulk_cart_product_info(
             """
             cursor.execute(query, product_ids)
             products = cursor.fetchall()
+
             product_map = {}
             for product in products:
                 max_quantity = product['max_cart_quantity'] or 20
@@ -283,13 +292,16 @@ def invalidate_product_cache_comprehensive(product_id: int):
             "products:bestsellers",
             "products:new_arrivals"
         ]
+
         pipeline = redis_client.pipeline()
         for key in keys_to_delete:
             pipeline.delete(key)
         pipeline.execute()
+
         pattern_keys = redis_client.keys("products:*")
         if pattern_keys:
             redis_client.delete(*pattern_keys)
+
         logger.info(f"Comprehensively invalidated cache for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to comprehensively invalidate product cache: {e}")
@@ -335,6 +347,7 @@ def publish_product_event(product_data: dict, event_type: str):
             'timestamp': datetime.utcnow().isoformat(),
             'data': product_data
         }
+
         rabbitmq_client.publish_message(
             exchange='product_events',
             routing_key=f'product.{event_type}',
@@ -403,13 +416,16 @@ def invalidate_product_cache(product_id: int):
             "products:bestsellers",
             "products:new_arrivals",
         ]
+
         pipeline = redis_client.pipeline()
         for key in keys_to_delete:
             pipeline.delete(key)
         pipeline.execute()
+
         pattern_keys = redis_client.keys("products:search:*")
         if pattern_keys:
             redis_client.delete(*pattern_keys)
+
         logger.info(f"Targeted cache invalidation for product {product_id}")
     except Exception as e:
         logger.error(f"Failed to invalidate product cache: {e}")
@@ -418,6 +434,7 @@ def invalidate_product_cache(product_id: int):
 def normalize_image_urls(image_data):
     if not image_data:
         return image_data
+
     if isinstance(image_data, str):
         if image_data.startswith(('http://', 'https://')):
             parsed = urlparse(image_data)
@@ -468,6 +485,7 @@ def update_session_wishlist(session, session_id: str, product_id: int, action: s
             return False
 
         wishlist_items = getattr(session, 'wishlist_items', [])
+
         if action == 'add':
             if product_id not in wishlist_items:
                 wishlist_items.append(product_id)
@@ -489,15 +507,18 @@ def validate_uploaded_file(file: UploadFile) -> bool:
         file.file.seek(0, 2)
         file_size = file.file.tell()
         file.file.seek(0)
+
         if file_size > max_size:
             logger.warning(f"File too large: {file.filename} ({file_size} bytes)")
             return False
+
         if file_size == 0:
             logger.warning(f"Empty file: {file.filename}")
             return False
 
         file_content = file.file.read(1024)
         file.file.seek(0)
+
         file_extension = file.filename.split('.')[-1].lower() if '.' in file.filename else ''
         if file_extension not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
             logger.warning(f"Invalid file extension: {file.filename}")
@@ -530,12 +551,15 @@ def validate_uploaded_file(file: UploadFile) -> bool:
             import io
             image = Image.open(io.BytesIO(file_content))
             image.verify()
+
             if image.width > 10000 or image.height > 10000:
                 logger.warning(f"Image dimensions too large: {file.filename}")
                 return False
+
             if image.width * image.height > 25000000:
                 logger.warning(f"Image resolution too high: {file.filename}")
                 return False
+
         except Exception as e:
             logger.warning(f"Image integrity check failed for {file.filename}: {e}")
             return False
@@ -562,8 +586,10 @@ async def health():
         with db.get_cursor() as cursor:
             cursor.execute("SELECT COUNT(*) as count FROM products WHERE status = 'active'")
             products_count = cursor.fetchone()['count']
+
             cursor.execute("SELECT COUNT(*) as count FROM categories WHERE is_active = 1")
             categories_count = cursor.fetchone()['count']
+
             return HealthResponse(
                 status="healthy",
                 service="product",
@@ -696,6 +722,7 @@ async def get_products(
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -788,11 +815,14 @@ async def get_products(
                 ORDER BY p.{sort_by} {sort_order.upper()}
                 LIMIT %s OFFSET %s
             """
+
             offset = (page - 1) * page_size
             final_params = query_params + [page_size, offset]
+
             logger.info(f"📦 Products query executing with {len(final_params)} parameters")
             cursor.execute(products_query, final_params)
             products = cursor.fetchall()
+
             total_count = 0
             if products:
                 total_count = products[0].get('total_count', 0)
@@ -808,11 +838,14 @@ async def get_products(
                 total_count = cursor.fetchone()['total']
 
             logger.info(f"📦 Products fetched: {len(products)}, total: {total_count}")
+
             product_list = []
             for product in products:
                 safe_name = html.escape(product['name']) if product['name'] else ""
-                safe_short_description = html.escape(product['short_description']) if product['short_description'] else ""
+                safe_short_description = html.escape(product['short_description']) if product[
+                    'short_description'] else ""
                 safe_description = html.escape(product['description']) if product['description'] else ""
+
                 specification = None
                 image_gallery = None
 
@@ -872,6 +905,7 @@ async def get_products(
                 ))
 
             total_pages = (total_count + page_size - 1) // page_size if page_size > 0 else 1
+
             logger.info(f"✅ Successfully returning {len(product_list)} products")
             return ProductListResponse(
                 products=product_list,
@@ -900,18 +934,22 @@ async def get_featured_products(
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             count_query = "SELECT COUNT(*) as total FROM products WHERE status = 'active' AND is_featured = 1"
             cursor.execute(count_query)
             total_count = cursor.fetchone()['total']
+
             offset = (page - 1) * page_size
             products_query = """
                 SELECT
@@ -929,10 +967,12 @@ async def get_featured_products(
             """
             cursor.execute(products_query, [page_size, offset])
             products = cursor.fetchall()
+
             product_list = []
             for product in products:
                 specification = None
                 image_gallery = None
+
                 if product['specification']:
                     try:
                         if isinstance(product['specification'], str):
@@ -941,6 +981,7 @@ async def get_featured_products(
                             specification = product['specification']
                     except:
                         specification = None
+
                 if product['image_gallery']:
                     try:
                         if isinstance(product['image_gallery'], str):
@@ -949,8 +990,10 @@ async def get_featured_products(
                             image_gallery = product['image_gallery']
                     except:
                         image_gallery = None
+
                 main_image_url = normalize_image_urls(product['main_image_url'])
                 image_gallery = normalize_image_urls(image_gallery)
+
                 product_list.append(ProductResponse(
                     id=product['id'],
                     uuid=product['uuid'],
@@ -984,6 +1027,7 @@ async def get_featured_products(
                     created_at=product['created_at'],
                     updated_at=product['updated_at']
                 ))
+
             total_pages = (total_count + page_size - 1) // page_size
             return ProductListResponse(
                 products=product_list,
@@ -1009,18 +1053,22 @@ async def get_bestseller_products(
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             count_query = "SELECT COUNT(*) as total FROM products WHERE status = 'active' AND is_bestseller = 1"
             cursor.execute(count_query)
             total_count = cursor.fetchone()['total']
+
             offset = (page - 1) * page_size
             products_query = """
                 SELECT
@@ -1038,10 +1086,12 @@ async def get_bestseller_products(
             """
             cursor.execute(products_query, [page_size, offset])
             products = cursor.fetchall()
+
             product_list = []
             for product in products:
                 specification = None
                 image_gallery = None
+
                 if product['specification']:
                     try:
                         if isinstance(product['specification'], str):
@@ -1050,6 +1100,7 @@ async def get_bestseller_products(
                             specification = product['specification']
                     except:
                         specification = None
+
                 if product['image_gallery']:
                     try:
                         if isinstance(product['image_gallery'], str):
@@ -1058,8 +1109,10 @@ async def get_bestseller_products(
                             image_gallery = product['image_gallery']
                     except:
                         image_gallery = None
+
                 main_image_url = normalize_image_urls(product['main_image_url'])
                 image_gallery = normalize_image_urls(image_gallery)
+
                 product_list.append(ProductResponse(
                     id=product['id'],
                     uuid=product['uuid'],
@@ -1093,6 +1146,7 @@ async def get_bestseller_products(
                     created_at=product['created_at'],
                     updated_at=product['updated_at']
                 ))
+
             total_pages = (total_count + page_size - 1) // page_size
             return ProductListResponse(
                 products=product_list,
@@ -1107,6 +1161,8 @@ async def get_bestseller_products(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch bestseller products"
         )
+
+
 @router.get("/new-arrivals", response_model=ProductListResponse)
 async def get_new_arrivals(
         request: Request,
@@ -1116,18 +1172,22 @@ async def get_new_arrivals(
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             count_query = "SELECT COUNT(*) as total FROM products WHERE status = 'active' AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)"
             cursor.execute(count_query)
             total_count = cursor.fetchone()['total']
+
             offset = (page - 1) * page_size
             products_query = """
                 SELECT
@@ -1145,10 +1205,12 @@ async def get_new_arrivals(
             """
             cursor.execute(products_query, [page_size, offset])
             products = cursor.fetchall()
+
             product_list = []
             for product in products:
                 specification = None
                 image_gallery = None
+
                 if product['specification']:
                     try:
                         if isinstance(product['specification'], str):
@@ -1157,6 +1219,7 @@ async def get_new_arrivals(
                             specification = product['specification']
                     except:
                         specification = None
+
                 if product['image_gallery']:
                     try:
                         if isinstance(product['image_gallery'], str):
@@ -1165,8 +1228,10 @@ async def get_new_arrivals(
                             image_gallery = product['image_gallery']
                     except:
                         image_gallery = None
+
                 main_image_url = normalize_image_urls(product['main_image_url'])
                 image_gallery = normalize_image_urls(image_gallery)
+
                 product_list.append(ProductResponse(
                     id=product['id'],
                     uuid=product['uuid'],
@@ -1200,6 +1265,7 @@ async def get_new_arrivals(
                     created_at=product['created_at'],
                     updated_at=product['updated_at']
                 ))
+
             total_pages = (total_count + page_size - 1) // page_size
             return ProductListResponse(
                 products=product_list,
@@ -1214,6 +1280,8 @@ async def get_new_arrivals(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch new arrivals"
         )
+
+
 @router.get("/{product_id}", response_model=ProductResponse)
 async def get_product(product_id: int, request: Request):
     if product_id <= 0:
@@ -1225,6 +1293,7 @@ async def get_product(product_id: int, request: Request):
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1261,6 +1330,7 @@ async def get_product(product_id: int, request: Request):
                 WHERE p.id = %s AND p.status = 'active'
             """, (product_id,))
             product = cursor.fetchone()
+
             if not product:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
@@ -1294,10 +1364,13 @@ async def get_product(product_id: int, request: Request):
 
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(image_gallery)
+
             max_cart_quantity = product['max_cart_quantity'] or 20
+
             safe_name = html.escape(product['name']) if product['name'] else ""
             safe_short_description = html.escape(product['short_description']) if product['short_description'] else ""
             safe_description = html.escape(product['description']) if product['description'] else ""
+
             product_response = ProductResponse(
                 id=product['id'],
                 uuid=product['uuid'],
@@ -1331,9 +1404,9 @@ async def get_product(product_id: int, request: Request):
                 created_at=product['created_at'],
                 updated_at=product['updated_at']
             )
+
             cache_product(product_id, product_response.dict())
             return product_response
-
     except HTTPException:
         raise
     except Exception as e:
@@ -1342,6 +1415,8 @@ async def get_product(product_id: int, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch product"
         )
+
+
 @router.get("/stock-status/bulk")
 async def get_bulk_stock_status(
         product_ids: List[int] = Query(...),
@@ -1349,11 +1424,13 @@ async def get_bulk_stock_status(
 ):
     try:
         await rate_limiter.check_rate_limit(request)
+
         if not product_ids or len(product_ids) > 50:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Maximum 50 products allowed per request"
             )
+
         with db.get_cursor() as cursor:
             placeholders = ','.join(['%s'] * len(product_ids))
             query = f"""
@@ -1365,6 +1442,7 @@ async def get_bulk_stock_status(
             """
             cursor.execute(query, product_ids)
             products = cursor.fetchall()
+
             status_map = {}
             for product in products:
                 max_quantity = product['max_cart_quantity'] or 20
@@ -1375,6 +1453,7 @@ async def get_bulk_stock_status(
                     'max_cart_quantity': max_quantity,
                     'available': product['status'] == 'active'
                 }
+
             result = []
             for pid in product_ids:
                 if pid in status_map:
@@ -1386,6 +1465,7 @@ async def get_bulk_stock_status(
                         'stock_status': 'out_of_stock',
                         'max_cart_quantity': 0
                     })
+
             return {"products": result}
     except Exception as e:
         logger.error(f"Failed to get bulk stock status: {e}")
@@ -1393,20 +1473,26 @@ async def get_bulk_stock_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get stock status"
         )
+
+
 @router.get("/slug/{product_slug}", response_model=ProductResponse)
 async def get_product_by_slug(product_slug: str, request: Request):
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session = get_session(request)
         session_id = get_session_id(request)
+
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -1421,18 +1507,23 @@ async def get_product_by_slug(product_slug: str, request: Request):
                 WHERE p.slug = %s AND p.status = 'active'
             """, (sanitize_input(product_slug),))
             product = cursor.fetchone()
+
             if not product:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             cursor.execute("""
                 UPDATE products SET view_count = view_count + 1 WHERE id = %s
             """, (product['id'],))
+
             if session_id:
                 update_session_product_views(session, product['id'], session_id)
+
             specification = None
             image_gallery = None
+
             if product['specification']:
                 try:
                     if isinstance(product['specification'], str):
@@ -1441,6 +1532,7 @@ async def get_product_by_slug(product_slug: str, request: Request):
                         specification = product['specification']
                 except:
                     specification = None
+
             if product['image_gallery']:
                 try:
                     if isinstance(product['image_gallery'], str):
@@ -1449,8 +1541,10 @@ async def get_product_by_slug(product_slug: str, request: Request):
                         image_gallery = product['image_gallery']
                 except:
                     image_gallery = None
+
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(image_gallery)
+
             return ProductResponse(
                 id=product['id'],
                 uuid=product['uuid'],
@@ -1492,6 +1586,8 @@ async def get_product_by_slug(product_slug: str, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch product"
         )
+
+
 @router.get("/categories/all", response_model=List[CategoryResponse])
 async def get_categories(
         request: Request,
@@ -1501,36 +1597,45 @@ async def get_categories(
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         cached_categories = get_cached_categories()
         if cached_categories and parent_id is None and featured is None:
             logger.info("Returning cached categories")
             return [CategoryResponse(**cat) for cat in cached_categories]
+
         with db.get_cursor() as cursor:
             query_conditions = ["is_active = 1"]
             query_params = []
+
             if parent_id is not None:
                 query_conditions.append("parent_id = %s")
                 query_params.append(parent_id)
             else:
                 query_conditions.append("parent_id IS NULL")
+
             if featured is not None:
                 query_conditions.append("is_featured = %s")
                 query_params.append(featured)
+
             where_clause = " AND ".join(query_conditions)
+
             cursor.execute(f"""
                 SELECT * FROM categories
                 WHERE {where_clause}
                 ORDER BY sort_order, name
             """, query_params)
             categories = cursor.fetchall()
+
             category_list = [
                 CategoryResponse(
                     id=cat['id'],
@@ -1545,8 +1650,10 @@ async def get_categories(
                 )
                 for cat in categories
             ]
+
             if parent_id is None and featured is None:
                 cache_categories([cat.dict() for cat in category_list])
+
             return category_list
     except Exception as e:
         logger.error(f"Failed to fetch categories: {e}")
@@ -1554,30 +1661,37 @@ async def get_categories(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch categories"
         )
+
+
 @router.get("/categories/{category_id}", response_model=CategoryResponse)
 async def get_category(category_id: int, request: Request):
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM categories
                 WHERE id = %s AND is_active = 1
             """, (category_id,))
             category = cursor.fetchone()
+
             if not category:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Category not found"
                 )
+
             return CategoryResponse(
                 id=category['id'],
                 uuid=category['uuid'],
@@ -1597,30 +1711,37 @@ async def get_category(category_id: int, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch category"
         )
+
+
 @router.get("/categories/slug/{category_slug}", response_model=CategoryResponse)
 async def get_category_by_slug(category_slug: str, request: Request):
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM categories
                 WHERE slug = %s AND is_active = 1
             """, (sanitize_input(category_slug),))
             category = cursor.fetchone()
+
             if not category:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Category not found"
                 )
+
             return CategoryResponse(
                 id=category['id'],
                 uuid=category['uuid'],
@@ -1640,28 +1761,36 @@ async def get_category_by_slug(category_slug: str, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch category"
         )
+
+
 @router.get("/brands/all", response_model=List[BrandResponse])
 async def get_brands(request: Request, featured: Optional[bool] = Query(None)):
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             query = "SELECT * FROM brands WHERE is_active = 1"
             params = []
+
             if featured is not None:
                 query += " AND is_featured = %s"
                 params.append(featured)
+
             query += " ORDER BY name"
             cursor.execute(query, params)
             brands = cursor.fetchall()
+
             return [
                 BrandResponse(
                     id=brand['id'],
@@ -1680,30 +1809,37 @@ async def get_brands(request: Request, featured: Optional[bool] = Query(None)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch brands"
         )
+
+
 @router.get("/brands/{brand_id}", response_model=BrandResponse)
 async def get_brand(brand_id: int, request: Request):
     try:
         await rate_limiter.check_rate_limit(request)
         config.refresh_cache()
+
         if config.maintenance_mode:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM brands
                 WHERE id = %s AND is_active = 1
             """, (brand_id,))
             brand = cursor.fetchone()
+
             if not brand:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Brand not found"
                 )
+
             return BrandResponse(
                 id=brand['id'],
                 uuid=brand['uuid'],
@@ -1721,15 +1857,20 @@ async def get_brand(brand_id: int, request: Request):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch brand"
         )
+
+
 @router.get("/wishlist")
 async def get_wishlist(request: Request, current_user: dict = Depends(get_current_user)):
     try:
         session = get_session(request)
         session_id = get_session_id(request)
+
         if session_id:
             session_service.update_session_activity(session_id)
+
         user_id = current_user['sub']
         session_wishlist = get_session_wishlist(session) if session else []
+
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -1745,8 +1886,10 @@ async def get_wishlist(request: Request, current_user: dict = Depends(get_curren
                 ORDER BY w.created_at DESC
             """, (user_id,))
             db_wishlist = cursor.fetchall()
+
             db_product_ids = {item['product_id'] for item in db_wishlist}
             combined_product_ids = set(session_wishlist) | db_product_ids
+
             if combined_product_ids:
                 placeholders = ','.join(['%s'] * len(combined_product_ids))
                 cursor.execute(f"""
@@ -1755,8 +1898,10 @@ async def get_wishlist(request: Request, current_user: dict = Depends(get_curren
                     FROM products
                     WHERE id IN ({placeholders}) AND status = 'active'
                 """, list(combined_product_ids))
+
                 products = {p['id']: p for p in cursor.fetchall()}
                 wishlist_items = []
+
                 for product_id in combined_product_ids:
                     if product_id in products:
                         product = products[product_id]
@@ -1770,6 +1915,7 @@ async def get_wishlist(request: Request, current_user: dict = Depends(get_curren
                             'in_session': product_id in session_wishlist,
                             'in_database': product_id in db_product_ids
                         })
+
                 return {
                     "items": wishlist_items,
                     "total_count": len(wishlist_items),
@@ -1789,6 +1935,8 @@ async def get_wishlist(request: Request, current_user: dict = Depends(get_curren
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch wishlist"
         )
+
+
 @router.post("/wishlist/{product_id}")
 async def add_to_wishlist(
         product_id: int,
@@ -1799,8 +1947,10 @@ async def add_to_wishlist(
         user_id = current_user['sub']
         session = get_session(request)
         session_id = get_session_id(request)
+
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id FROM products WHERE id = %s AND status = 'active'", (product_id,))
             if not cursor.fetchone():
@@ -1808,13 +1958,17 @@ async def add_to_wishlist(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             cursor.execute("""
                 INSERT IGNORE INTO wishlists (user_id, product_id)
                 VALUES (%s, %s)
             """, (user_id, product_id))
+
             cursor.execute("UPDATE products SET wishlist_count = wishlist_count + 1 WHERE id = %s", (product_id,))
+
             if session and session_id:
                 update_session_wishlist(session, session_id, product_id, 'add')
+
             logger.info(f"Product {product_id} added to wishlist for user {user_id}")
             return {"message": "Product added to wishlist"}
     except HTTPException:
@@ -1825,6 +1979,8 @@ async def add_to_wishlist(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to add to wishlist"
         )
+
+
 @router.delete("/wishlist/{product_id}")
 async def remove_from_wishlist(
         product_id: int,
@@ -1835,15 +1991,20 @@ async def remove_from_wishlist(
         user_id = current_user['sub']
         session = get_session(request)
         session_id = get_session_id(request)
+
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("DELETE FROM wishlists WHERE user_id = %s AND product_id = %s", (user_id, product_id))
+
             if cursor.rowcount > 0:
                 cursor.execute("UPDATE products SET wishlist_count = GREATEST(0, wishlist_count - 1) WHERE id = %s",
                                (product_id,))
+
             if session and session_id:
                 update_session_wishlist(session, session_id, product_id, 'remove')
+
             logger.info(f"Product {product_id} removed from wishlist for user {user_id}")
             return {"message": "Product removed from wishlist"}
     except HTTPException:
@@ -1854,6 +2015,8 @@ async def remove_from_wishlist(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to remove from wishlist"
         )
+
+
 @router.get("/session/recommendations")
 async def get_personalized_recommendations(
         request: Request,
@@ -1921,6 +2084,8 @@ async def get_personalized_recommendations(
             """, (limit,))
             products = cursor.fetchall()
             return {"recommendations": products, "source": "featured_fallback"}
+
+
 @router.post("/admin/products", response_model=ProductResponse)
 async def create_product(
         product_data: ProductCreate,
@@ -1934,11 +2099,14 @@ async def create_product(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         current_user = await require_roles(['admin', 'vendor'], request)
         user_id = int(current_user.get('sub'))
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id FROM products WHERE sku = %s", (product_data.sku,))
             if cursor.fetchone():
@@ -1946,18 +2114,21 @@ async def create_product(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="SKU already exists"
                 )
+
             cursor.execute("SELECT id FROM products WHERE slug = %s", (product_data.slug,))
             if cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Slug already exists"
                 )
+
             cursor.execute("SELECT id FROM categories WHERE id = %s AND is_active = 1", (product_data.category_id,))
             if not cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Category not found"
                 )
+
             if product_data.brand_id:
                 cursor.execute("SELECT id FROM brands WHERE id = %s AND is_active = 1", (product_data.brand_id,))
                 if not cursor.fetchone():
@@ -1965,7 +2136,9 @@ async def create_product(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Brand not found"
                     )
+
             max_cart_quantity = config.max_cart_quantity_per_product
+
             cursor.execute("""
                 INSERT INTO products (
                     sku, name, slug, short_description, description, specification,
@@ -1994,9 +2167,11 @@ async def create_product(
                 5,
                 max_cart_quantity
             ))
+
             product_id = cursor.lastrowid
             cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
+
             specification = None
             if product['specification']:
                 try:
@@ -2006,8 +2181,10 @@ async def create_product(
                         specification = product['specification']
                 except:
                     specification = None
+
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(product['image_gallery'])
+
             product_response = ProductResponse(
                 id=product['id'],
                 uuid=product['uuid'],
@@ -2041,12 +2218,14 @@ async def create_product(
                 created_at=product['created_at'],
                 updated_at=product['updated_at']
             )
+
             if background_tasks:
                 background_tasks.add_task(
                     publish_product_event,
                     product,
                     'created'
                 )
+
             logger.info(f"Product created successfully: {product_data.name}")
             return product_response
     except HTTPException:
@@ -2057,6 +2236,8 @@ async def create_product(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create product"
         )
+
+
 @router.put("/admin/products/{product_id}", response_model=ProductResponse)
 async def update_product(
         product_id: int,
@@ -2071,10 +2252,13 @@ async def update_product(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         current_user = await require_roles(['admin', 'vendor'], request)
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id FROM products WHERE id = %s", (product_id,))
             if not cursor.fetchone():
@@ -2082,18 +2266,21 @@ async def update_product(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             cursor.execute("SELECT id FROM products WHERE sku = %s AND id != %s", (product_data.sku, product_id))
             if cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="SKU already exists"
                 )
+
             cursor.execute("SELECT id FROM products WHERE slug = %s AND id != %s", (product_data.slug, product_id))
             if cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Slug already exists"
                 )
+
             cursor.execute("""
                 UPDATE products SET
                     sku = %s, name = %s, slug = %s, short_description = %s,
@@ -2120,15 +2307,19 @@ async def update_product(
                 product_data.is_featured,
                 product_id
             ))
+
             cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
+
             if background_tasks:
                 background_tasks.add_task(
                     publish_product_event,
                     product,
                     'updated'
                 )
+
             background_tasks.add_task(invalidate_product_cache_comprehensive, product_id)
+
             specification = None
             if product['specification']:
                 try:
@@ -2138,8 +2329,10 @@ async def update_product(
                         specification = product['specification']
                 except:
                     specification = None
+
             main_image_url = normalize_image_urls(product['main_image_url'])
             image_gallery = normalize_image_urls(product['image_gallery'])
+
             return ProductResponse(
                 id=product['id'],
                 uuid=product['uuid'],
@@ -2181,6 +2374,8 @@ async def update_product(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update product"
         )
+
+
 @router.post("/admin/products/{product_id}/images")
 async def upload_product_images(
         request: Request,
@@ -2189,6 +2384,7 @@ async def upload_product_images(
         background_tasks: BackgroundTasks = None
 ):
     await require_roles(['admin', 'vendor'], request)
+
     try:
         config.refresh_cache()
         if config.maintenance_mode:
@@ -2196,9 +2392,11 @@ async def upload_product_images(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, image_gallery FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
@@ -2207,27 +2405,33 @@ async def upload_product_images(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             invalid_files = []
             valid_files = []
+
             for file in files:
                 if not validate_uploaded_file(file):
                     invalid_files.append(file.filename)
                 else:
                     valid_files.append(file)
+
             if invalid_files:
                 logger.warning(f"Invalid files rejected for product {product_id}: {invalid_files}")
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid or malicious files detected: {', '.join(invalid_files)}. Only valid JPEG, PNG, GIF, and WebP images are allowed."
                 )
+
             if not valid_files:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="No valid files to upload"
                 )
+
             max_total_files = 20
             uploaded_urls = []
             existing_gallery = []
+
             if product['image_gallery']:
                 try:
                     if isinstance(product['image_gallery'], str):
@@ -2236,12 +2440,14 @@ async def upload_product_images(
                         existing_gallery = product['image_gallery']
                 except:
                     existing_gallery = []
+
             current_file_count = len(existing_gallery)
             if current_file_count + len(valid_files) > max_total_files:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Maximum {max_total_files} images allowed per product. Currently have {current_file_count}, trying to add {len(valid_files)}."
                 )
+
             for file in valid_files:
                 try:
                     original_filename = file.filename
@@ -2249,6 +2455,7 @@ async def upload_product_images(
                         c for c in original_filename if c.isalnum() or c in ('-', '_', '.')).rstrip()
                     if not safe_filename:
                         safe_filename = "image"
+
                     file_extension = original_filename.split('.')[-1].lower() if '.' in original_filename else ''
                     if file_extension not in ['jpg', 'jpeg', 'png', 'gif', 'webp']:
                         content_type_to_extension = {
@@ -2258,8 +2465,10 @@ async def upload_product_images(
                             'image/webp': 'webp'
                         }
                         file_extension = content_type_to_extension.get(file.content_type, 'jpg')
+
                     unique_filename = f"product_{product_id}_{int(datetime.now().timestamp())}_{len(uploaded_urls)}.{file_extension}"
                     upload_dir = "/app/uploads/products"
+
                     try:
                         os.makedirs(upload_dir, mode=0o755, exist_ok=True)
                     except PermissionError as e:
@@ -2268,20 +2477,25 @@ async def upload_product_images(
                     except OSError as e:
                         logger.error(f"Failed to create upload directory: {e}")
                         raise HTTPException(status_code=500, detail="Server storage error")
+
                     file_path = os.path.join(upload_dir, unique_filename)
+
                     if not file_path.startswith("/app/uploads/"):
                         logger.error(f"Potential path traversal attack: {file_path}")
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail="Invalid file path"
                         )
+
                     file_content = await file.read()
                     file_size = len(file_content)
+
                     if file_size > 5 * 1024 * 1024:
                         raise HTTPException(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"File {original_filename} too large. Maximum size is 5MB."
                         )
+
                     try:
                         from PIL import Image
                         import io
@@ -2296,33 +2510,42 @@ async def upload_product_images(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail=f"Invalid image file: {original_filename}"
                         )
+
                     with open(file_path, "wb") as buffer:
                         buffer.write(file_content)
+
                     os.chmod(file_path, 0o644)
                     image_url = f"/uploads/products/{unique_filename}"
                     uploaded_urls.append(image_url)
+
                     logger.info(f"Successfully uploaded image for product {product_id}: {unique_filename}")
+
                 except HTTPException:
                     raise
                 except Exception as file_error:
                     logger.error(f"Failed to process file {file.filename}: {file_error}")
                     continue
+
             if not uploaded_urls:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to process any files"
                 )
+
             updated_gallery = existing_gallery + uploaded_urls
+
             if not product['main_image_url'] and uploaded_urls:
                 cursor.execute(
                     "UPDATE products SET main_image_url = %s WHERE id = %s",
                     (uploaded_urls[0], product_id)
                 )
                 logger.info(f"Set main image for product {product_id}: {uploaded_urls[0]}")
+
             cursor.execute(
                 "UPDATE products SET image_gallery = %s WHERE id = %s",
                 (str(updated_gallery), product_id)
             )
+
             if background_tasks:
                 cursor.execute("SELECT * FROM products WHERE id = %s", (product_id,))
                 updated_product = cursor.fetchone()
@@ -2331,7 +2554,9 @@ async def upload_product_images(
                     updated_product,
                     'images_updated'
                 )
+
             invalidate_product_cache(product_id)
+
             return {
                 "success": True,
                 "message": f"Successfully uploaded {len(uploaded_urls)} images",
@@ -2347,6 +2572,8 @@ async def upload_product_images(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload product images"
         )
+
+
 @router.delete("/admin/products/{product_id}")
 async def delete_product(
         product_id: int,
@@ -2360,10 +2587,13 @@ async def delete_product(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
+
         session_id = get_session_id(request)
         if session_id:
             session_service.update_session_activity(session_id)
+
         current_user = await require_roles(['admin'], request)
+
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id, name FROM products WHERE id = %s", (product_id,))
             product = cursor.fetchone()
@@ -2372,13 +2602,16 @@ async def delete_product(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
+
             cursor.execute("UPDATE products SET status = 'archived' WHERE id = %s", (product_id,))
+
             if background_tasks:
                 background_tasks.add_task(
                     publish_product_event,
                     product,
                     'deleted'
                 )
+
             invalidate_product_cache(product_id)
             logger.info(f"Product {product_id} archived by user {current_user.get('sub')}")
             return {"message": "Product archived successfully"}
@@ -2390,6 +2623,8 @@ async def delete_product(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete product"
         )
+
+
 @router.get("/debug/maintenance")
 async def debug_maintenance():
     config.refresh_cache()
@@ -2398,6 +2633,8 @@ async def debug_maintenance():
         "maintenance_mode_type": str(type(config.maintenance_mode)),
         "maintenance_mode_raw": str(config.maintenance_mode)
     }
+
+
 @router.get("/debug/settings")
 async def debug_settings():
     config.refresh_cache()
@@ -2412,3 +2649,30 @@ async def debug_settings():
             "cache_keys": list(config._cache.keys())
         }
     }
+
+
+@router.get("/session/info")
+async def get_session_info(request: Request, current_user: dict = Depends(get_current_user)):
+    try:
+        session = get_session(request)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
+
+        return {
+            "session_id": session.session_id,
+            "session_type": session.session_type,
+            "user_id": session.user_id,
+            "guest_id": session.guest_id,
+            "created_at": session.created_at,
+            "last_activity": session.last_activity,
+            "expires_at": session.expires_at,
+            "viewed_products_count": len(getattr(session, 'viewed_products', [])),
+            "wishlist_items_count": len(getattr(session, 'wishlist_items', [])),
+            "cart_items_count": len(session.cart_items) if session.cart_items else 0
+        }
+    except Exception as e:
+        logger.error(f"Failed to get session info: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get session information"
+        )
