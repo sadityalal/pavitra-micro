@@ -1,3 +1,4 @@
+// frontend/src/contexts/ToastContext.js
 import React, { createContext, useContext, useState } from 'react';
 
 const ToastContext = createContext();
@@ -10,27 +11,50 @@ export const useToast = () => {
   return context;
 };
 
-// Move ToastContainer outside and don't use useToast inside it
 const ToastContainer = ({ toasts, removeToast }) => {
   if (!toasts || toasts.length === 0) return null;
 
   return (
-    <div className="toast-container position-fixed bottom-0 end-0 p-3" style={{ zIndex: 9999 }}>
+    <div
+      className="toast-container position-fixed bottom-0 end-0 p-3"
+      style={{
+        zIndex: 9999,
+        maxWidth: '350px'
+      }}
+    >
       {toasts.map((toast) => (
         <div
           key={toast.id}
-          className={`toast show align-items-center text-bg-${toast.type === 'error' ? 'danger' : toast.type} border-0`}
+          className={`toast show ${toast.type === 'error' ? 'border-danger' : toast.type === 'warning' ? 'border-warning' : toast.type === 'info' ? 'border-info' : 'border-success'}`}
           role="alert"
+          style={{
+            minWidth: '300px',
+            marginBottom: '10px',
+            borderLeft: `4px solid ${toast.type === 'error' ? '#dc3545' : toast.type === 'warning' ? '#ffc107' : toast.type === 'info' ? '#0dcaf0' : '#198754'}`
+          }}
         >
-          <div className="d-flex">
-            <div className="toast-body">
-              {toast.message}
-            </div>
+          <div className="toast-header" style={{
+            backgroundColor: toast.type === 'error' ? '#f8d7da' : toast.type === 'warning' ? '#fff3cd' : toast.type === 'info' ? '#d1ecf1' : '#d1e7dd',
+            color: toast.type === 'error' ? '#721c24' : toast.type === 'warning' ? '#856404' : toast.type === 'info' ? '#0c5460' : '#0f5132'
+          }}>
+            <strong className="me-auto">
+              {toast.type === 'error' ? '❌ Error' :
+               toast.type === 'warning' ? '⚠️ Warning' :
+               toast.type === 'info' ? 'ℹ️ Info' : '✅ Success'}
+            </strong>
+            <small>{toast.time}</small>
             <button
               type="button"
-              className="btn-close btn-close-white me-2 m-auto"
+              className="btn-close"
               onClick={() => removeToast(toast.id)}
+              aria-label="Close"
             ></button>
+          </div>
+          <div className="toast-body" style={{
+            backgroundColor: 'white',
+            color: '#212529'
+          }}>
+            {toast.message}
           </div>
         </div>
       ))}
@@ -43,8 +67,9 @@ export const ToastProvider = ({ children }) => {
 
   const addToast = (message, type = 'success', duration = 5000) => {
     const id = Date.now() + Math.random();
-    const toast = { id, message, type, duration };
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
+    const toast = { id, message, type, duration, time };
     setToasts(prevToasts => [...prevToasts, toast]);
 
     setTimeout(() => {

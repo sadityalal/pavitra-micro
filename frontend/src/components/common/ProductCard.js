@@ -1,14 +1,17 @@
+// frontend/src/components/common/ProductCard.js
 import React, { useState } from 'react';
 import { formatCurrency } from '../../utils/helpers';
 import { useCartContext } from '../../contexts/CartContext';
+import { useToast } from '../../contexts/ToastContext';
 
 const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false }) => {
   const { addToCart } = useCartContext();
+  const { success, error } = useToast();
   const [addingToCart, setAddingToCart] = useState(false);
 
   const handleAddToCart = async (product) => {
     if (product.stock_status !== 'in_stock') {
-      alert('This product is out of stock');
+      error('This product is out of stock');
       return;
     }
 
@@ -17,18 +20,33 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
       console.log('ProductCard: Adding product to cart:', product.id);
       await addToCart(product.id, 1);
       console.log('ProductCard: Product added to cart successfully');
+
+      success(`${product.name} added to cart successfully!`, 3000);
+
       if (onAddToCart) {
         onAddToCart(product);
       }
-    } catch (error) {
-      console.error('ProductCard: Failed to add to cart:', error);
-      if (error.message.includes('session') || error.message.includes('Session')) {
-        alert('Please refresh the page and try again. Session issue detected.');
+    } catch (err) {
+      console.error('ProductCard: Failed to add to cart:', err);
+      if (err.message.includes('session') || err.message.includes('Session')) {
+        error('Please refresh the page and try again. Session issue detected.');
       } else {
-        alert(error.message || 'Failed to add product to cart');
+        error(err.message || 'Failed to add product to cart');
       }
     } finally {
       setAddingToCart(false);
+    }
+  };
+
+  const handleAddToWishlist = async (product) => {
+    try {
+      // Implement wishlist functionality here
+      success(`${product.name} added to wishlist!`, 3000);
+      if (onAddToWishlist) {
+        onAddToWishlist(product);
+      }
+    } catch (err) {
+      error('Failed to add to wishlist');
     }
   };
 
@@ -102,7 +120,11 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           }}
         />
         <div className="product-actions">
-          <button className="action-btn wishlist-btn" title="Add to Wishlist">
+          <button
+            className="action-btn wishlist-btn"
+            title="Add to Wishlist"
+            onClick={() => handleAddToWishlist(product)}
+          >
             <i className="bi bi-heart"></i>
           </button>
           <button className="action-btn compare-btn" title="Compare">

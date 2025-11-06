@@ -1,11 +1,12 @@
+// frontend/src/pages/AuthPage.js
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const AuthPage = () => {
   const [isActive, setIsActive] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState({
     login: false,
     register: false,
@@ -29,6 +30,7 @@ const AuthPage = () => {
   });
 
   const { login, register } = useAuth();
+  const { success, error } = useToast();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -44,7 +46,6 @@ const AuthPage = () => {
 
   const togglePanel = () => {
     setIsActive(!isActive);
-    setError(''); // Clear errors when switching panels
   };
 
   const handleLoginChange = (field, value) => {
@@ -52,7 +53,6 @@ const AuthPage = () => {
       ...prev,
       [field]: value
     }));
-    setError(''); // Clear errors when user types
   };
 
   const handleRegisterChange = (field, value) => {
@@ -60,7 +60,6 @@ const AuthPage = () => {
       ...prev,
       [field]: value
     }));
-    setError(''); // Clear errors when user types
   };
 
   const togglePasswordVisibility = (field) => {
@@ -92,14 +91,28 @@ const AuthPage = () => {
   const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
 
     try {
       await login(loginData);
+      success('Login successful! Welcome back.', 3000);
       navigate('/');
-    } catch (error) {
-      console.error('Login failed:', error);
-      setError(error.message || 'Login failed. Please check your credentials.');
+    } catch (err) {
+      console.error('Login failed:', err);
+      if (err.response?.status === 401) {
+        error('Invalid credentials. Please check your email/username and password.');
+      } else if (err.response?.status === 422) {
+        error('Invalid input format. Please check your data.');
+      } else if (err.response?.status === 429) {
+        error('Too many login attempts. Please try again later.');
+      } else if (err.response?.status === 503) {
+        error('Service is under maintenance. Please try again later.');
+      } else if (err.response?.data?.detail) {
+        error(err.response.data.detail);
+      } else if (err.message) {
+        error(err.message);
+      } else {
+        error('Login failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -108,12 +121,11 @@ const AuthPage = () => {
   const handleRegister = async (e) => {
     e.preventDefault();
     setLoading(true);
-    setError('');
 
     // Validate data before sending
     const validationError = validateRegisterData();
     if (validationError) {
-      setError(validationError);
+      error(validationError);
       setLoading(false);
       return;
     }
@@ -130,10 +142,32 @@ const AuthPage = () => {
       };
 
       await register(registerPayload);
+      success('Registration successful! Welcome to our platform.', 3000);
       navigate('/');
-    } catch (error) {
-      console.error('Registration failed:', error);
-      setError(error.message || 'Registration failed. Please try again.');
+    } catch (err) {
+      console.error('Registration failed:', err);
+      if (err.response?.status === 422) {
+        const validationErrors = err.response.data.detail;
+        if (Array.isArray(validationErrors)) {
+          const errorMessages = validationErrors.map(err => err.msg || err).join(', ');
+          error(`Validation failed: ${errorMessages}`);
+        } else if (typeof validationErrors === 'string') {
+          error(validationErrors);
+        } else if (validationErrors && typeof validationErrors === 'object') {
+          const errorMessage = Object.values(validationErrors).flat().join(', ');
+          error(`Validation failed: ${errorMessage}`);
+        }
+      } else if (err.response?.data?.detail) {
+        error(err.response.data.detail);
+      } else if (err.response?.status === 400) {
+        error('Email, phone, or username already exists. Please use different credentials.');
+      } else if (err.response?.status === 503) {
+        error('Service is under maintenance. Registration is temporarily unavailable.');
+      } else if (err.message) {
+        error(err.message);
+      } else {
+        error('Registration failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -141,14 +175,6 @@ const AuthPage = () => {
 
   return (
     <div className={`auth-container ${isActive ? 'active' : ''}`} id="container">
-      {/* Error Display */}
-      {error && (
-        <div className="alert alert-danger alert-dismissible fade show" style={{ position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)', zIndex: 1000, minWidth: '300px' }}>
-          <strong>Error:</strong> {error}
-          <button type="button" className="btn-close" onClick={() => setError('')}></button>
-        </div>
-      )}
-
       {/* Sign Up Form */}
       <div className="form-container sign-up">
         <form onSubmit={handleRegister}>
@@ -160,7 +186,6 @@ const AuthPage = () => {
             <a href="#" className="icon"><i className="fa-brands fa-linkedin-in"></i></a>
           </div>
           <span>or use your email for registration</span>
-
           <div className="name-fields">
             <input
               type="text"
@@ -179,7 +204,6 @@ const AuthPage = () => {
               disabled={loading}
             />
           </div>
-
           <input
             type="email"
             placeholder="Email"
@@ -187,7 +211,6 @@ const AuthPage = () => {
             onChange={(e) => handleRegisterChange('email', e.target.value)}
             disabled={loading}
           />
-
           <input
             type="text"
             placeholder="Phone (optional)"
@@ -195,7 +218,6 @@ const AuthPage = () => {
             onChange={(e) => handleRegisterChange('phone', e.target.value)}
             disabled={loading}
           />
-
           <input
             type="text"
             placeholder="Username (optional)"
@@ -203,7 +225,6 @@ const AuthPage = () => {
             onChange={(e) => handleRegisterChange('username', e.target.value)}
             disabled={loading}
           />
-
           <div className="password-field">
             <input
               type={showPassword.register ? "text" : "password"}
@@ -221,7 +242,6 @@ const AuthPage = () => {
               <i className={`fa-solid ${showPassword.register ? 'fa-eye-slash' : 'fa-eye'}`}></i>
             </span>
           </div>
-
           <div className="password-field">
             <input
               type={showPassword.confirm ? "text" : "password"}
@@ -238,9 +258,15 @@ const AuthPage = () => {
               <i className={`fa-solid ${showPassword.confirm ? 'fa-eye-slash' : 'fa-eye'}`}></i>
             </span>
           </div>
-
           <button type="submit" disabled={loading}>
-            {loading ? 'Creating Account...' : 'Sign Up'}
+            {loading ? (
+              <>
+                <span className="spinner-border spinner-border-sm me-2"></span>
+                Creating Account...
+              </>
+            ) : (
+              'Sign Up'
+            )}
           </button>
         </form>
       </div>
@@ -256,7 +282,6 @@ const AuthPage = () => {
             <a href="#" className="icon"><i className="fa-brands fa-linkedin-in"></i></a>
           </div>
           <span>or use your email password</span>
-
           <input
             type="text"
             placeholder="Email, Phone or Username *"
@@ -265,7 +290,6 @@ const AuthPage = () => {
             required
             disabled={loading}
           />
-
           <div className="password-field">
             <input
               type={showPassword.login ? "text" : "password"}
@@ -282,11 +306,16 @@ const AuthPage = () => {
               <i className={`fa-solid ${showPassword.login ? 'fa-eye-slash' : 'fa-eye'}`}></i>
             </span>
           </div>
-
           <a href="#">Forget Your Password?</a>
-
           <button type="submit" disabled={loading}>
-            {loading ? 'Signing In...' : 'Sign In'}
+            {loading ? (
+              <>
+                <span className="spinner-border spinner-border-sm me-2"></span>
+                Signing In...
+              </>
+            ) : (
+              'Sign In'
+            )}
           </button>
         </form>
       </div>

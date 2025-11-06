@@ -1,7 +1,9 @@
+// frontend/src/contexts/CartContext.js
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { cartService } from '../services/cartService';
 import { sessionManager } from '../services/api';
 import { useAuth } from './AuthContext';
+import { useToast } from './ToastContext';
 
 const CartContext = createContext();
 
@@ -22,51 +24,16 @@ export const CartProvider = ({ children }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const { isAuthenticated, user } = useAuth();
-
-  const initializeSession = async () => {
-    try {
-      console.log('🔄 Initializing session via user service...');
-      const response = await fetch('/api/v1/users/health', {
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      if (response.ok) {
-        const sessionId = response.headers.get('x-session-id');
-        if (sessionId) {
-          sessionManager.setSession(sessionId);
-          console.log('✅ Session initialized with ID:', sessionId);
-        } else {
-          console.log('✅ Session initialized (no ID returned)');
-        }
-        return true;
-      }
-      return false;
-    } catch (error) {
-      console.error('❌ Failed to initialize session:', error);
-      return false;
-    }
-  };
-
-  // Add this function to ensure session is always available
-  const ensureSession = async () => {
-    if (!isAuthenticated && !sessionManager.getSession()) {
-      console.log('🔄 Ensuring guest session for cart operations...');
-      return await initializeSession();
-    }
-    return true;
-  };
+  const { success, error: toastError } = useToast();
 
   const fetchCart = async () => {
     try {
       setLoading(true);
       setError(null);
-      if (!isAuthenticated && !sessionManager.getSession()) {
-        await initializeSession();
-      }
+
       const cartData = await cartService.getCart();
       console.log('🛒 CartContext: Fetched cart data:', cartData);
+
       setCart({
         items: cartData.items || [],
         subtotal: cartData.subtotal || 0,
@@ -90,12 +57,10 @@ export const CartProvider = ({ children }) => {
       setLoading(true);
       setError(null);
 
-      // Ensure session exists before adding to cart
-      await ensureSession();
-
       console.log('🛒 Adding to cart with shared session...');
       const result = await cartService.addToCart(productId, quantity, variationId);
       console.log('🛒 Add to cart result:', result);
+
       await fetchCart();
 
       const event = new CustomEvent('cartUpdated', {
@@ -111,6 +76,7 @@ export const CartProvider = ({ children }) => {
     } catch (error) {
       console.error('🛒 CartContext: Error adding to cart:', error);
       setError(error.message);
+      toastError(error.message || 'Failed to add to cart');
       throw error;
     } finally {
       setLoading(false);
@@ -123,9 +89,11 @@ export const CartProvider = ({ children }) => {
       setError(null);
       await cartService.updateCartItem(cartItemId, quantity);
       await fetchCart();
+      success('Cart updated successfully!', 2000);
     } catch (error) {
       console.error('🛒 CartContext: Error updating cart:', error);
       setError(error.message);
+      toastError(error.message || 'Failed to update cart');
       throw error;
     } finally {
       setLoading(false);
@@ -138,9 +106,11 @@ export const CartProvider = ({ children }) => {
       setError(null);
       await cartService.removeFromCart(cartItemId);
       await fetchCart();
+      success('Item removed from cart', 2000);
     } catch (error) {
       console.error('🛒 CartContext: Error removing from cart:', error);
       setError(error.message);
+      toastError(error.message || 'Failed to remove from cart');
       throw error;
     } finally {
       setLoading(false);
@@ -153,20 +123,16 @@ export const CartProvider = ({ children }) => {
       setError(null);
       await cartService.clearCart();
       await fetchCart();
+      success('Cart cleared successfully!', 2000);
     } catch (error) {
       console.error('🛒 CartContext: Error clearing cart:', error);
       setError(error.message);
+      toastError(error.message || 'Failed to clear cart');
       throw error;
     } finally {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      initializeSession();
-    }
-  }, [isAuthenticated]);
 
   useEffect(() => {
     console.log('🔄 Auth state changed, refreshing cart...', { isAuthenticated, userId: user?.id });
@@ -214,8 +180,6 @@ export const CartProvider = ({ children }) => {
     removeFromCart,
     clearCart,
     refreshCart: fetchCart,
-    initializeSession,
-    ensureSession
   };
 
   return (
