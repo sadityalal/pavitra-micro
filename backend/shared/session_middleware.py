@@ -119,11 +119,8 @@ class SecureSessionMiddleware:
 
     def _get_session_id(self, request: Request) -> Optional[str]:
         try:
-            print(f"🔍 ALL Headers received: {dict(request.headers)}")
-
             session_id = request.cookies.get(self.session_cookie_name)
             if session_id and self._validate_session_id(session_id):
-                print(f"✅ Session ID from COOKIE: {session_id}")
                 return session_id
 
             header_names = ['X-Session-ID', 'x-session-id', 'X-Secure-Session-ID', 'x-secure-session-id', 'Session-ID', 'session-id']
@@ -131,14 +128,11 @@ class SecureSessionMiddleware:
             for header_name in header_names:
                 session_id = request.headers.get(header_name)
                 if session_id and self._validate_session_id(session_id):
-                    print(f"✅ Session ID from HEADER '{header_name}': {session_id}")
                     return session_id
 
-            print("❌ No valid session ID found in any header or cookie")
             return None
 
         except Exception as e:
-            print(f"💥 Error getting session ID: {e}")
             return None
 
     def _validate_session_id(self, session_id: str) -> bool:
@@ -220,7 +214,6 @@ class SecureSessionMiddleware:
 
     async def _create_new_guest_session(self, request: Request) -> Optional[SessionData]:
         try:
-            print("🔄 Creating new guest session...")
             guest_id = str(uuid.uuid4())
             session_data = {
                 'session_type': SessionType.GUEST,
@@ -233,11 +226,8 @@ class SecureSessionMiddleware:
 
             session = session_service.create_session(session_data)
             if session:
-                print(f"✅ SUCCESS: Created new guest session: {session.session_id}")
                 return session
             else:
-                print("❌ FAILED: Session service returned None")
-                # Emergency session create karo
                 return SessionData(
                     session_id=f"emergency_{guest_id}",
                     session_type=SessionType.GUEST,
@@ -254,8 +244,6 @@ class SecureSessionMiddleware:
                     fingerprint=None
                 )
         except Exception as e:
-            print(f"❌ CRITICAL ERROR in guest session creation: {e}")
-            # Last resort - basic session banao
             return SessionData(
                 session_id=f"error_{uuid.uuid4().hex[:8]}",
                 session_type=SessionType.GUEST,
@@ -273,7 +261,6 @@ class SecureSessionMiddleware:
             )
 
     def _create_emergency_session(self, request: Request, guest_id: str) -> SessionData:
-        """Create an emergency session when all else fails"""
         return SessionData(
             session_id=f"emergency_{guest_id}",
             session_type=SessionType.GUEST,

@@ -194,7 +194,6 @@ class SecureSessionService:
 
     def create_session(self, session_data: Dict[str, Any]) -> Optional[SessionData]:
         try:
-            print("🔄 SessionService: Creating new session...")
             session_id = self._generate_secure_id()
             now = datetime.utcnow()
 
@@ -252,7 +251,6 @@ class SecureSessionService:
             key = self._session_key(session_id)
             expiry_seconds = self.user_session_duration if session.session_type == SessionType.USER else self.guest_session_duration
 
-            # Redis try karo, but agar fail ho to bhi session return karo
             redis_success = False
             try:
                 if redis_client._ensure_connection():
@@ -261,12 +259,6 @@ class SecureSessionService:
                         expiry_seconds,
                         json.dumps(session_dict)
                     )
-                    if redis_success:
-                        print(f"✅ Session saved to Redis: {session_id}")
-                    else:
-                        print(f"⚠️ Session NOT saved to Redis: {session_id}")
-                else:
-                    print("⚠️ Redis not available, session created but not persisted")
             except Exception as redis_error:
                 print(f"⚠️ Redis error but continuing: {redis_error}")
 
@@ -274,8 +266,6 @@ class SecureSessionService:
             return session
 
         except Exception as e:
-            print(f"❌ SessionService: CRITICAL ERROR: {e}")
-            # Kabhi bhi fail mat hona - hamesha session return karo
             emergency_id = f"emergency_{uuid.uuid4().hex}"
             return SessionData(
                 session_id=emergency_id,
@@ -317,74 +307,40 @@ class SecureSessionService:
     def get_session(self, session_id: str, request_ip: str = None, request_user_agent: str = None,
                     security_token: str = None) -> Optional[SessionData]:
         try:
-            print(f"🔍 SessionService: Looking for session: {session_id}")
-
             if not session_id:
-                print("❌ SessionService: No session ID provided")
                 return None
 
-            # Redis connection check
             if not redis_client._ensure_connection():
-                print("❌ SessionService: Redis not available")
                 return None
 
             key = self._session_key(session_id)
-            print(f"🔍 SessionService: Redis key: {key}")
-
             data = redis_client.get(key)
 
             if data:
-                print(f"✅ SessionService: Session FOUND in Redis: {session_id}")
-
                 try:
                     session_dict = json.loads(data)
-
-                    # Convert string dates back to datetime objects
                     session_dict['created_at'] = datetime.fromisoformat(session_dict['created_at'])
                     session_dict['last_activity'] = datetime.fromisoformat(session_dict['last_activity'])
                     session_dict['expires_at'] = datetime.fromisoformat(session_dict['expires_at'])
-
-                    # Convert session type string back to enum
                     session_type_str = session_dict.get('session_type', 'guest')
                     session_dict['session_type'] = SessionType.USER if session_type_str == 'user' else SessionType.GUEST
-
-                    # Ensure cart_items is always a dict
                     if session_dict.get('cart_items') is None:
                         session_dict['cart_items'] = {}
-
-                    # Set the session_id from the parameter
                     session_dict['session_id'] = session_id
-
-                    # Create SessionData object
                     session = SessionData(**session_dict)
-
-                    # Validate session security
                     if not self._validate_session_security(session, request_ip, request_user_agent, security_token):
-                        print(f"❌ SessionService: Session security validation failed: {session_id}")
                         return None
-
-                    # Update session activity
                     if self.enable_session_rotation and self._should_rotate_session(session):
-                        print(f"🔄 SessionService: Rotating session for security: {session_id}")
                         return self.rotate_session(session_id)
-
-                    # Update last activity
                     self._update_session_activity_only(session_id)
-
-                    print(f"✅ SessionService: Successfully loaded session: {session_id}")
                     return session
 
                 except Exception as parse_error:
-                    print(f"❌ SessionService: Failed to parse session data: {parse_error}")
                     return None
 
             else:
-                print(f"❌ SessionService: Session NOT FOUND in Redis: {session_id}")
-                # Redis keys check karo for debugging
                 try:
                     all_keys = redis_client.keys("secure_session:*")
-                    print(f"🔍 SessionService: Total sessions in Redis: {len(all_keys)}")
-                    # Pehle 3 keys dikhao for debugging
                     for k in all_keys[:3]:
                         session_data = redis_client.get(k)
                         if session_data:
