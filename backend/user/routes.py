@@ -896,13 +896,13 @@ async def add_to_cart(
         if quantity < 1:
             raise HTTPException(status_code=400, detail="Quantity must be at least 1")
 
+        # Validate product exists and is available
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT id, name, stock_quantity, stock_status, max_cart_quantity, base_price
                 FROM products WHERE id = %s AND status = 'active'
             """, (product_id,))
             product = cursor.fetchone()
-
             if not product:
                 raise HTTPException(status_code=404, detail="Product not found")
 
@@ -925,8 +925,8 @@ async def add_to_cart(
         session = current_user_or_session.get('session')
         session_id = current_user_or_session.get('session_id')
 
-        # AUTHENTICATED USER
         if not current_user_or_session.get('is_guest'):
+            # LOGGED IN USER - this part works
             user_id = current_user_or_session['user_id']
             with db.get_cursor() as cursor:
                 cursor.execute("""
@@ -934,13 +934,12 @@ async def add_to_cart(
                     WHERE user_id = %s AND product_id = %s
                     AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
                 """, (user_id, product_id, variation_id, variation_id))
-
                 existing_item = cursor.fetchone()
+
                 if existing_item:
                     new_quantity = existing_item['quantity'] + quantity
                     if new_quantity > max_quantity:
                         raise HTTPException(status_code=400, detail=f"Maximum {max_quantity} items can be added")
-
                     cursor.execute("UPDATE shopping_cart SET quantity = %s WHERE id = %s",
                                    (new_quantity, existing_item['id']))
                 else:
@@ -952,38 +951,36 @@ async def add_to_cart(
                 redis_client.delete(f"user_cart:{user_id}")
                 return {"message": "Product added to cart", "session_based": False}
 
-        # GUEST USER - YAHAN FIX HAI
         else:
+            # GUEST USER - FIXED VERSION
             if not session_id or not session:
+                # Create new guest session if none exists
                 guest_id = str(uuid.uuid4())
-                session_data = {
-                    'session_type': SessionType.GUEST,
-                    'user_id': None,
-                    'guest_id': guest_id,
-                    'ip_address': request.client.host if request.client else 'unknown',
-                    'user_agent': request.headers.get("user-agent", ""),
-                    'cart_items': {}
-                }
-                new_session = session_service.create_session(session_data)
-                if new_session:
-                    session = new_session
-                    session_id = new_session.session_id
+                ip_address = request.client.host if request.client else 'unknown'
+                user_agent = request.headers.get("user-agent", "")
+
+                session = session_service.get_or_create_guest_session(guest_id, ip_address, user_agent)
+                if session:
+                    session_id = session.session_id
                     request.state.session = session
                     request.state.session_id = session_id
                 else:
                     raise HTTPException(status_code=500, detail="Failed to create guest session")
 
+            # Get current cart items
             cart_items = {}
             if session and session.cart_items:
                 cart_items = session.cart_items.copy()
             elif session_id:
+                # Load fresh session data from Redis
                 loaded_session = session_service.get_session(session_id)
                 if loaded_session and loaded_session.cart_items:
                     cart_items = loaded_session.cart_items.copy()
-                    session = loaded_session
 
+            # Generate item key
             item_key = f"{product_id}_{variation_id}" if variation_id else str(product_id)
 
+            # Update cart items
             if item_key in cart_items:
                 new_quantity = cart_items[item_key]['quantity'] + quantity
                 if new_quantity > max_quantity:
@@ -996,21 +993,31 @@ async def add_to_cart(
                     'quantity': quantity
                 }
 
+            # CRITICAL FIX: Update session with cart items
             success = session_service.update_session_data(session_id, {"cart_items": cart_items})
 
             if success:
+                # Verify the update worked
+                updated_session = session_service.get_session(session_id)
+                actual_cart_count = len(
+                    updated_session.cart_items) if updated_session and updated_session.cart_items else 0
+
+                logger.info(f"✅ Guest cart updated: session_id={session_id}, items_count={actual_cart_count}")
+
                 return {
                     "message": "Product added to cart",
                     "session_based": True,
                     "session_id": session_id,
-                    "cart_items_count": len(cart_items)
+                    "cart_items_count": actual_cart_count
                 }
             else:
+                logger.error(f"❌ Failed to update guest cart in session: {session_id}")
                 raise HTTPException(status_code=500, detail="Failed to update cart")
 
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"❌ Failed to add to cart: {e}")
         raise HTTPException(status_code=500, detail="Failed to add to cart")
 
 

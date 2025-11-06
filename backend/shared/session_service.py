@@ -660,34 +660,32 @@ class SecureSessionService:
         try:
             if not self._check_rate_limit(f"update:{session_id}", "update"):
                 return False
-
-            session = self.get_session(session_id)
-            if not session:
+            key = self._session_key(session_id)
+            if not redis_client._ensure_connection():
                 return False
 
-            allowed_updates = {'cart_items', 'user_agent', 'ip_address', 'ip_addresses'}
-            for key in updates:
-                if key not in allowed_updates:
-                    logger.warning(f"Attempt to update restricted session field: {key}")
-                    return False
+            data = redis_client.get(key)
+            if not data:
+                return False
+            session_dict = json.loads(data)
+            for update_key, update_value in updates.items():
+                if update_key in ['cart_items', 'user_agent', 'ip_address', 'ip_addresses']:
+                    session_dict[update_key] = update_value
 
-            for key, value in updates.items():
-                if hasattr(session, key):
-                    setattr(session, key, value)
-
-            session.last_activity = datetime.utcnow()
-            session_dict = session.model_dump()
-            session_dict['session_type'] = session_dict['session_type'].value
-            session_dict['created_at'] = session_dict['created_at'].isoformat()
-            session_dict['last_activity'] = session_dict['last_activity'].isoformat()
-            session_dict['expires_at'] = session_dict['expires_at'].isoformat()
-
-            key = self._session_key(session_id)
-            expiry = self.user_session_duration if session.session_type == SessionType.USER else self.guest_session_duration
+            session_dict['last_activity'] = datetime.utcnow().isoformat()
+            session_type = SessionType(session_dict.get('session_type', 'guest'))
+            expiry = self.user_session_duration if session_type == SessionType.USER else self.guest_session_duration
             success = redis_client.setex(key, expiry, json.dumps(session_dict))
+
+            if success:
+                logger.info(f"✅ Successfully updated session {session_id} with cart_items: {len(updates.get('cart_items', {}))} items")
+            else:
+                logger.error(f"❌ Failed to save session updates to Redis: {session_id}")
+
             return success
+
         except Exception as e:
-            logger.error(f"Failed to update session data {session_id}: {e}")
+            logger.error(f"❌ Failed to update session data {session_id}: {e}")
             return False
 
     def delete_session(self, session_id: str) -> bool:
@@ -699,10 +697,7 @@ class SecureSessionService:
             if not session:
                 return False
 
-            # Delete session data
             redis_client.delete(self._session_key(session_id))
-
-            # Delete mappings
             if session.user_id:
                 user_session_key = f"{self._redis_user_session_prefix}{session.user_id}"
                 redis_client.delete(user_session_key)
