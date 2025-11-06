@@ -57,85 +57,76 @@ class SecureSessionMiddleware:
             security_token = request.headers.get(self.security_header_name)
             is_new_session = False
             session = None
+            should_handle_session = self._should_create_session(request)
+            logger.debug(f"Session handling for {request.url.path}: should_handle={should_handle_session}")
 
-            print(f"🔍 Session Middleware - Looking for session: {session_id}")
-
-            # AGAR SESSION ID HAI TO EXISTING SESSION DHOONDHO
-            if session_id:
-                print(f"🔍 Checking existing session: {session_id}")
-                session = session_service.get_session(
-                    session_id,
-                    request_ip=request.client.host if request.client else 'unknown',
-                    request_user_agent=request.headers.get("user-agent", ""),
-                    security_token=security_token
-                )
-
+            if should_handle_session and session_id:
+                session = session_service.get_session(session_id,
+                                                      request_ip=request.client.host if request.client else 'unknown',
+                                                      request_user_agent=request.headers.get("user-agent", ""),
+                                                      security_token=security_token)
                 if session:
-                    print(f"✅ Using EXISTING session: {session_id}")
+                    logger.debug(f"✅ Using existing session: {session_id}")
                 else:
-                    print(f"❌ Existing session NOT FOUND: {session_id}")
-                    session_id = None  # Invalid session, naya banayenge
+                    logger.debug(f"❌ Existing session invalid: {session_id}")
+                    session_id = None
+                    session = None
 
-            # AGAR SESSION NAHI MILA TO NAYA BANAO
-            if not session:
-                should_create_session = self._should_create_session(request)
-                if should_create_session:
-                    session = await self._create_new_guest_session(request)
-                    if session:
-                        session_id = session.session_id
-                        is_new_session = True
-                        print(f"🆕 Created NEW session: {session_id}")
+            if should_handle_session and not session:
+                logger.debug(f"🔄 Creating new session for: {request.url.path}")
+                session = await self._create_new_guest_session(request)
+                if session:
+                    session_id = session.session_id
+                    is_new_session = True
+                    logger.info(f"🆕 Created new session: {session_id} for {request.url.path}")
                 else:
-                    print("⏭️ Skipping session creation for non-browser request")
+                    logger.warning(f"❌ Failed to create session for: {request.url.path}")
 
-            # Request state mein session set karo
             request.state.session = session
             request.state.session_id = session_id
             request.state.is_new_session = is_new_session
-
-            print(f"🎯 Final - Session: {session_id}, Is New: {is_new_session}")
 
             async def session_send_wrapper(message):
                 if message["type"] == "http.response.start":
                     current_session = getattr(request.state, 'session', None)
                     current_session_id = getattr(request.state, 'session_id', None)
                     current_is_new_session = getattr(request.state, 'is_new_session', False)
-
-                    await self._set_response_headers(
-                        message, current_session, current_session_id, current_is_new_session, request
-                    )
+                    await self._set_response_headers(message, current_session, current_session_id,
+                                                     current_is_new_session, request)
                 await send(message)
 
-            try:
-                response = await self.app(scope, receive, session_send_wrapper)
-                return response
-            except Exception as e:
-                print(f"❌ Request processing error: {e}")
-                raise
+            response = await self.app(scope, receive, session_send_wrapper)
+            return response
 
         except Exception as e:
-            print(f"❌ Secure session middleware error: {e}")
+            logger.error(f"❌ Secure session middleware error: {e}")
             return await self.app(scope, receive, send)
+
+    def _should_create_new_session(self, request: Request) -> bool:
+        path = request.url.path
+        api_paths_require_existing_session = ['/api/v1/users/cart', '/api/v1/users/profile', '/api/v1/users/addresses', '/api/v1/users/wishlist']
+
+        if any(path.startswith(api_path) for api_path in api_paths_require_existing_session):
+            logger.debug(f"API path requires existing session, not creating new: {path}")
+            return False
+
+        new_session_allowed_paths = ['/api/v1/auth/login', '/api/v1/auth/register', '/', '/products', '/checkout/start']
+
+        if any(path.startswith(allowed_path) for allowed_path in new_session_allowed_paths):
+            return True
+
+        return not path.startswith('/api/')
 
     def _get_session_id(self, request: Request) -> Optional[str]:
         try:
             print(f"🔍 ALL Headers received: {dict(request.headers)}")
 
-            # Pehle cookie check karo
             session_id = request.cookies.get(self.session_cookie_name)
             if session_id and self._validate_session_id(session_id):
                 print(f"✅ Session ID from COOKIE: {session_id}")
                 return session_id
 
-            # Phir ALL possible header names check karo
-            header_names = [
-                'X-Session-ID',
-                'x-session-id',
-                'X-Secure-Session-ID',
-                'x-secure-session-id',
-                'Session-ID',
-                'session-id'
-            ]
+            header_names = ['X-Session-ID', 'x-session-id', 'X-Secure-Session-ID', 'x-secure-session-id', 'Session-ID', 'session-id']
 
             for header_name in header_names:
                 session_id = request.headers.get(header_name)
@@ -207,27 +198,25 @@ class SecureSessionMiddleware:
         return "; ".join(cookie_parts)
 
     def _should_create_session(self, request: Request) -> bool:
-        if request.url.path.startswith('/api/v1/users/cart') or \
-                request.url.path.startswith('/api/v1/products'):
-            return True
+        path = request.url.path
 
-        frontend_paths = ['/', '/products', '/cart', '/checkout', '/login', '/register']
-        if any(request.url.path.startswith(path) for path in frontend_paths):
-            return True
+        has_existing_session = (request.cookies.get(self.session_cookie_name) or request.headers.get(
+            self.session_header_name) or request.headers.get('X-Session-ID'))
+        if has_existing_session: return True
 
-        no_session_paths = ['/health', '/favicon.ico', '/metrics', '/docs', '/redoc', '/openapi.json', '/static/']
-        if any(request.url.path.startswith(path) for path in no_session_paths):
-            return False
+        no_session_paths = ['/health', '/favicon.ico', '/metrics', '/docs', '/redoc', '/openapi.json', '/static/',
+                            '/api/v1/auth/health', '/api/v1/users/health', '/refresh-config', '/debug/']
+        if any(path.startswith(p) for p in no_session_paths): return False
 
-        has_frontend_indicators = any([
-            request.headers.get('origin'),
-            request.headers.get('referer'),
-            'text/html' in request.headers.get('accept', ''),
-            request.headers.get('sec-fetch-mode') == 'navigate',
-            request.headers.get('x-requested-with') == 'XMLHttpRequest',
-            request.headers.get('user-agent', '').lower() in ['mozilla', 'chrome', 'safari', 'firefox']
-        ])
-        return has_frontend_indicators
+        session_allowed_paths = ['/api/v1/users/cart', '/api/v1/auth/login', '/api/v1/auth/register',
+                                 '/api/v1/auth/logout', '/api/v1/auth/refresh', '/checkout', '/cart', '/wishlist',
+                                 '/profile']
+        if any(path.startswith(p) for p in session_allowed_paths): return True
+
+        is_browser_page_load = (
+                    'text/html' in request.headers.get('accept', '') and request.headers.get('sec-fetch-mode') in [
+                'navigate', None] and request.method in ['GET', 'POST'])
+        return is_browser_page_load
 
     async def _create_new_guest_session(self, request: Request) -> Optional[SessionData]:
         try:
