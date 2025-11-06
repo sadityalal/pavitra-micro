@@ -42,27 +42,41 @@ class SecureSessionMiddleware:
         response = await self._handle_request(request, scope, receive, send)
         return response
 
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+        response = await self._handle_request(request, scope, receive, send)
+        return response
+
     async def _handle_request(self, request: Request, scope, receive, send):
         try:
             session_id = self._get_session_id(request)
             security_token = request.headers.get(self.security_header_name)
             is_new_session = False
             session = None
-            original_session_id = session_id
 
+            print(f"🔍 Session Middleware - Looking for session: {session_id}")
+
+            # AGAR SESSION ID HAI TO EXISTING SESSION DHOONDHO
             if session_id:
+                print(f"🔍 Checking existing session: {session_id}")
                 session = session_service.get_session(
                     session_id,
                     request_ip=request.client.host if request.client else 'unknown',
                     request_user_agent=request.headers.get("user-agent", ""),
                     security_token=security_token
                 )
-                if session:
-                    logger.debug(f"Using existing session: {session_id}, type: {session.session_type}")
-                else:
-                    session_id = None
-                    logger.debug(f"Invalid session ID provided: {session_id}")
 
+                if session:
+                    print(f"✅ Using EXISTING session: {session_id}")
+                else:
+                    print(f"❌ Existing session NOT FOUND: {session_id}")
+                    session_id = None  # Invalid session, naya banayenge
+
+            # AGAR SESSION NAHI MILA TO NAYA BANAO
             if not session:
                 should_create_session = self._should_create_session(request)
                 if should_create_session:
@@ -70,20 +84,23 @@ class SecureSessionMiddleware:
                     if session:
                         session_id = session.session_id
                         is_new_session = True
-                        logger.info(f"✅ Created new guest session: {session_id}")
+                        print(f"🆕 Created NEW session: {session_id}")
                 else:
-                    logger.debug("Skipping session creation for non-browser request")
+                    print("⏭️ Skipping session creation for non-browser request")
 
+            # Request state mein session set karo
             request.state.session = session
             request.state.session_id = session_id
             request.state.is_new_session = is_new_session
-            request.state.original_session_id = original_session_id
+
+            print(f"🎯 Final - Session: {session_id}, Is New: {is_new_session}")
 
             async def session_send_wrapper(message):
                 if message["type"] == "http.response.start":
                     current_session = getattr(request.state, 'session', None)
                     current_session_id = getattr(request.state, 'session_id', None)
                     current_is_new_session = getattr(request.state, 'is_new_session', False)
+
                     await self._set_response_headers(
                         message, current_session, current_session_id, current_is_new_session, request
                     )
@@ -93,23 +110,45 @@ class SecureSessionMiddleware:
                 response = await self.app(scope, receive, session_send_wrapper)
                 return response
             except Exception as e:
-                logger.error(f"Request processing error: {e}")
+                print(f"❌ Request processing error: {e}")
                 raise
+
         except Exception as e:
-            logger.error(f"Secure session middleware error: {e}")
+            print(f"❌ Secure session middleware error: {e}")
             return await self.app(scope, receive, send)
 
     def _get_session_id(self, request: Request) -> Optional[str]:
-        session_id = request.cookies.get(self.session_cookie_name)
-        if session_id and self._validate_session_id(session_id):
-            logger.debug(f"Got session ID from cookie: {session_id}")
-            return session_id
-        session_id = request.headers.get(self.session_header_name)
-        if session_id and self._validate_session_id(session_id):
-            logger.debug(f"Got session ID from header: {session_id}")
-            return session_id
-        logger.debug("No valid session ID found in request")
-        return None
+        try:
+            print(f"🔍 ALL Headers received: {dict(request.headers)}")
+
+            # Pehle cookie check karo
+            session_id = request.cookies.get(self.session_cookie_name)
+            if session_id and self._validate_session_id(session_id):
+                print(f"✅ Session ID from COOKIE: {session_id}")
+                return session_id
+
+            # Phir ALL possible header names check karo
+            header_names = [
+                'X-Session-ID',
+                'x-session-id',
+                'X-Secure-Session-ID',
+                'x-secure-session-id',
+                'Session-ID',
+                'session-id'
+            ]
+
+            for header_name in header_names:
+                session_id = request.headers.get(header_name)
+                if session_id and self._validate_session_id(session_id):
+                    print(f"✅ Session ID from HEADER '{header_name}': {session_id}")
+                    return session_id
+
+            print("❌ No valid session ID found in any header or cookie")
+            return None
+
+        except Exception as e:
+            print(f"💥 Error getting session ID: {e}")
+            return None
 
     def _validate_session_id(self, session_id: str) -> bool:
         return bool(re.match(r'^[A-Za-z0-9_-]{32,64}$', session_id))
@@ -192,6 +231,7 @@ class SecureSessionMiddleware:
 
     async def _create_new_guest_session(self, request: Request) -> Optional[SessionData]:
         try:
+            print("🔄 Creating new guest session...")
             guest_id = str(uuid.uuid4())
             session_data = {
                 'session_type': SessionType.GUEST,
@@ -203,18 +243,45 @@ class SecureSessionMiddleware:
             }
 
             session = session_service.create_session(session_data)
-
             if session:
-                logger.info(f"✅ Created new guest session: {session.session_id}")
+                print(f"✅ SUCCESS: Created new guest session: {session.session_id}")
                 return session
             else:
-                logger.error("❌ Session service returned None, creating emergency session")
-                # Emergency fallback - create session directly
-                return self._create_emergency_session(request, guest_id)
-
+                print("❌ FAILED: Session service returned None")
+                # Emergency session create karo
+                return SessionData(
+                    session_id=f"emergency_{guest_id}",
+                    session_type=SessionType.GUEST,
+                    user_id=None,
+                    guest_id=guest_id,
+                    cart_items={},
+                    created_at=datetime.utcnow(),
+                    last_activity=datetime.utcnow(),
+                    ip_address=request.client.host if request.client else 'unknown',
+                    user_agent=request.headers.get("user-agent", ""),
+                    expires_at=datetime.utcnow() + timedelta(hours=24),
+                    security_token=None,
+                    csrf_token=None,
+                    fingerprint=None
+                )
         except Exception as e:
-            logger.error(f"❌ Critical error in guest session creation: {e}")
-            return self._create_emergency_session(request, str(uuid.uuid4()))
+            print(f"❌ CRITICAL ERROR in guest session creation: {e}")
+            # Last resort - basic session banao
+            return SessionData(
+                session_id=f"error_{uuid.uuid4().hex[:8]}",
+                session_type=SessionType.GUEST,
+                user_id=None,
+                guest_id=str(uuid.uuid4()),
+                cart_items={},
+                created_at=datetime.utcnow(),
+                last_activity=datetime.utcnow(),
+                ip_address=request.client.host if request.client else 'unknown',
+                user_agent=request.headers.get("user-agent", ""),
+                expires_at=datetime.utcnow() + timedelta(hours=24),
+                security_token=None,
+                csrf_token=None,
+                fingerprint=None
+            )
 
     def _create_emergency_session(self, request: Request, guest_id: str) -> SessionData:
         """Create an emergency session when all else fails"""

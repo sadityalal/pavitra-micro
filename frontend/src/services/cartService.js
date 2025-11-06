@@ -18,34 +18,54 @@ export const cartService = {
   },
 
   addToCart: async (productId, quantity = 1, variationId = null) => {
-    try {
-      console.log('🛒 ADD TO CART - Starting:', { productId, quantity, variationId });
-      const payload = {
-        quantity: parseInt(quantity)
-      };
+  try {
+    console.log('🛒 ADD_TO_CART: Starting...', { productId, quantity, variationId });
 
-      if (variationId) {
-        payload.variation_id = variationId;
-      }
-
-      const response = await userApi.post(`/cart/${productId}`, payload);
-      console.log('🛒 ADD TO CART - Success:', response.data);
-      return response.data;
-    } catch (error) {
-      console.error('🛒 ADD TO CART - Error:', error);
-      console.error('🛒 Error response:', error.response?.data);
-
-      if (error.response?.status === 401) {
-        throw new Error('Session issue. Please refresh the page.');
-      } else if (error.response?.status === 404) {
-        throw new Error('Product not found.');
-      } else if (error.response?.status === 400) {
-        throw new Error(error.response.data.detail || 'Cannot add to cart.');
-      } else {
-        throw new Error('Failed to add to cart. Please try again.');
+    // Session check karo
+    if (!sessionManager.getSession()) {
+      console.log('🛒 No session, initializing...');
+      try {
+        await productService.getFeaturedProducts();
+        console.log('✅ Session initialized');
+      } catch (error) {
+        console.log('⚠️ Session init failed, continuing anyway...');
       }
     }
-  },
+
+    const payload = {
+      quantity: parseInt(quantity)
+    };
+    if (variationId) {
+      payload.variation_id = variationId;
+    }
+
+    console.log('🛒 Sending request to backend...');
+    const response = await userApi.post(`/cart/${productId}`, payload);
+    console.log('🛒 Backend response:', response.data);
+
+    // Naya session ID agar aaya to save karo
+    const sessionId = response.headers['x-session-id'];
+    if (sessionId) {
+      sessionManager.setSession(sessionId);
+      console.log('✅ Session ID saved:', sessionId);
+    }
+
+    return response.data;
+
+  } catch (error) {
+    console.error('🛒 ADD_TO_CART ERROR:', error);
+
+    if (error.response?.status === 401) {
+      throw new Error('Session issue. Please refresh the page.');
+    } else if (error.response?.status === 404) {
+      throw new Error('Product not found.');
+    } else if (error.response?.status === 400) {
+      throw new Error(error.response.data.detail || 'Cannot add to cart.');
+    } else {
+      throw new Error('Failed to add to cart. Please try again.');
+    }
+  }
+},
 
   updateCartItem: async (cartItemId, quantity) => {
     try {

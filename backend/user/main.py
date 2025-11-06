@@ -157,14 +157,16 @@ async def root():
 
 if __name__ == "__main__":
     import uvicorn
-
     port = config.get_service_port('user')
-    logger.info(f"Starting User Service on port {port}")
+    logger.info(f"🚀 Starting User Service on port {port}")
     uvicorn.run(
         app,
         host="0.0.0.0",
         port=port,
-        log_level=config.log_level.lower() if config.log_level else "info",
+        log_level=config.log_level.lower(),
         access_log=True,
-        reload=config.debug_mode if config.debug_mode is not None else True
+        reload=config.debug_mode,
+        # YEH ADD KARO - Headers allow karne ke liye
+        proxy_headers=True,
+        forwarded_allow_ips='*'
     )

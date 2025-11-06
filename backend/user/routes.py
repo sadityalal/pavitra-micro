@@ -928,35 +928,26 @@ async def add_to_cart(
         current_user_or_session: dict = Depends(get_current_user_or_session)
 ):
     try:
-        await rate_limiter.check_rate_limit(request)
+        print(
+            f"🎯 ADD_TO_CART START: Product {product_id}, Qty {quantity}, Session: {current_user_or_session.get('session_id')}")
 
         if quantity < 1:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Quantity must be at least 1"
-            )
+            raise HTTPException(status_code=400, detail="Quantity must be at least 1")
 
+        # Product validate karo
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT id, name, stock_quantity, stock_status, max_cart_quantity, base_price
-                FROM products
-                WHERE id = %s AND status = 'active'
+                FROM products WHERE id = %s AND status = 'active'
             """, (product_id,))
             product = cursor.fetchone()
 
             if not product:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Product not found"
-                )
+                raise HTTPException(status_code=404, detail="Product not found")
 
             if product['stock_status'] == 'out_of_stock':
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Product is out of stock"
-                )
+                raise HTTPException(status_code=400, detail="Product is out of stock")
 
-            config.refresh_cache()
             max_cart_quantity = getattr(config, 'max_cart_quantity_per_product', 20)
             product_max_quantity = product['max_cart_quantity']
             if product_max_quantity:
@@ -965,22 +956,17 @@ async def add_to_cart(
                 max_quantity = max_cart_quantity
 
             if quantity > product['stock_quantity'] and product['stock_status'] != 'on_backorder':
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Only {product['stock_quantity']} items available in stock"
-                )
+                raise HTTPException(status_code=400, detail=f"Only {product['stock_quantity']} items available")
 
             if quantity > max_quantity:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Maximum {max_quantity} items can be added to cart"
-                )
+                raise HTTPException(status_code=400, detail=f"Maximum {max_quantity} items can be added")
 
         session = current_user_or_session.get('session')
         session_id = current_user_or_session.get('session_id')
 
+        # AUTHENTICATED USER
         if not current_user_or_session.get('is_guest'):
-            # Authenticated user - add to database cart
+            print("👤 Authenticated user cart flow")
             user_id = current_user_or_session['user_id']
             with db.get_cursor() as cursor:
                 cursor.execute("""
@@ -988,80 +974,98 @@ async def add_to_cart(
                     WHERE user_id = %s AND product_id = %s
                     AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
                 """, (user_id, product_id, variation_id, variation_id))
+
                 existing_item = cursor.fetchone()
                 if existing_item:
                     new_quantity = existing_item['quantity'] + quantity
                     if new_quantity > max_quantity:
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=f"Maximum {max_quantity} items can be added to cart"
-                        )
-                    cursor.execute("""
-                        UPDATE shopping_cart
-                        SET quantity = %s, updated_at = NOW()
-                        WHERE id = %s
-                    """, (new_quantity, existing_item['id']))
+                        raise HTTPException(status_code=400, detail=f"Maximum {max_quantity} items can be added")
+
+                    cursor.execute("UPDATE shopping_cart SET quantity = %s WHERE id = %s",
+                                   (new_quantity, existing_item['id']))
                 else:
                     cursor.execute("""
                         INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
                         VALUES (%s, %s, %s, %s)
                     """, (user_id, product_id, variation_id, quantity))
+
                 redis_client.delete(f"user_cart:{user_id}")
-                logger.info(f"Product {product_id} added to database cart for user {user_id}")
+                print(f"✅ Authenticated user cart updated for user {user_id}")
                 return {"message": "Product added to cart", "session_based": False}
+
+        # GUEST USER - YAHAN FIX HAI
         else:
-            # Guest user - add to session cart
-            if session and session_id:
-                try:
-                    cart_items = session.cart_items.copy() if session.cart_items is not None else {}
-                    item_key = f"{product_id}_{variation_id}" if variation_id else str(product_id)
-                    if item_key in cart_items:
-                        new_quantity = cart_items[item_key]['quantity'] + quantity
-                        if new_quantity > max_quantity:
-                            raise HTTPException(
-                                status_code=status.HTTP_400_BAD_REQUEST,
-                                detail=f"Maximum {max_quantity} items can be added to cart"
-                            )
-                        cart_items[item_key]['quantity'] = new_quantity
-                    else:
-                        cart_items[item_key] = {
-                            'product_id': product_id,
-                            'variation_id': variation_id,
-                            'quantity': quantity
-                        }
-                    success = session_service.update_session_data(session_id, {
-                        "cart_items": cart_items
-                    })
-                    if success:
-                        logger.info(f"Product {product_id} added to session cart")
-                        return {"message": "Product added to cart", "session_based": True}
-                    else:
-                        logger.warning("Failed to update session cart")
-                        raise HTTPException(
-                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                            detail="Failed to add to cart"
-                        )
-                except HTTPException:
-                    raise
-                except Exception as e:
-                    logger.error(f"Session cart update failed: {e}")
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Failed to add to cart"
-                    )
+            print("👻 Guest user cart flow")
+
+            # Agar session nahi hai to naya session banao
+            if not session_id or not session:
+                print("🆕 No session found, creating new one...")
+                guest_id = str(uuid.uuid4())
+                session_data = {
+                    'session_type': SessionType.GUEST,
+                    'user_id': None,
+                    'guest_id': guest_id,
+                    'ip_address': request.client.host if request.client else 'unknown',
+                    'user_agent': request.headers.get("user-agent", ""),
+                    'cart_items': {}
+                }
+                new_session = session_service.create_session(session_data)
+                if new_session:
+                    session = new_session
+                    session_id = new_session.session_id
+                    request.state.session = session
+                    request.state.session_id = session_id
+                    print(f"✅ New guest session created: {session_id}")
+                else:
+                    raise HTTPException(status_code=500, detail="Failed to create guest session")
+
+            # Cart items lo
+            cart_items = {}
+            if session and session.cart_items:
+                cart_items = session.cart_items.copy()
+            elif session_id:
+                # Session service se load karo
+                loaded_session = session_service.get_session(session_id)
+                if loaded_session and loaded_session.cart_items:
+                    cart_items = loaded_session.cart_items.copy()
+                    session = loaded_session
+
+            # Item add karo
+            item_key = f"{product_id}_{variation_id}" if variation_id else str(product_id)
+
+            if item_key in cart_items:
+                new_quantity = cart_items[item_key]['quantity'] + quantity
+                if new_quantity > max_quantity:
+                    raise HTTPException(status_code=400, detail=f"Maximum {max_quantity} items can be added")
+                cart_items[item_key]['quantity'] = new_quantity
             else:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Session not available"
-                )
+                cart_items[item_key] = {
+                    'product_id': product_id,
+                    'variation_id': variation_id,
+                    'quantity': quantity
+                }
+
+            # Session update karo
+            print(f"💾 Updating session {session_id} with {len(cart_items)} items")
+            success = session_service.update_session_data(session_id, {"cart_items": cart_items})
+
+            if success:
+                print(f"✅ Guest cart updated successfully - Session: {session_id}")
+                return {
+                    "message": "Product added to cart",
+                    "session_based": True,
+                    "session_id": session_id,
+                    "cart_items_count": len(cart_items)
+                }
+            else:
+                print(f"❌ Failed to update guest cart for session: {session_id}")
+                raise HTTPException(status_code=500, detail="Failed to update cart")
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to add to cart: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to add to cart"
-        )
+        print(f"💥 ADD_TO_CART CRITICAL ERROR: {e}")
+        raise HTTPException(status_code=500, detail="Failed to add to cart")
 
 
 @router.put("/cart/{cart_item_id}")
