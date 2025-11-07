@@ -1,24 +1,26 @@
 import { userApi } from './api';
 import { sessionManager } from './api';
-import { productService } from './productService';
 
 export const cartService = {
   getCart: async () => {
     try {
-      console.log('🛒 GET CART - Fetching cart data');
+      const currentSession = sessionManager.getSession();
+      console.log('🛒 GET CART - Current session:', currentSession);
+
       const response = await userApi.get('/cart');
       console.log('🛒 GET CART - Success:', response.data);
 
-      // Update session if provided
-      const sessionId = response.headers['x-session-id'];
-      if (sessionId) {
+      // Always update session from response headers
+      const sessionId = response.headers['x-session-id'] || response.headers['x-secure-session-id'];
+      if (sessionId && sessionId !== sessionManager.getSession()) {
         sessionManager.setSession(sessionId);
+        console.log('✅ Session updated from GET cart:', sessionId);
       }
 
       return response.data;
     } catch (error) {
       console.error('🛒 GET CART - Error:', error);
-      // Return empty cart structure on error
+      // Return empty cart instead of throwing error
       return {
         items: [],
         subtotal: 0,
@@ -29,19 +31,13 @@ export const cartService = {
 
   addToCart: async (productId, quantity = 1, variationId = null) => {
     try {
-      console.log('🛒 ADD_TO_CART: Starting...', { productId, quantity, variationId });
+      const currentSession = sessionManager.getSession();
+      console.log('🛒 ADD_TO_CART: Current session:', currentSession);
 
-      // Ensure we have a session for guest users
-      const token = localStorage.getItem('auth_token');
-      if (!token && !sessionManager.getSession()) {
-        console.log('🛒 No session found, initializing guest session...');
-        try {
-          // Initialize session by making a simple API call
-          await userApi.get('/health').catch(() => {});
-          console.log('✅ Guest session initialized');
-        } catch (error) {
-          console.log('⚠️ Guest session init failed, continuing anyway...');
-        }
+      // Ensure we have a session before making the request
+      if (!currentSession) {
+        console.log('🛒 No session found, ensuring session...');
+        await cartService.ensureGuestSession();
       }
 
       const payload = {
@@ -52,30 +48,33 @@ export const cartService = {
         payload.variation_id = variationId;
       }
 
-      console.log('🛒 Sending request to backend...', payload);
+      console.log('🛒 Sending request with session:', sessionManager.getSession());
       const response = await userApi.post(`/cart/${productId}`, payload);
       console.log('🛒 Backend response:', response.data);
 
-      // Update session if provided
-      const sessionId = response.headers['x-session-id'];
+      // Update session from response headers
+      const sessionId = response.headers['x-session-id'] || response.headers['x-secure-session-id'];
       if (sessionId) {
         sessionManager.setSession(sessionId);
-        console.log('✅ Session ID saved:', sessionId);
+        console.log('✅ Session ID saved from addToCart:', sessionId);
+      } else {
+        console.warn('⚠️ No session ID in addToCart response headers');
       }
 
       return response.data;
     } catch (error) {
       console.error('🛒 ADD_TO_CART ERROR:', error);
+      console.error('🛒 Error response:', error.response?.data);
+      console.error('🛒 Error status:', error.response?.status);
+
       if (error.response?.status === 401) {
         throw new Error('Please log in to add items to cart.');
       } else if (error.response?.status === 404) {
         throw new Error('Product not found.');
       } else if (error.response?.status === 400) {
         throw new Error(error.response.data.detail || 'Cannot add to cart. Please check product availability.');
-      } else if (error.response?.status === 422) {
-        throw new Error('Invalid quantity or product data.');
-      } else if (error.response?.status === 503) {
-        throw new Error('Service temporarily unavailable. Please try again later.');
+      } else if (error.response?.status === 500) {
+        throw new Error('Server error. Please try again.');
       } else {
         throw new Error('Failed to add to cart. Please try again.');
       }
@@ -85,15 +84,12 @@ export const cartService = {
   updateCartItem: async (cartItemId, quantity) => {
     try {
       console.log('🛒 UPDATE_CART_ITEM:', { cartItemId, quantity });
-
       if (quantity < 0) {
         throw new Error('Quantity cannot be negative');
       }
-
       const response = await userApi.put(`/cart/${cartItemId}`, {
         quantity: parseInt(quantity)
       });
-
       console.log('🛒 Update cart response:', response.data);
       return response.data;
     } catch (error) {
@@ -148,16 +144,25 @@ export const cartService = {
     }
   },
 
-  // New method to ensure guest session is properly initialized
   ensureGuestSession: async () => {
     try {
       const token = localStorage.getItem('auth_token');
       if (!token && !sessionManager.getSession()) {
         console.log('🛒 Ensuring guest session...');
-        // Make a simple API call to initialize session
-        await userApi.get('/health');
-        console.log('✅ Guest session ensured');
-        return true;
+        const response = await fetch('/api/v1/users/health', {
+          credentials: 'include',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+
+        const sessionId = response.headers.get('x-session-id') ||
+                         response.headers.get('x-secure-session-id');
+        if (sessionId) {
+          sessionManager.setSession(sessionId);
+          console.log('✅ Guest session ensured:', sessionId);
+          return true;
+        }
       }
       return true;
     } catch (error) {

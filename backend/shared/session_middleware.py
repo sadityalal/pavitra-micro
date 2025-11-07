@@ -48,30 +48,28 @@ class SecureSessionMiddleware:
             security_token = request.headers.get(self.security_header_name)
             is_new_session = False
             session = None
-            should_handle_session = self._should_handle_session(request)
 
+            should_handle_session = self._should_handle_session(request)
             logger.debug(
                 f"Session handling for {request.url.path}: should_handle={should_handle_session}, session_id={session_id}")
 
             if should_handle_session:
-                # Track if we found an existing session
-                found_existing_session = False
-
-                # First, try to get session by provided session ID
+                # FIRST: Try to get existing session by ID
                 if session_id:
-                    session = session_service.get_session(session_id,
-                                                          request_ip=request.client.host if request.client else 'unknown',
-                                                          request_user_agent=request.headers.get("user-agent", ""),
-                                                          security_token=security_token)
+                    session = session_service.get_session(
+                        session_id,
+                        request_ip=request.client.host if request.client else 'unknown',
+                        request_user_agent=request.headers.get("user-agent", ""),
+                        security_token=security_token
+                    )
                     if session:
                         logger.debug(f"✅ Using existing session from ID: {session_id}")
-                        found_existing_session = True
                     else:
                         logger.debug(f"❌ Provided session ID invalid: {session_id}")
                         session_id = None
                         session = None
 
-                # If no session from ID, try to get by user authentication
+                # SECOND: If no session found, check for authenticated user
                 if not session:
                     try:
                         from .auth_middleware import get_current_user
@@ -80,39 +78,37 @@ class SecureSessionMiddleware:
                             user_id = int(current_user['sub'])
                             ip_address = request.client.host if request.client else 'unknown'
                             user_agent = request.headers.get("user-agent", "")
-                            session = session_service.get_or_create_user_session(
-                                user_id, ip_address, user_agent
-                            )
+                            session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
                             if session:
                                 session_id = session.session_id
-                                is_new_session = not found_existing_session
-                                found_existing_session = True
                                 logger.info(f"🔄 Created/retrieved user session for user {user_id}: {session_id}")
                     except Exception as auth_error:
-                        # This is expected for unauthenticated requests
+                        # User not authenticated, continue as guest
                         pass
 
-                # If no user session, try to find existing guest session by IP/user agent
-                if not session and should_handle_session:
+                # THIRD: Handle guest session (only if no existing session)
+                if not session:
+                    # Get or create guest ID from cookies
+                    guest_id = request.cookies.get("guest_id")
+                    if not guest_id:
+                        guest_id = str(uuid.uuid4())
+                        logger.info(f"🆕 Generated new guest ID: {guest_id}")
+
                     ip_address = request.client.host if request.client else 'unknown'
                     user_agent = request.headers.get("user-agent", "")
 
-                    # Try to find existing guest session for this IP/user agent
+                    # Try to find existing guest session first
                     existing_session = self._find_existing_guest_session(ip_address, user_agent)
-
                     if existing_session:
                         session = existing_session
                         session_id = session.session_id
-                        is_new_session = False  # We found existing session
-                        found_existing_session = True
-                        logger.info(f"🔍 Reusing existing guest session for IP {ip_address}: {session_id}")
+                        logger.info(f"🔍 Reusing existing guest session: {session_id}")
                     else:
-                        # Create new guest session only if no existing session found
-                        guest_id = self._get_guest_id(request)
+                        # Create new guest session
                         session = session_service.get_or_create_guest_session(guest_id, ip_address, user_agent)
                         if session:
                             session_id = session.session_id
-                            is_new_session = True  # This is truly a new session
+                            is_new_session = True
                             logger.info(f"🆕 Created new guest session: {session_id}")
 
                 request.state.session = session
@@ -136,19 +132,60 @@ class SecureSessionMiddleware:
             logger.error(f"❌ Secure session middleware error: {e}")
             return await self.app(scope, receive, send)
 
-
     def _find_existing_guest_session(self, ip_address: str, user_agent: str) -> Optional[SessionData]:
-        """Find existing guest session for the given IP and user agent"""
         try:
-            return session_service.find_guest_session_by_ip(ip_address, user_agent)
+            if not redis_client._ensure_connection():
+                return None
+
+            pattern = f"{self._redis_session_prefix}*"
+            all_keys = redis_client.keys(pattern)
+            for key in all_keys:
+                try:
+                    data = redis_client.get(key)
+                    if data:
+                        session_dict = json.loads(data)
+                        session_type = session_dict.get('session_type')
+                        session_ip = session_dict.get('ip_address')
+                        session_user_agent = session_dict.get('user_agent')
+
+                        # Check if this is a guest session with matching IP and user agent
+                        if (session_type == 'guest' and
+                                session_ip == ip_address and
+                                session_user_agent == user_agent):
+                            # Found matching session, validate it's not expired
+                            expires_at = datetime.fromisoformat(session_dict['expires_at'])
+                            if datetime.utcnow() < expires_at:
+                                session_id = key.replace(self._redis_session_prefix, "")
+                                logger.info(f"🔍 Found existing guest session for IP {ip_address}: {session_id}")
+
+                                # Load the full session data
+                                session_dict['created_at'] = datetime.fromisoformat(session_dict['created_at'])
+                                session_dict['last_activity'] = datetime.fromisoformat(session_dict['last_activity'])
+                                session_dict['expires_at'] = datetime.fromisoformat(session_dict['expires_at'])
+                                session_dict['session_type'] = SessionType.GUEST
+                                session_dict['session_id'] = session_id
+
+                                if session_dict.get('cart_items') is None:
+                                    session_dict['cart_items'] = {}
+                                if session_dict.get('ip_addresses') is None:
+                                    session_dict['ip_addresses'] = []
+
+                                session = SessionData(**session_dict)
+                                return session
+                except Exception as e:
+                    logger.debug(f"Error checking session {key}: {e}")
+                    continue
+            return None
         except Exception as e:
-            logger.error(f"Error finding existing guest session: {e}")
+            logger.error(f"Error finding guest session by IP: {e}")
             return None
 
     def _get_guest_id(self, request: Request) -> str:
+        # Always return the guest_id from cookies, don't generate new one here
         guest_id = request.cookies.get("guest_id")
         if not guest_id:
             guest_id = str(uuid.uuid4())
+            logger.info(f"🆕 Generated new guest ID in middleware: {guest_id}")
         return guest_id
 
     def _get_session_id(self, request: Request) -> Optional[str]:
