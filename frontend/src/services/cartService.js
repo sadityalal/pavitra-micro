@@ -3,31 +3,34 @@ import { sessionManager } from './api';
 
 export const cartService = {
   getCart: async () => {
+  try {
+    const currentSession = sessionManager.getSession();
+    const token = localStorage.getItem('auth_token');
+
+    console.log('🛒 GET CART - Session:', currentSession, 'Token:', !!token);
+
+    const response = await userApi.get('/cart');
+    console.log('🛒 GET CART - Response:', response.data);
+
+    // Also try the debug endpoint
     try {
-      const currentSession = sessionManager.getSession();
-      console.log('🛒 GET CART - Current session:', currentSession);
-
-      const response = await userApi.get('/cart');
-      console.log('🛒 GET CART - Success:', response.data);
-
-      // Always update session from response headers
-      const sessionId = response.headers['x-session-id'] || response.headers['x-secure-session-id'];
-      if (sessionId && sessionId !== sessionManager.getSession()) {
-        sessionManager.setSession(sessionId);
-        console.log('✅ Session updated from GET cart:', sessionId);
-      }
-
-      return response.data;
-    } catch (error) {
-      console.error('🛒 GET CART - Error:', error);
-      // Return empty cart instead of throwing error
-      return {
-        items: [],
-        subtotal: 0,
-        total_items: 0
-      };
+      const debugResponse = await userApi.get('/cart/debug');
+      console.log('🛒 DEBUG CART - Response:', debugResponse.data);
+    } catch (debugError) {
+      console.log('🛒 DEBUG endpoint failed:', debugError);
     }
-  },
+
+    return response.data;
+  } catch (error) {
+    console.error('🛒 GET CART - Error:', error);
+    console.error('🛒 Error response:', error.response?.data);
+    return {
+      items: [],
+      subtotal: 0,
+      total_items: 0
+    };
+  }
+},
 
   addToCart: async (productId, quantity = 1, variationId = null) => {
     try {

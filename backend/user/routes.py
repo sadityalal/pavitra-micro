@@ -841,13 +841,18 @@ async def get_cart(
     try:
         await rate_limiter.check_rate_limit(request)
 
+        user_id = current_user_or_session.get('user_id')
+        is_guest = current_user_or_session.get('is_guest', True)
+        session_id = current_user_or_session.get('session_id')
+
+        logger.info(f"🛒 GET CART - User ID: {user_id}, Is Guest: {is_guest}, Session: {session_id}")
+
         # Handle case where session creation completely failed
-        if not current_user_or_session.get('session') and not current_user_or_session.get('is_guest'):
-            logger.warning("No session available, returning empty cart")
+        if not current_user_or_session.get('session') and not is_guest:
+            logger.warning("No session available for authenticated user, returning empty cart")
             return CartResponse(items=[], subtotal=0.0, total_items=0)
 
         session = current_user_or_session.get('session')
-        session_id = current_user_or_session.get('session_id')
 
         if session_id:
             try:
@@ -855,13 +860,17 @@ async def get_cart(
             except Exception as e:
                 logger.warning(f"Failed to update session activity: {e}")
 
-        if not current_user_or_session.get('is_guest'):
-            # Authenticated user - get cart from database
-            user_id = current_user_or_session['user_id']
+        # AUTHENTICATED USER - get cart from database
+        if not is_guest and user_id:
+            logger.info(f"🛒 Fetching database cart for user {user_id}")
+
             with db.get_cursor() as cursor:
                 cursor.execute("""
                     SELECT
-                        sc.*,
+                        sc.id,
+                        sc.product_id,
+                        sc.variation_id,
+                        sc.quantity,
                         p.name as product_name,
                         p.slug as product_slug,
                         p.main_image_url as product_image,
@@ -874,17 +883,43 @@ async def get_cart(
                     WHERE sc.user_id = %s AND p.status = 'active'
                     ORDER BY sc.created_at DESC
                 """, (user_id,))
+
                 cart_items = cursor.fetchall()
+                logger.info(f"🛒 Database returned {len(cart_items)} cart items for user {user_id}")
+
+                # DEBUG: Log what we found
+                for item in cart_items:
+                    logger.info(f"🛒 Cart Item: ID={item['id']}, Product={item['product_name']}, Qty={item['quantity']}")
+
                 cart_data = await _convert_db_cart_to_response(cart_items)
+
+                # UPDATE SESSION CART to keep in sync
+                if session and session_id:
+                    session_cart_items = {}
+                    for item in cart_items:
+                        item_key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
+                            item['product_id'])
+                        session_cart_items[item_key] = {
+                            'product_id': item['product_id'],
+                            'variation_id': item['variation_id'],
+                            'quantity': item['quantity']
+                        }
+
+                    session_service.update_session_data(session_id, {
+                        'cart_items': session_cart_items
+                    })
+                    logger.info(f"🛒 Updated session cart with {len(session_cart_items)} items")
+
                 return cart_data
+
         else:
-            # Guest user - get cart from session or fallback
+            # Guest user logic (unchanged)
             if session and session.cart_items:
                 cart_items = session.cart_items if session.cart_items is not None else {}
+                logger.info(f"🛒 Guest cart with {len(cart_items)} items")
                 cart_response = await _convert_session_cart_to_response(cart_items)
                 return cart_response
             else:
-                # Check if we have fallback cart items
                 fallback_cart = current_user_or_session.get('cart_items', {})
                 if fallback_cart:
                     cart_response = await _convert_session_cart_to_response(fallback_cart)
@@ -893,7 +928,9 @@ async def get_cart(
                     return CartResponse(items=[], subtotal=0.0, total_items=0)
 
     except Exception as e:
-        logger.error(f"Failed to fetch cart: {e}")
+        logger.error(f"🛒 Failed to fetch cart: {e}")
+        import traceback
+        logger.error(f"🛒 Traceback: {traceback.format_exc()}")
         # Return empty cart instead of error
         return CartResponse(items=[], subtotal=0.0, total_items=0)
 
@@ -1252,6 +1289,150 @@ async def remove_from_cart(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to remove from cart"
         )
+
+
+@router.post("/cart/migrate-guest-to-user")
+async def explicit_migrate_guest_cart_to_user(
+        request: Request,
+        current_user: dict = Depends(get_current_user)
+):
+    """Explicit endpoint to migrate guest cart to user account - for frontend to call after login"""
+    try:
+        user_id = current_user['sub']
+        logger.info(f"🔄 Explicit cart migration requested for user {user_id}")
+
+        ip_address = request.client.host if request.client else 'unknown'
+        user_agent = request.headers.get("user-agent", "")
+        total_migrated = 0
+
+        with db.get_cursor() as cursor:
+            # Method 1: Find guest session by IP and User-Agent
+            guest_session = session_service.find_guest_session_by_ip(ip_address, user_agent)
+            if guest_session and guest_session.cart_items:
+                migrated_count = migrate_guest_cart_to_user_database(
+                    guest_session, user_id, cursor
+                )
+                total_migrated += migrated_count
+                logger.info(f"🔄 Explicit migration - IP-based: {migrated_count} items")
+
+                # Clear guest cart
+                session_service.update_session_data(guest_session.session_id, {
+                    'cart_items': {}
+                })
+
+            # Method 2: Check guest_id cookie
+            if total_migrated == 0:
+                guest_id = request.cookies.get("guest_id")
+                if guest_id:
+                    guest_session = session_service.get_session_by_guest_id(guest_id)
+                    if guest_session and guest_session.cart_items:
+                        migrated_count = migrate_guest_cart_to_user_database(
+                            guest_session, user_id, cursor
+                        )
+                        total_migrated += migrated_count
+                        logger.info(f"🔄 Explicit migration - guest_id-based: {migrated_count} items")
+
+                        # Clear guest cart
+                        session_service.update_session_data(guest_session.session_id, {
+                            'cart_items': {}
+                        })
+
+        # Clear user cart cache
+        redis_client.delete(f"user_cart:{user_id}")
+
+        # Refresh the user's session cart data
+        user_session = session_service.get_session_by_user_id(user_id)
+        if user_session:
+            cursor.execute("""
+                SELECT
+                    sc.product_id,
+                    sc.variation_id,
+                    sc.quantity
+                FROM shopping_cart sc
+                JOIN products p ON sc.product_id = p.id
+                WHERE sc.user_id = %s AND p.status = 'active'
+            """, (user_id,))
+            user_cart_items = cursor.fetchall()
+
+            # Convert to session format
+            session_cart_items = {}
+            for item in user_cart_items:
+                item_key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
+                    item['product_id'])
+                session_cart_items[item_key] = {
+                    'product_id': item['product_id'],
+                    'variation_id': item['variation_id'],
+                    'quantity': item['quantity']
+                }
+
+            session_service.update_session_data(user_session.session_id, {
+                'cart_items': session_cart_items
+            })
+
+        logger.info(f"✅ Explicit cart migration completed: {total_migrated} items migrated for user {user_id}")
+
+        return {
+            "success": True,
+            "message": "Cart migration completed successfully",
+            "items_migrated": total_migrated,
+            "user_id": user_id
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Explicit cart migration failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to migrate cart items"
+        )
+
+
+@router.get("/cart/debug")
+async def debug_user_cart(
+        request: Request,
+        current_user: dict = Depends(get_current_user)
+):
+    """Debug endpoint to check cart data"""
+    try:
+        user_id = current_user['sub']
+
+        # Debug session
+        session = get_session(request)
+        session_info = {
+            "session_id": session.session_id if session else None,
+            "session_type": session.session_type if session else None,
+            "session_cart_items": len(session.cart_items) if session and session.cart_items else 0
+        }
+
+        # Debug database cart
+        with db.get_cursor() as cursor:
+            cursor.execute("""
+                SELECT 
+                    sc.id, sc.product_id, sc.variation_id, sc.quantity,
+                    p.name as product_name, p.stock_status
+                FROM shopping_cart sc
+                JOIN products p ON sc.product_id = p.id
+                WHERE sc.user_id = %s AND p.status = 'active'
+            """, (user_id,))
+            db_cart_items = cursor.fetchall()
+
+            cursor.execute("SELECT COUNT(*) as count FROM shopping_cart WHERE user_id = %s", (user_id,))
+            total_count = cursor.fetchone()['count']
+
+        return {
+            "user_id": user_id,
+            "session_info": session_info,
+            "database_cart": {
+                "total_items_in_db": total_count,
+                "active_cart_items": len(db_cart_items),
+                "items": db_cart_items
+            },
+            "request_headers": dict(request.headers),
+            "cookies": dict(request.cookies)
+        }
+
+    except Exception as e:
+        logger.error(f"Debug cart failed: {e}")
+        return {"error": str(e)}
 
 
 @router.delete("/cart")

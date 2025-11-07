@@ -281,7 +281,7 @@ def _setup_user_account(cursor, user_id: int) -> tuple[list, list]:
 
 @router.post("/register", response_model=Token)
 async def register_user(
-        user_data: UserCreate,  # Accepts JSON directly
+        user_data: UserCreate,
         background_tasks: BackgroundTasks = None,
         request: Request = None,
         response: Response = None
@@ -305,12 +305,15 @@ async def register_user(
         auth_type = user_data.auth_type
 
         logger.info(f"Processing registration for: {email or phone or username}")
+
         first_name = sanitize_input(first_name)
         last_name = sanitize_input(last_name)
+
         _validate_registration_data(email, phone, username, password)
 
         with db.get_cursor() as cursor:
             _check_existing_users(cursor, email, phone, username)
+
             password_hash = get_password_hash(password)
             cursor.execute("""
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
@@ -336,28 +339,83 @@ async def register_user(
 
             logger.info(f"✅ Created/retrieved user session: {user_session.session_id} for user {user_id}")
 
-            # Migrate guest cart items if any
+            # ENHANCED CART MIGRATION LOGIC FOR REGISTRATION
             current_session = get_session(request)
             migrated_items_count = 0
+
+            # Method 1: Check current session from middleware
             if current_session and current_session.session_type == SessionType.GUEST:
-                # Only migrate if guest session has cart items AND user doesn't already have them
                 if current_session.cart_items:
                     migrated_items_count = migrate_guest_cart_to_user_database(
                         current_session, user_id, cursor
                     )
-                    logger.info(f"🔄 Migrated {migrated_items_count} cart items from guest session")
-
-                    # CLEAR the guest session cart after migration
+                    logger.info(
+                        f"🔄 Registration - Method 1: Migrated {migrated_items_count} cart items from current guest session")
+                    # Clear the guest session cart after migration
                     session_service.update_session_data(current_session.session_id, {
-                        'cart_items': {}  # Empty the guest cart
+                        'cart_items': {}
                     })
 
-                    if migrated_items_count > 0 and user_session.cart_items:
-                        session_service.update_session_data(user_session.session_id, {
-                            'cart_items': user_session.cart_items
-                        })
+            # Method 2: If no session found or no items migrated, search by IP and User-Agent
+            if migrated_items_count == 0:
+                guest_session = session_service.find_guest_session_by_ip(ip_address, user_agent)
+                if guest_session and guest_session.cart_items:
+                    additional_migrated = migrate_guest_cart_to_user_database(
+                        guest_session, user_id, cursor
+                    )
+                    migrated_items_count += additional_migrated
+                    logger.info(
+                        f"🔄 Registration - Method 2: Migrated {additional_migrated} cart items from IP-based guest session")
+                    # Clear the guest session cart after migration
+                    session_service.update_session_data(guest_session.session_id, {
+                        'cart_items': {}
+                    })
 
-            # Set session cookie
+            # Method 3: Check guest_id cookie as fallback
+            if migrated_items_count == 0:
+                guest_id = request.cookies.get("guest_id")
+                if guest_id:
+                    guest_session = session_service.get_session_by_guest_id(guest_id)
+                    if guest_session and guest_session.cart_items:
+                        additional_migrated = migrate_guest_cart_to_user_database(
+                            guest_session, user_id, cursor
+                        )
+                        migrated_items_count += additional_migrated
+                        logger.info(
+                            f"🔄 Registration - Method 3: Migrated {additional_migrated} cart items from guest_id-based session")
+
+            # Update user session with migrated cart if any items were migrated
+            if migrated_items_count > 0:
+                # Refresh user session cart data from database
+                cursor.execute("""
+                    SELECT
+                        sc.product_id,
+                        sc.variation_id,
+                        sc.quantity
+                    FROM shopping_cart sc
+                    JOIN products p ON sc.product_id = p.id
+                    WHERE sc.user_id = %s AND p.status = 'active'
+                """, (user_id,))
+                user_cart_items = cursor.fetchall()
+
+                # Convert to session cart format
+                session_cart_items = {}
+                for item in user_cart_items:
+                    item_key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
+                        item['product_id'])
+                    session_cart_items[item_key] = {
+                        'product_id': item['product_id'],
+                        'variation_id': item['variation_id'],
+                        'quantity': item['quantity']
+                    }
+
+                session_service.update_session_data(user_session.session_id, {
+                    'cart_items': session_cart_items
+                })
+
+                logger.info(
+                    f"✅ Registration - Total {migrated_items_count} cart items migrated successfully for user {user_id}")
+
             if user_session and response:
                 session_config = config.get_session_config()
                 session_timeout = session_config.get('user_session_duration', 2592000)
@@ -374,7 +432,6 @@ async def register_user(
                 request.state.session_id = user_session.session_id
                 logger.info(f"Set user session cookie for user {user_id}: {user_session.session_id}")
 
-            # Publish registration event
             if background_tasks:
                 cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
                 user = cursor.fetchone()
@@ -383,7 +440,6 @@ async def register_user(
                     user
                 )
 
-            # Create access token
             session_config = config.get_session_config()
             token_expiry_hours = session_config['token_expiry_hours']
             access_token = create_access_token(
@@ -396,7 +452,9 @@ async def register_user(
                 expires_delta=timedelta(hours=token_expiry_hours)
             )
 
-            logger.info(f"User registered successfully: {email or phone or username}")
+            logger.info(
+                f"User registered successfully: {email or phone or username} with {migrated_items_count} cart items migrated")
+
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -610,7 +668,7 @@ async def get_frontend_settings():
 
 @router.post("/login", response_model=Token)
 async def login_user(
-        login_data: UserLogin,  # Accepts JSON directly
+        login_data: UserLogin,
         request: Request = None,
         response: Response = None
 ):
@@ -695,11 +753,9 @@ async def login_user(
             if not roles:
                 roles.add('customer')
 
-            # Get IP and user agent for session
             ip_address = request.client.host if request.client else 'unknown'
             user_agent = request.headers.get("user-agent", "")
 
-            # Get or create user session - ONE SESSION PER USER
             user_session = session_service.get_or_create_user_session(user['id'], ip_address, user_agent)
             if not user_session:
                 logger.error(f"Failed to get/create user session for user {user['id']}")
@@ -710,26 +766,84 @@ async def login_user(
 
             logger.info(f"✅ Using user session: {user_session.session_id} for user {user['id']}")
 
-            # Migrate guest cart items if any
+            # ENHANCED CART MIGRATION LOGIC
             current_session = get_session(request)
             migrated_items_count = 0
+
+            # Method 1: Check current session from middleware
             if current_session and current_session.session_type == SessionType.GUEST:
-                # Only migrate if guest session has cart items AND user doesn't already have them
                 if current_session.cart_items:
                     migrated_items_count = migrate_guest_cart_to_user_database(
                         current_session, user['id'], cursor
                     )
-                    logger.info(f"🔄 Migrated {migrated_items_count} cart items from guest session")
-
-                    # CLEAR the guest session cart after migration
+                    logger.info(f"🔄 Method 1: Migrated {migrated_items_count} cart items from current guest session")
+                    # Clear the guest session cart after migration
                     session_service.update_session_data(current_session.session_id, {
-                        'cart_items': {}  # Empty the guest cart
+                        'cart_items': {}
                     })
 
-                    if migrated_items_count > 0 and user_session.cart_items:
-                        session_service.update_session_data(user_session.session_id, {
-                            'cart_items': user_session.cart_items
-                        })
+            # Method 2: If no session found or no items migrated, search by IP and User-Agent
+            if migrated_items_count == 0:
+                guest_session = session_service.find_guest_session_by_ip(ip_address, user_agent)
+                if guest_session and guest_session.cart_items:
+                    additional_migrated = migrate_guest_cart_to_user_database(
+                        guest_session, user['id'], cursor
+                    )
+                    migrated_items_count += additional_migrated
+                    logger.info(f"🔄 Method 2: Migrated {additional_migrated} cart items from IP-based guest session")
+                    # Clear the guest session cart after migration
+                    session_service.update_session_data(guest_session.session_id, {
+                        'cart_items': {}
+                    })
+
+            # Method 3: Check guest_id cookie as fallback
+            if migrated_items_count == 0:
+                guest_id = request.cookies.get("guest_id")
+                if guest_id:
+                    guest_session = session_service.get_session_by_guest_id(guest_id)
+                    if guest_session and guest_session.cart_items:
+                        additional_migrated = migrate_guest_cart_to_user_database(
+                            guest_session, user['id'], cursor
+                        )
+                        migrated_items_count += additional_migrated
+                        logger.info(
+                            f"🔄 Method 3: Migrated {additional_migrated} cart items from guest_id-based session")
+
+            # Update user session with migrated cart if any items were migrated
+            if migrated_items_count > 0:
+                # Refresh user session cart data from database
+                cursor.execute("""
+                    SELECT
+                        sc.*,
+                        p.name as product_name,
+                        p.slug as product_slug,
+                        p.main_image_url as product_image,
+                        p.base_price as product_price,
+                        p.stock_quantity,
+                        p.stock_status,
+                        p.max_cart_quantity
+                    FROM shopping_cart sc
+                    JOIN products p ON sc.product_id = p.id
+                    WHERE sc.user_id = %s AND p.status = 'active'
+                """, (user['id'],))
+                user_cart_items = cursor.fetchall()
+
+                # Convert to session cart format
+                session_cart_items = {}
+                for item in user_cart_items:
+                    item_key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
+                        item['product_id'])
+                    session_cart_items[item_key] = {
+                        'product_id': item['product_id'],
+                        'variation_id': item['variation_id'],
+                        'quantity': item['quantity']
+                    }
+
+                session_service.update_session_data(user_session.session_id, {
+                    'cart_items': session_cart_items
+                })
+
+                logger.info(f"✅ Total {migrated_items_count} cart items migrated successfully for user {user['id']}")
 
             # Set session cookie
             if user_session and response:
@@ -763,7 +877,8 @@ async def login_user(
                 expires_delta=timedelta(hours=token_expiry_hours)
             )
 
-            logger.info(f"Login successful for user: {user['email']}")
+            logger.info(f"Login successful for user: {user['email']} with {migrated_items_count} cart items migrated")
+
             return Token(
                 access_token=access_token,
                 token_type="bearer",

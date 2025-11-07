@@ -293,8 +293,11 @@ class SecureSessionMiddleware:
             "Path=/"
         ]
 
-        if self.cookie_secure and not config.debug_mode:
-            cookie_parts.append("Secure")
+        if self.cookie_secure:
+            if config.debug_mode:
+                cookie_parts.append("Secure")
+            else:
+                cookie_parts.append("Secure")
 
         return "; ".join(cookie_parts)
 

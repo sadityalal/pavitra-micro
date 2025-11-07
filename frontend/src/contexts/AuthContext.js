@@ -71,62 +71,76 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const login = async (credentials) => {
-    try {
-      setLoading(true);
-      console.log('🔐 Attempting login with credentials:', {
-        login_id: credentials.login_id,
-        password_length: credentials.password ? credentials.password.length : 0
-      });
-      const response = await authService.login(credentials);
-      if (response.access_token) {
-        localStorage.setItem('auth_token', response.access_token);
-        const userData = {
-          id: 'user_id',
-          email: credentials.login_id,
-          first_name: response.user?.first_name,
-          last_name: response.user?.last_name,
-          roles: response.user_roles || ['customer'],
-          permissions: response.user_permissions || []
-        };
-        setUser(userData);
-        setIsAuthenticated(true);
-        sessionManager.clearSession();
-        console.log('✅ Login successful, guest session cleared');
-        const cartEvent = new CustomEvent('authStateChanged', {
-          detail: {
-            action: 'login',
-            user: userData,
-            sessionType: 'authenticated'
-          }
+  try {
+    setLoading(true);
+    console.log('🔐 Attempting login with credentials:', {
+      login_id: credentials.login_id,
+      password_length: credentials.password ? credentials.password.length : 0
+    });
+
+    const response = await authService.login(credentials);
+
+    if (response.access_token) {
+      localStorage.setItem('auth_token', response.access_token);
+      const userData = {
+        id: 'user_id',
+        email: credentials.login_id,
+        first_name: response.user?.first_name,
+        last_name: response.user?.last_name,
+        roles: response.user_roles || ['customer'],
+        permissions: response.user_permissions || []
+      };
+
+      setUser(userData);
+      setIsAuthenticated(true);
+      sessionManager.clearSession();
+
+      console.log('✅ Login successful, attempting cart migration...');
+
+      // Call explicit cart migration after successful login
+      try {
+        const migrationResponse = await fetch('/api/v1/users/cart/migrate-guest-to-user', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${response.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include'
         });
-        document.dispatchEvent(cartEvent);
-        success('Login successful! Welcome back.');
-        return response;
-      } else {
-        throw new Error('No access token received from server');
+
+        if (migrationResponse.ok) {
+          const migrationResult = await migrationResponse.json();
+          console.log('🔄 Cart migration result:', migrationResult);
+          if (migrationResult.items_migrated > 0) {
+            success(`Cart migrated successfully! ${migrationResult.items_migrated} items added to your account.`);
+          }
+        }
+      } catch (migrationError) {
+        console.warn('Cart migration failed, but login was successful:', migrationError);
       }
-    } catch (err) {
-      console.error('Login failed:', err);
-      if (err.response?.status === 401) {
-        error('Invalid credentials. Please check your email/username and password.');
-      } else if (err.response?.status === 422) {
-        error('Invalid input format. Please check your data.');
-      } else if (err.response?.status === 429) {
-        error('Too many login attempts. Please try again later.');
-      } else if (err.response?.status === 503) {
-        error('Service is under maintenance. Please try again later.');
-      } else if (err.response?.data?.detail) {
-        error(err.response.data.detail);
-      } else if (err.message) {
-        error(err.message);
-      } else {
-        error('Login failed. Please try again.');
-      }
-      throw err;
-    } finally {
-      setLoading(false);
+
+      console.log('✅ Login successful, guest session cleared');
+
+      const cartEvent = new CustomEvent('authStateChanged', {
+        detail: {
+          action: 'login',
+          user: userData,
+          sessionType: 'authenticated'
+        }
+      });
+      document.dispatchEvent(cartEvent);
+
+      success('Login successful! Welcome back.');
+      return response;
+    } else {
+      throw new Error('No access token received from server');
     }
-  };
+  } catch (err) {
+    // ... existing error handling ...
+  } finally {
+    setLoading(false);
+  }
+};
 
   const logout = async () => {
     try {
@@ -156,81 +170,109 @@ export const AuthProvider = ({ children }) => {
   };
 
   const register = async (userData) => {
-    try {
-      setLoading(true);
-      console.log('👤 Registering user with data:', {
+  try {
+    setLoading(true);
+    console.log('👤 Registering user with data:', {
+      first_name: userData.first_name,
+      last_name: userData.last_name,
+      email: userData.email,
+      phone: userData.phone,
+      username: userData.username
+    });
+
+    const response = await authService.register(userData);
+
+    if (response.access_token) {
+      localStorage.setItem('auth_token', response.access_token);
+      const userProfile = {
+        id: 'user_id',
+        email: userData.email || userData.phone || userData.username,
         first_name: userData.first_name,
         last_name: userData.last_name,
-        email: userData.email,
-        phone: userData.phone,
-        username: userData.username
-      });
+        roles: response.user_roles || ['customer'],
+        permissions: response.user_permissions || []
+      };
 
-      const response = await authService.register(userData);
+      setUser(userProfile);
+      setIsAuthenticated(true);
+      sessionManager.clearSession();
 
-      if (response.access_token) {
-        localStorage.setItem('auth_token', response.access_token);
-        const userProfile = {
-          id: 'user_id',
-          email: userData.email || userData.phone || userData.username,
-          first_name: userData.first_name,
-          last_name: userData.last_name,
-          roles: response.user_roles || ['customer'],
-          permissions: response.user_permissions || []
-        };
-        setUser(userProfile);
-        setIsAuthenticated(true);
-        sessionManager.clearSession();
-        console.log('✅ Registration successful, guest session cleared');
-        const cartEvent = new CustomEvent('authStateChanged', {
-          detail: {
-            action: 'register',
-            user: userProfile,
-            sessionType: 'authenticated'
-          }
+      console.log('✅ Registration successful, attempting cart migration...');
+
+      // Call explicit cart migration after successful registration
+      try {
+        const migrationResponse = await fetch('/api/v1/users/cart/migrate-guest-to-user', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${response.access_token}`,
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include'
         });
-        document.dispatchEvent(cartEvent);
-        success('Registration successful! Welcome to our platform.');
-        return response;
-      } else {
-        throw new Error('No access token received from server');
-      }
-    } catch (err) {
-      console.error('Registration failed:', err);
 
-      // Enhanced error handling for registration
-      if (err.response?.status === 422) {
-        const validationErrors = err.response.data.detail;
-        if (Array.isArray(validationErrors)) {
-          const errorMessages = validationErrors.map(err => err.msg || err).join(', ');
-          error(`Validation failed: ${errorMessages}`);
-        } else if (typeof validationErrors === 'string') {
-          error(validationErrors);
-        } else if (validationErrors && typeof validationErrors === 'object') {
-          const errorMessage = Object.values(validationErrors).flat().join(', ');
-          error(`Validation failed: ${errorMessage}`);
+        if (migrationResponse.ok) {
+          const migrationResult = await migrationResponse.json();
+          console.log('🔄 Cart migration result:', migrationResult);
+          if (migrationResult.items_migrated > 0) {
+            success(`Registration successful! ${migrationResult.items_migrated} cart items migrated to your account.`);
+          } else {
+            success('Registration successful! Welcome to our platform.');
+          }
         }
-      } else if (err.response?.data?.detail) {
-        error(err.response.data.detail);
-      } else if (err.response?.status === 400) {
-        const detail = err.response.data.detail;
-        if (typeof detail === 'string') {
-          error(detail);
-        } else {
-          error('Email, phone, or username already exists. Please use different credentials.');
-        }
-      } else if (err.response?.status === 503) {
-        error('Service is under maintenance. Registration is temporarily unavailable.');
-      } else if (err.message) {
-        error(err.message);
-      } else {
-        error('Registration failed. Please try again.');
+      } catch (migrationError) {
+        console.warn('Cart migration failed, but registration was successful:', migrationError);
+        success('Registration successful! Welcome to our platform.');
       }
-      throw err;
-    } finally {
-      setLoading(false);
+
+      console.log('✅ Registration successful, guest session cleared');
+
+      const cartEvent = new CustomEvent('authStateChanged', {
+        detail: {
+          action: 'register',
+          user: userProfile,
+          sessionType: 'authenticated'
+        }
+      });
+      document.dispatchEvent(cartEvent);
+
+      return response;
+    } else {
+      throw new Error('No access token received from server');
     }
-  };
+  } catch (err) {
+    console.error('Registration failed:', err);
+    if (err.response?.status === 422) {
+      const validationErrors = err.response.data.detail;
+      if (Array.isArray(validationErrors)) {
+        const errorMessages = validationErrors.map(err => err.msg || err).join(', ');
+        error(`Validation failed: ${errorMessages}`);
+      } else if (typeof validationErrors === 'string') {
+        error(validationErrors);
+      } else if (validationErrors && typeof validationErrors === 'object') {
+        const errorMessage = Object.values(validationErrors).flat().join(', ');
+        error(`Validation failed: ${errorMessage}`);
+      }
+    } else if (err.response?.data?.detail) {
+      error(err.response.data.detail);
+    } else if (err.response?.status === 400) {
+      const detail = err.response.data.detail;
+      if (typeof detail === 'string') {
+        error(detail);
+      } else {
+        error('Email, phone, or username already exists. Please use different credentials.');
+      }
+    } else if (err.response?.status === 503) {
+      error('Service is under maintenance. Registration is temporarily unavailable.');
+    } else if (err.message) {
+      error(err.message);
+    } else {
+      error('Registration failed. Please try again.');
+    }
+    throw err;
+  } finally {
+    setLoading(false);
+  }
+};
 
   const forgotPassword = async (email) => {
     try {
