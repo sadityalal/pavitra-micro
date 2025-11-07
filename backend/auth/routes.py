@@ -120,13 +120,27 @@ def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor) -> 
     try:
         if not guest_session or not guest_session.cart_items:
             return 0
+
         migrated_count = 0
         guest_cart_items = guest_session.cart_items.copy()
+
+        # First, get user's existing cart items to avoid duplicates
+        cursor.execute("""
+            SELECT product_id, variation_id, quantity 
+            FROM shopping_cart 
+            WHERE user_id = %s
+        """, (user_id,))
+        existing_user_items = {(row['product_id'], row['variation_id']): row['quantity'] for row in cursor.fetchall()}
+
         for item_key, item_data in guest_cart_items.items():
             try:
                 product_id = item_data['product_id']
                 variation_id = item_data.get('variation_id')
                 quantity = item_data['quantity']
+
+                # Check if user already has this item
+                existing_quantity = existing_user_items.get((product_id, variation_id), 0)
+
                 cursor.execute(
                     "SELECT id, stock_quantity, max_cart_quantity FROM products WHERE id = %s AND status = 'active'",
                     (product_id,)
@@ -134,34 +148,38 @@ def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor) -> 
                 product = cursor.fetchone()
                 if not product:
                     continue
+
                 max_quantity = product['max_cart_quantity'] or 20
                 available_quantity = min(quantity, product['stock_quantity']) if product[
                                                                                      'stock_quantity'] > 0 else quantity
-                cursor.execute("""
-                    SELECT id, quantity FROM shopping_cart
-                    WHERE user_id = %s AND product_id = %s
-                    AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
-                """, (user_id, product_id, variation_id, variation_id))
-                existing_item = cursor.fetchone()
-                if existing_item:
-                    existing_quantity = existing_item['quantity']
-                    new_quantity = min(existing_quantity + available_quantity, max_quantity)
+
+                # Calculate new quantity without exceeding max
+                new_quantity = min(existing_quantity + available_quantity, max_quantity)
+
+                if existing_quantity > 0:
+                    # Update existing item
                     cursor.execute("""
                         UPDATE shopping_cart
                         SET quantity = %s, updated_at = NOW()
-                        WHERE id = %s
-                    """, (new_quantity, existing_item['id']))
+                        WHERE user_id = %s AND product_id = %s
+                        AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
+                    """, (new_quantity, user_id, product_id, variation_id, variation_id))
                 else:
+                    # Insert new item
                     cursor.execute("""
                         INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
                         VALUES (%s, %s, %s, %s)
                     """, (user_id, product_id, variation_id, available_quantity))
+
                 migrated_count += 1
                 logger.info(f"Migrated cart item: product {product_id}, quantity {available_quantity}")
+
             except Exception as e:
                 logger.error(f"Failed to migrate cart item {item_key}: {e}")
                 continue
+
         return migrated_count
+
     except Exception as e:
         logger.error(f"Cart migration failed: {e}")
         return 0
@@ -322,15 +340,22 @@ async def register_user(
             current_session = get_session(request)
             migrated_items_count = 0
             if current_session and current_session.session_type == SessionType.GUEST:
-                migrated_items_count = migrate_guest_cart_to_user_database(
-                    current_session, user_id, cursor
-                )
-                logger.info(f"🔄 Migrated {migrated_items_count} cart items from guest session during registration")
-                # Update user session with migrated cart items
-                if migrated_items_count > 0 and user_session.cart_items:
-                    session_service.update_session_data(user_session.session_id, {
-                        'cart_items': user_session.cart_items
+                # Only migrate if guest session has cart items AND user doesn't already have them
+                if current_session.cart_items:
+                    migrated_items_count = migrate_guest_cart_to_user_database(
+                        current_session, user_id, cursor
+                    )
+                    logger.info(f"🔄 Migrated {migrated_items_count} cart items from guest session")
+
+                    # CLEAR the guest session cart after migration
+                    session_service.update_session_data(current_session.session_id, {
+                        'cart_items': {}  # Empty the guest cart
                     })
+
+                    if migrated_items_count > 0 and user_session.cart_items:
+                        session_service.update_session_data(user_session.session_id, {
+                            'cart_items': user_session.cart_items
+                        })
 
             # Set session cookie
             if user_session and response:
@@ -689,15 +714,22 @@ async def login_user(
             current_session = get_session(request)
             migrated_items_count = 0
             if current_session and current_session.session_type == SessionType.GUEST:
-                migrated_items_count = migrate_guest_cart_to_user_database(
-                    current_session, user['id'], cursor
-                )
-                logger.info(f"🔄 Migrated {migrated_items_count} cart items from guest session")
-                # Update user session with migrated cart items
-                if migrated_items_count > 0 and user_session.cart_items:
-                    session_service.update_session_data(user_session.session_id, {
-                        'cart_items': user_session.cart_items
+                # Only migrate if guest session has cart items AND user doesn't already have them
+                if current_session.cart_items:
+                    migrated_items_count = migrate_guest_cart_to_user_database(
+                        current_session, user['id'], cursor
+                    )
+                    logger.info(f"🔄 Migrated {migrated_items_count} cart items from guest session")
+
+                    # CLEAR the guest session cart after migration
+                    session_service.update_session_data(current_session.session_id, {
+                        'cart_items': {}  # Empty the guest cart
                     })
+
+                    if migrated_items_count > 0 and user_session.cart_items:
+                        session_service.update_session_data(user_session.session_id, {
+                            'cart_items': user_session.cart_items
+                        })
 
             # Set session cookie
             if user_session and response:
@@ -760,13 +792,19 @@ async def logout_user(
         user_id = current_user['sub']
         auth_header = request.headers.get("Authorization")
         session_id = get_session_id(request)
+
+        # 1. Delete the current user session
         if session_id:
             session_service.delete_session(session_id)
             logger.info(f"Session deleted for user {user_id}")
+
+        # 2. Blacklist the JWT token
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header[7:]
             blacklist_token(token)
             logger.info(f"JWT token invalidated for user {user_id}")
+
+        # 3. Clear cookies
         response.delete_cookie(
             key="session_id",
             path="/",
@@ -774,33 +812,25 @@ async def logout_user(
             httponly=True,
             samesite="Lax"
         )
-        # Create new guest session after logout
-        guest_session_data = {
-            'session_type': SessionType.GUEST,
-            'user_id': None,
-            'guest_id': str(uuid.uuid4()),
-            'ip_address': request.client.host if request.client else 'unknown',
-            'user_agent': request.headers.get("user-agent"),
-            'cart_items': {}
-        }
-        new_guest_session = session_service.create_session(guest_session_data)
-        if new_guest_session and response:
-            session_config = config.get_session_config()
-            session_timeout = session_config.get('guest_session_duration', 86400)
-            response.set_cookie(
-                key="session_id",
-                value=new_guest_session.session_id,
-                max_age=session_timeout,
-                httponly=True,
-                secure=not config.debug_mode,
-                samesite="Lax",
-                path="/"
-            )
-            logger.info(f"New guest session created after logout: {new_guest_session.session_id}")
-        logger.info(f"User {user_id} logged out successfully")
+        response.delete_cookie(
+            key="guest_id",
+            path="/",
+            secure=not config.debug_mode,
+            httponly=True,
+            samesite="Lax"
+        )
+
+        # 4. DO NOT create new guest session automatically
+        # Let the next request create a fresh guest session
+
+        logger.info(f"User {user_id} logged out successfully - session fully cleared")
         return {"message": "Logged out successfully"}
+
     except Exception as e:
         logger.error(f"Logout failed: {e}")
+        # Still try to clear cookies even if other operations fail
+        response.delete_cookie(key="session_id", path="/")
+        response.delete_cookie(key="guest_id", path="/")
         return {"message": "Logged out successfully"}
 
 
