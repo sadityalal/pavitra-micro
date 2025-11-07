@@ -840,17 +840,23 @@ async def get_cart(
 ):
     try:
         await rate_limiter.check_rate_limit(request)
-
         user_id = current_user_or_session.get('user_id')
         is_guest = current_user_or_session.get('is_guest', True)
         session_id = current_user_or_session.get('session_id')
 
         logger.info(f"🛒 GET CART - User ID: {user_id}, Is Guest: {is_guest}, Session: {session_id}")
 
-        # Handle case where session creation completely failed
+        # FIX: Handle case where session creation completely failed
         if not current_user_or_session.get('session') and not is_guest:
-            logger.warning("No session available for authenticated user, returning empty cart")
-            return CartResponse(items=[], subtotal=0.0, total_items=0)
+            logger.warning("No session available for authenticated user, creating new session")
+            # Try to create a new session for the user
+            ip_address = request.client.host if request.client else 'unknown'
+            user_agent = request.headers.get("user-agent", "")
+            user_session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
+            if user_session:
+                current_user_or_session['session'] = user_session
+                current_user_or_session['session_id'] = user_session.session_id
+                logger.info(f"✅ Created new session for user {user_id}: {user_session.session_id}")
 
         session = current_user_or_session.get('session')
 
@@ -863,7 +869,6 @@ async def get_cart(
         # AUTHENTICATED USER - get cart from database
         if not is_guest and user_id:
             logger.info(f"🛒 Fetching database cart for user {user_id}")
-
             with db.get_cursor() as cursor:
                 cursor.execute("""
                     SELECT
@@ -883,7 +888,6 @@ async def get_cart(
                     WHERE sc.user_id = %s AND p.status = 'active'
                     ORDER BY sc.created_at DESC
                 """, (user_id,))
-
                 cart_items = cursor.fetchall()
                 logger.info(f"🛒 Database returned {len(cart_items)} cart items for user {user_id}")
 
@@ -904,16 +908,14 @@ async def get_cart(
                             'variation_id': item['variation_id'],
                             'quantity': item['quantity']
                         }
-
                     session_service.update_session_data(session_id, {
                         'cart_items': session_cart_items
                     })
                     logger.info(f"🛒 Updated session cart with {len(session_cart_items)} items")
 
                 return cart_data
-
         else:
-            # Guest user logic (unchanged)
+            # Guest user logic
             if session and session.cart_items:
                 cart_items = session.cart_items if session.cart_items is not None else {}
                 logger.info(f"🛒 Guest cart with {len(cart_items)} items")

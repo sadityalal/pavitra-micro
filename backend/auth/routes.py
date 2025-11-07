@@ -755,8 +755,8 @@ async def login_user(
 
             ip_address = request.client.host if request.client else 'unknown'
             user_agent = request.headers.get("user-agent", "")
-
             user_session = session_service.get_or_create_user_session(user['id'], ip_address, user_agent)
+
             if not user_session:
                 logger.error(f"Failed to get/create user session for user {user['id']}")
                 raise HTTPException(
@@ -765,24 +765,18 @@ async def login_user(
                 )
 
             logger.info(f"✅ Using user session: {user_session.session_id} for user {user['id']}")
-
-            # ENHANCED CART MIGRATION LOGIC
             current_session = get_session(request)
             migrated_items_count = 0
-
-            # Method 1: Check current session from middleware
             if current_session and current_session.session_type == SessionType.GUEST:
                 if current_session.cart_items:
                     migrated_items_count = migrate_guest_cart_to_user_database(
                         current_session, user['id'], cursor
                     )
                     logger.info(f"🔄 Method 1: Migrated {migrated_items_count} cart items from current guest session")
-                    # Clear the guest session cart after migration
                     session_service.update_session_data(current_session.session_id, {
                         'cart_items': {}
                     })
 
-            # Method 2: If no session found or no items migrated, search by IP and User-Agent
             if migrated_items_count == 0:
                 guest_session = session_service.find_guest_session_by_ip(ip_address, user_agent)
                 if guest_session and guest_session.cart_items:
@@ -791,12 +785,10 @@ async def login_user(
                     )
                     migrated_items_count += additional_migrated
                     logger.info(f"🔄 Method 2: Migrated {additional_migrated} cart items from IP-based guest session")
-                    # Clear the guest session cart after migration
                     session_service.update_session_data(guest_session.session_id, {
                         'cart_items': {}
                     })
 
-            # Method 3: Check guest_id cookie as fallback
             if migrated_items_count == 0:
                 guest_id = request.cookies.get("guest_id")
                 if guest_id:
@@ -809,9 +801,7 @@ async def login_user(
                         logger.info(
                             f"🔄 Method 3: Migrated {additional_migrated} cart items from guest_id-based session")
 
-            # Update user session with migrated cart if any items were migrated
             if migrated_items_count > 0:
-                # Refresh user session cart data from database
                 cursor.execute("""
                     SELECT
                         sc.*,
@@ -827,8 +817,6 @@ async def login_user(
                     WHERE sc.user_id = %s AND p.status = 'active'
                 """, (user['id'],))
                 user_cart_items = cursor.fetchall()
-
-                # Convert to session cart format
                 session_cart_items = {}
                 for item in user_cart_items:
                     item_key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
@@ -842,30 +830,28 @@ async def login_user(
                 session_service.update_session_data(user_session.session_id, {
                     'cart_items': session_cart_items
                 })
-
                 logger.info(f"✅ Total {migrated_items_count} cart items migrated successfully for user {user['id']}")
 
-            # Set session cookie
             if user_session and response:
                 session_config = config.get_session_config()
                 session_timeout = session_config.get('user_session_duration', 2592000)
-                response.set_cookie(
-                    key="session_id",
-                    value=user_session.session_id,
-                    max_age=session_timeout,
-                    httponly=True,
-                    secure=not config.debug_mode,
-                    samesite="Lax",
-                    path="/"
-                )
+                cookie_value = f"session_id={user_session.session_id}; Max-Age={session_timeout}; HttpOnly; Path=/; SameSite=Lax"
+                if not config.debug_mode:
+                    cookie_value += "; Secure"
+
+                response.headers.append("Set-Cookie", cookie_value)
+                guest_cookie = f"guest_id={user_session.session_id}; Max-Age={session_timeout}; HttpOnly; Path=/; SameSite=Lax"
+                if not config.debug_mode:
+                    guest_cookie += "; Secure"
+                response.headers.append("Set-Cookie", guest_cookie)
+                response.headers["X-Session-ID"] = user_session.session_id
+                response.headers["X-Secure-Session-ID"] = user_session.session_id
+
                 request.state.session = user_session
                 request.state.session_id = user_session.session_id
-                logger.info(f"Set user session cookie for user {user['id']}: {user_session.session_id}")
+                logger.info(f"✅ Chrome session cookies set for user {user['id']}: {user_session.session_id}")
 
-            # Update last login
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
-
-            # Create access token
             token_expiry_hours = session_config['token_expiry_hours']
             access_token = create_access_token(
                 data={
