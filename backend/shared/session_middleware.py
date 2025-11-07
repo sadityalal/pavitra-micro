@@ -3,7 +3,9 @@ from fastapi.responses import JSONResponse
 from typing import Optional, Callable, Any
 from datetime import datetime, timedelta
 import uuid
+import json
 from shared import get_logger, config
+from .redis_client import redis_client
 from .session_service import session_service, SessionType, SessionData
 import re
 
