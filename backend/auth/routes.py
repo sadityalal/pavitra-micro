@@ -1082,6 +1082,29 @@ async def refresh_user_session(request: Request, response: Response):
         )
 
 
+@router.get("/debug/session-test")
+async def debug_session_test(request: Request):
+    """Debug endpoint to test session handling"""
+    session_id = get_session_id(request)
+    session = get_session(request)
+    is_new = is_new_session(request)
+
+    cookies = dict(request.cookies)
+    headers = dict(request.headers)
+
+    return {
+        "session_id": session_id,
+        "session_exists": session is not None,
+        "is_new_session": is_new,
+        "session_type": session.session_type if session else None,
+        "user_id": session.user_id if session else None,
+        "guest_id": session.guest_id if session else None,
+        "cookies_received": cookies,
+        "headers_received": {k: v for k, v in headers.items() if k.lower() not in ['authorization', 'cookie']},
+        "client_ip": request.client.host if request.client else 'unknown'
+    }
+
+
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
     try:

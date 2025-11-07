@@ -141,7 +141,21 @@ def invalidate_user_cache(user_id: int):
 
 async def get_current_user_or_session(request: Request):
     try:
-        # First, try to get authenticated user
+        # FIRST: Check if there's already a session from middleware
+        existing_session = get_session(request)
+        existing_session_id = get_session_id(request)
+
+        if existing_session and existing_session_id:
+            logger.info(f"✅ Using existing session from middleware: {existing_session_id}")
+            return {
+                "user_id": existing_session.user_id,
+                "is_guest": existing_session.session_type == SessionType.GUEST,
+                "session": existing_session,
+                "session_id": existing_session_id,
+                "guest_id": existing_session.guest_id
+            }
+
+        # SECOND: Try to get authenticated user (only if no existing session)
         try:
             current_user = await get_current_user(request)
             if current_user and current_user.get('sub'):
@@ -149,7 +163,7 @@ async def get_current_user_or_session(request: Request):
                 ip_address = request.client.host if request.client else 'unknown'
                 user_agent = request.headers.get("user-agent", "")
 
-                # Get or create user session - ONE SESSION PER USER
+                # Get or create user session
                 session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
                 if session:
                     return {
@@ -162,7 +176,7 @@ async def get_current_user_or_session(request: Request):
             # User not authenticated, continue as guest
             pass
 
-        # Handle guest session - get existing or create new
+        # THIRD: Handle guest session (only if no existing session)
         guest_id = request.cookies.get("guest_id")
         if not guest_id:
             guest_id = str(uuid.uuid4())
@@ -180,7 +194,7 @@ async def get_current_user_or_session(request: Request):
                 "guest_id": guest_id
             }
 
-        # Fallback - minimal session data (should rarely happen)
+        # Fallback
         return {
             "user_id": None,
             "is_guest": True,
@@ -1651,3 +1665,34 @@ async def update_user_status(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update user status"
         )
+
+
+@router.get("/debug/raw-session")
+async def debug_raw_session(request: Request):
+    """Debug endpoint to check raw session data without SessionData model"""
+    session_id = get_session_id(request)
+
+    if not session_id:
+        return {"error": "No session ID"}
+
+    import json
+
+    # Get raw data from Redis
+    key = f"secure_session:{session_id}"
+    raw_data = redis_client.get(key)
+
+    if not raw_data:
+        return {"error": "No session data in Redis"}
+
+    try:
+        session_dict = json.loads(raw_data)
+        return {
+            "session_id": session_id,
+            "raw_cart_items": session_dict.get('cart_items'),
+            "raw_cart_items_type": str(type(session_dict.get('cart_items'))),
+            "raw_cart_items_count": len(session_dict.get('cart_items', {})),
+            "full_session_keys": list(session_dict.keys())
+        }
+    except Exception as e:
+        return {"error": f"Failed to parse: {e}"}
+

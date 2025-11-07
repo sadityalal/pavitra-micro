@@ -389,45 +389,138 @@ class SecureSessionService:
                     security_token: str = None) -> Optional[SessionData]:
         try:
             if not session_id:
+                logger.debug("No session ID provided")
                 return None
+
             if not redis_client._ensure_connection():
+                logger.warning("Redis not available for session retrieval")
                 return None
 
             key = self._session_key(session_id)
             data = redis_client.get(key)
+
             if data:
                 try:
                     session_dict = json.loads(data)
+                    logger.info(f"🔍 DEBUG: Loading session {session_id}")
+                    logger.info(f"🔍 DEBUG: Raw cart_items: {session_dict.get('cart_items')}")
+                    logger.info(f"🔍 DEBUG: Cart items type: {type(session_dict.get('cart_items'))}")
+
+                    # Convert string dates back to datetime objects
                     session_dict['created_at'] = datetime.fromisoformat(session_dict['created_at'])
                     session_dict['last_activity'] = datetime.fromisoformat(session_dict['last_activity'])
                     session_dict['expires_at'] = datetime.fromisoformat(session_dict['expires_at'])
+
+                    # Convert session type string to enum
                     session_type_str = session_dict.get('session_type', 'guest')
                     session_dict['session_type'] = SessionType.USER if session_type_str == 'user' else SessionType.GUEST
 
+                    # Ensure cart_items is never None
                     if session_dict.get('cart_items') is None:
+                        logger.warning(f"❌ DEBUG: Cart items is None, setting to empty dict")
                         session_dict['cart_items'] = {}
+                    else:
+                        logger.info(f"✅ DEBUG: Cart items preserved: {len(session_dict['cart_items'])} items")
 
+                    # Ensure ip_addresses is never None
                     if session_dict.get('ip_addresses') is None:
                         session_dict['ip_addresses'] = []
 
                     session_dict['session_id'] = session_id
-                    session = SessionData(**session_dict)
 
+                    logger.info(
+                        f"🔍 DEBUG: Session dict before SessionData creation: cart_items = {session_dict.get('cart_items')}")
+
+                    # Create SessionData object
+                    session = SessionData(**session_dict)
+                    logger.info(f"✅ DEBUG: Session created successfully with {len(session.cart_items)} cart items")
+
+                    # Validate session security
                     if not self._validate_session_security(session, request_ip, request_user_agent, security_token):
+                        logger.warning(f"Session security validation failed for {session_id}")
                         return None
 
+                    # Rotate session if needed
                     if self.enable_session_rotation and self._should_rotate_session(session):
+                        logger.info(f"Rotating session {session_id}")
                         return self.rotate_session(session_id)
 
+                    # Update session activity
                     self._update_session_activity_only(session_id)
+                    logger.info(f"✅ DEBUG: Final session has {len(session.cart_items)} cart items")
                     return session
+
                 except Exception as parse_error:
-                    logger.error(f"Failed to parse session data: {parse_error}")
+                    logger.error(f"Failed to parse session data for {session_id}: {parse_error}")
+                    import traceback
+                    logger.error(f"Traceback: {traceback.format_exc()}")
                     return None
-            return None
+            else:
+                logger.debug(f"Session not found in Redis: {session_id}")
+                return None
+
         except Exception as e:
-            logger.error(f"Error getting session: {e}")
+            logger.error(f"Error getting session {session_id}: {e}")
+            import traceback
+            logger.error(f"Traceback: {traceback.format_exc()}")
             return None
+
+    def find_guest_session_by_ip(self, ip_address: str, user_agent: str) -> Optional[SessionData]:
+        """Find an existing guest session for the given IP address and user agent"""
+        try:
+            if not redis_client._ensure_connection():
+                return None
+
+            # Search for guest sessions with this IP address
+            pattern = f"{self._redis_session_prefix}*"
+            all_keys = redis_client.keys(pattern)
+
+            for key in all_keys:
+                try:
+                    data = redis_client.get(key)
+                    if data:
+                        session_dict = json.loads(data)
+
+                        # Check if it's a guest session with matching IP
+                        session_type = session_dict.get('session_type')
+                        session_ip = session_dict.get('ip_address')
+                        session_user_agent = session_dict.get('user_agent')
+
+                        if (session_type == 'guest' and
+                                session_ip == ip_address and
+                                session_user_agent == user_agent):
+
+                            # Found matching session, validate it's not expired
+                            expires_at = datetime.fromisoformat(session_dict['expires_at'])
+                            if datetime.utcnow() < expires_at:
+                                session_id = key.replace(self._redis_session_prefix, "")
+
+                                # Convert to SessionData object
+                                session_dict['created_at'] = datetime.fromisoformat(session_dict['created_at'])
+                                session_dict['last_activity'] = datetime.fromisoformat(session_dict['last_activity'])
+                                session_dict['expires_at'] = datetime.fromisoformat(session_dict['expires_at'])
+                                session_dict['session_type'] = SessionType.GUEST
+                                session_dict['session_id'] = session_id
+
+                                if session_dict.get('cart_items') is None:
+                                    session_dict['cart_items'] = {}
+                                if session_dict.get('ip_addresses') is None:
+                                    session_dict['ip_addresses'] = []
+
+                                session = SessionData(**session_dict)
+                                logger.info(f"Found existing guest session for IP {ip_address}: {session_id}")
+                                return session
+
+                except Exception as e:
+                    logger.debug(f"Error checking session {key}: {e}")
+                    continue
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding guest session by IP: {e}")
+            return None
+
 
     def _validate_session_security(self, session: SessionData, request_ip: str, request_user_agent: str,
                                    security_token: str) -> bool:
