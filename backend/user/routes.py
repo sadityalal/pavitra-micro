@@ -896,7 +896,6 @@ async def add_to_cart(
         if quantity < 1:
             raise HTTPException(status_code=400, detail="Quantity must be at least 1")
 
-        # Validate product exists and is available
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT id, name, stock_quantity, stock_status, max_cart_quantity, base_price
@@ -926,7 +925,7 @@ async def add_to_cart(
         session_id = current_user_or_session.get('session_id')
 
         if not current_user_or_session.get('is_guest'):
-            # LOGGED IN USER - this part works
+            # User cart logic (unchanged)
             user_id = current_user_or_session['user_id']
             with db.get_cursor() as cursor:
                 cursor.execute("""
@@ -950,34 +949,35 @@ async def add_to_cart(
 
                 redis_client.delete(f"user_cart:{user_id}")
                 return {"message": "Product added to cart", "session_based": False}
-
         else:
-            # GUEST USER - FIXED VERSION
+            # GUEST CART LOGIC - ENHANCED WITH DEBUGGING
             if not session_id or not session:
-                # Create new guest session if none exists
                 guest_id = str(uuid.uuid4())
                 ip_address = request.client.host if request.client else 'unknown'
                 user_agent = request.headers.get("user-agent", "")
-
                 session = session_service.get_or_create_guest_session(guest_id, ip_address, user_agent)
                 if session:
                     session_id = session.session_id
                     request.state.session = session
                     request.state.session_id = session_id
+                    logger.info(f"🆕 Created new guest session: {session_id}")
                 else:
                     raise HTTPException(status_code=500, detail="Failed to create guest session")
 
-            # Get current cart items
+            # Get current cart items with proper initialization
             cart_items = {}
             if session and session.cart_items:
                 cart_items = session.cart_items.copy()
+                logger.info(f"📥 Loaded {len(cart_items)} items from session cart")
             elif session_id:
-                # Load fresh session data from Redis
+                # Try to load session directly
                 loaded_session = session_service.get_session(session_id)
                 if loaded_session and loaded_session.cart_items:
                     cart_items = loaded_session.cart_items.copy()
+                    logger.info(f"📥 Loaded {len(cart_items)} items from session ID lookup")
+                else:
+                    logger.warning(f"❌ No cart items found in session {session_id}")
 
-            # Generate item key
             item_key = f"{product_id}_{variation_id}" if variation_id else str(product_id)
 
             # Update cart items
@@ -986,23 +986,29 @@ async def add_to_cart(
                 if new_quantity > max_quantity:
                     raise HTTPException(status_code=400, detail=f"Maximum {max_quantity} items can be added")
                 cart_items[item_key]['quantity'] = new_quantity
+                logger.info(f"➕ Updated existing item {item_key} to quantity {new_quantity}")
             else:
                 cart_items[item_key] = {
                     'product_id': product_id,
                     'variation_id': variation_id,
                     'quantity': quantity
                 }
+                logger.info(f"🆕 Added new item {item_key} with quantity {quantity}")
 
-            # CRITICAL FIX: Update session with cart items
+            # DEBUG: Log cart state before saving
+            logger.info(f"🛒 Cart before save - Session: {session_id}, Items: {len(cart_items)}")
+
+            # Save to session with enhanced error handling
             success = session_service.update_session_data(session_id, {"cart_items": cart_items})
 
             if success:
-                # Verify the update worked
+                # Verify the save worked by reading back the session
                 updated_session = session_service.get_session(session_id)
                 actual_cart_count = len(
                     updated_session.cart_items) if updated_session and updated_session.cart_items else 0
 
-                logger.info(f"✅ Guest cart updated: session_id={session_id}, items_count={actual_cart_count}")
+                logger.info(
+                    f"✅ Guest cart updated successfully: session_id={session_id}, items_count={actual_cart_count}")
 
                 return {
                     "message": "Product added to cart",
@@ -1012,6 +1018,14 @@ async def add_to_cart(
                 }
             else:
                 logger.error(f"❌ Failed to update guest cart in session: {session_id}")
+                # Try emergency fallback - save to a simple Redis key
+                try:
+                    emergency_key = f"emergency_cart:{session_id}"
+                    redis_client.setex(emergency_key, 3600, json.dumps(cart_items))
+                    logger.info(f"🆘 Saved emergency cart for session: {session_id}")
+                except Exception as emergency_error:
+                    logger.error(f"❌ Emergency cart save also failed: {emergency_error}")
+
                 raise HTTPException(status_code=500, detail="Failed to update cart")
 
     except HTTPException:

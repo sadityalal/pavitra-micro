@@ -280,6 +280,14 @@ class SecureSessionService:
             else:
                 expires_at = now + timedelta(seconds=self.guest_session_duration)
 
+            # ENSURE CART_ITEMS IS PROPERLY INITIALIZED - FIX FOR GUEST CART
+            cart_items = session_data.get('cart_items', {})
+            if cart_items is None:
+                cart_items = {}
+            elif not isinstance(cart_items, dict):
+                logger.warning(f"Cart items is not a dict, converting: {type(cart_items)}")
+                cart_items = {}
+
             security_token = None
             if self.require_security_token and session_data.get('ip_address'):
                 security_token = self._generate_security_token(session_id, session_data.get('ip_address', 'unknown'))
@@ -295,10 +303,6 @@ class SecureSessionService:
                     session_data.get('ip_address', 'unknown')
                 )
 
-            cart_items = session_data.get('cart_items', {})
-            if cart_items is None:
-                cart_items = {}
-
             ip_addresses = session_data.get('ip_addresses', [])
             current_ip = session_data.get('ip_address')
             if current_ip and current_ip not in ip_addresses:
@@ -309,7 +313,7 @@ class SecureSessionService:
                 session_type=session_data['session_type'],
                 user_id=session_data.get('user_id'),
                 guest_id=session_data.get('guest_id', str(uuid.uuid4())),
-                cart_items=cart_items,
+                cart_items=cart_items,  # USE THE ENSURED CART_ITEMS
                 created_at=now,
                 last_activity=now,
                 ip_address=session_data.get('ip_address', 'unknown'),
@@ -327,6 +331,10 @@ class SecureSessionService:
             session_dict['last_activity'] = session_dict['last_activity'].isoformat()
             session_dict['expires_at'] = session_dict['expires_at'].isoformat()
 
+            # ENSURE CART_ITEMS IS SAVED PROPERLY
+            if session_dict.get('cart_items') is None:
+                session_dict['cart_items'] = {}
+
             key = self._session_key(session_id)
             expiry_seconds = self.user_session_duration if session.session_type == SessionType.USER else self.guest_session_duration
 
@@ -336,34 +344,36 @@ class SecureSessionService:
                     redis_success = redis_client.setex(
                         key,
                         expiry_seconds,
-                        json.dumps(session_dict)
+                        json.dumps(session_dict, default=str)  # ADD default=str FOR BETTER SERIALIZATION
                     )
+                    if redis_success:
+                        logger.info(
+                            f"✅ SessionService: Created {session.session_type.value} session: {session_id} with {len(cart_items)} cart items")
+                    else:
+                        logger.error(f"❌ SessionService: Failed to save session to Redis: {session_id}")
             except Exception as redis_error:
                 logger.warning(f"Redis error but continuing: {redis_error}")
 
-            # Store user-session mapping for easy lookup
             if session.user_id and redis_client._ensure_connection():
                 user_session_key = f"{self._redis_user_session_prefix}{session.user_id}"
                 redis_client.setex(user_session_key, expiry_seconds, session_id)
 
-            # Store guest-session mapping
             if session.guest_id and redis_client._ensure_connection():
                 guest_session_key = f"{self._redis_guest_session_prefix}{session.guest_id}"
                 redis_client.setex(guest_session_key, expiry_seconds, session_id)
 
-            logger.info(
-                f"✅ SessionService: Created {session.session_type.value} session: {session_id} for user {session.user_id}")
             return session
 
         except Exception as e:
             logger.error(f"❌ Failed to create session: {e}")
+            # Emergency fallback session
             emergency_id = f"emergency_{uuid.uuid4().hex}"
             return SessionData(
                 session_id=emergency_id,
                 session_type=session_data.get('session_type', SessionType.GUEST),
                 user_id=session_data.get('user_id'),
                 guest_id=session_data.get('guest_id', str(uuid.uuid4())),
-                cart_items=session_data.get('cart_items', {}),
+                cart_items=session_data.get('cart_items', {}),  # Ensure cart_items in emergency session
                 created_at=datetime.utcnow(),
                 last_activity=datetime.utcnow(),
                 ip_address=session_data.get('ip_address', 'unknown'),
@@ -499,7 +509,7 @@ class SecureSessionService:
             key = self._session_key(session_id)
             expiry = self.user_session_duration if session.session_type == SessionType.USER else self.guest_session_duration
             success = redis_client.setex(key, expiry, json.dumps(session_dict))
-            return success
+            return self.update_session_data(session_id, updates)
         except Exception as e:
             logger.error(f"Failed to update session data {session_id}: {e}")
             return False
@@ -660,32 +670,59 @@ class SecureSessionService:
         try:
             if not self._check_rate_limit(f"update:{session_id}", "update"):
                 return False
+
+            # Get the current session first
+            session = self.get_session(session_id)
+            if not session:
+                logger.error(f"Session not found for update: {session_id}")
+                return False
+
+            # Apply updates to session object
+            for key, value in updates.items():
+                if hasattr(session, key):
+                    setattr(session, key, value)
+
+            # Update activity timestamp
+            session.last_activity = datetime.utcnow()
+
+            # Convert session to dictionary for Redis storage
+            session_dict = session.model_dump()
+            session_dict['session_type'] = session_dict['session_type'].value
+            session_dict['created_at'] = session_dict['created_at'].isoformat()
+            session_dict['last_activity'] = session_dict['last_activity'].isoformat()
+            session_dict['expires_at'] = session_dict['expires_at'].isoformat()
+
+            # Ensure cart_items is never None
+            if session_dict.get('cart_items') is None:
+                session_dict['cart_items'] = {}
+
             key = self._session_key(session_id)
-            if not redis_client._ensure_connection():
+            expiry = self.user_session_duration if session.session_type == SessionType.USER else self.guest_session_duration
+
+            # Save to Redis with proper error handling
+            redis_success = False
+            try:
+                if redis_client._ensure_connection():
+                    redis_success = redis_client.setex(
+                        key,
+                        expiry,
+                        json.dumps(session_dict, default=str)
+                    )
+                    if redis_success:
+                        logger.info(
+                            f"✅ SessionService: Successfully updated session {session_id} with {len(updates.get('cart_items', {}))} cart items")
+                    else:
+                        logger.error(f"❌ SessionService: Redis setex failed for session {session_id}")
+                else:
+                    logger.error(f"❌ SessionService: Redis not available for session {session_id}")
+            except Exception as redis_error:
+                logger.error(f"❌ SessionService: Redis error updating session {session_id}: {redis_error}")
                 return False
 
-            data = redis_client.get(key)
-            if not data:
-                return False
-            session_dict = json.loads(data)
-            for update_key, update_value in updates.items():
-                if update_key in ['cart_items', 'user_agent', 'ip_address', 'ip_addresses']:
-                    session_dict[update_key] = update_value
-
-            session_dict['last_activity'] = datetime.utcnow().isoformat()
-            session_type = SessionType(session_dict.get('session_type', 'guest'))
-            expiry = self.user_session_duration if session_type == SessionType.USER else self.guest_session_duration
-            success = redis_client.setex(key, expiry, json.dumps(session_dict))
-
-            if success:
-                logger.info(f"✅ Successfully updated session {session_id} with cart_items: {len(updates.get('cart_items', {}))} items")
-            else:
-                logger.error(f"❌ Failed to save session updates to Redis: {session_id}")
-
-            return success
+            return redis_success
 
         except Exception as e:
-            logger.error(f"❌ Failed to update session data {session_id}: {e}")
+            logger.error(f"❌ SessionService: Failed to update session data {session_id}: {e}")
             return False
 
     def delete_session(self, session_id: str) -> bool:
