@@ -2,35 +2,38 @@ import { userApi } from './api';
 import { sessionManager } from './api';
 
 export const cartService = {
-  getCart: async () => {
-  try {
-    const currentSession = sessionManager.getSession();
-    const token = localStorage.getItem('auth_token');
+  // In frontend/src/services/cartService.js - Update the getCart method
 
-    console.log('🛒 GET CART - Session:', currentSession, 'Token:', !!token);
+    getCart: async () => {
+      try {
+        const currentSession = sessionManager.getSession();
+        const token = localStorage.getItem('auth_token');
+        console.log('🛒 GET CART - Session:', currentSession, 'Token:', !!token);
 
-    const response = await userApi.get('/cart');
-    console.log('🛒 GET CART - Response:', response.data);
+        const response = await userApi.get('/cart');
+        console.log('🛒 GET CART - Response:', response.data);
 
-    // Also try the debug endpoint
-    try {
-      const debugResponse = await userApi.get('/cart/debug');
-      console.log('🛒 DEBUG CART - Response:', debugResponse.data);
-    } catch (debugError) {
-      console.log('🛒 DEBUG endpoint failed:', debugError);
-    }
+        // Only try debug endpoint if we have a token (authenticated)
+        if (token) {
+          try {
+            const debugResponse = await userApi.get('/cart/debug');
+            console.log('🛒 DEBUG CART - Response:', debugResponse.data);
+          } catch (debugError) {
+            console.log('🛒 DEBUG endpoint failed or not available:', debugError.message);
+          }
+        }
 
-    return response.data;
-  } catch (error) {
-    console.error('🛒 GET CART - Error:', error);
-    console.error('🛒 Error response:', error.response?.data);
-    return {
-      items: [],
-      subtotal: 0,
-      total_items: 0
-    };
-  }
-},
+        return response.data;
+      } catch (error) {
+        console.error('🛒 GET CART - Error:', error);
+        console.error('🛒 Error response:', error.response?.data);
+        return {
+          items: [],
+          subtotal: 0,
+          total_items: 0
+        };
+      }
+    },
 
   addToCart: async (productId, quantity = 1, variationId = null) => {
     try {
@@ -151,7 +154,8 @@ export const cartService = {
     try {
       const token = localStorage.getItem('auth_token');
       if (!token && !sessionManager.getSession()) {
-        console.log('🛒 Ensuring guest session...');
+        console.log('🔄 Ensuring guest session...');
+        // Make a simple API call to trigger session creation
         const response = await fetch('/api/v1/users/health', {
           credentials: 'include',
           headers: {
@@ -164,8 +168,8 @@ export const cartService = {
         if (sessionId) {
           sessionManager.setSession(sessionId);
           console.log('✅ Guest session ensured:', sessionId);
-          return true;
         }
+        return true;
       }
       return true;
     } catch (error) {

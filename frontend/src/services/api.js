@@ -62,14 +62,7 @@ const createApiInstance = (servicePath = '') => {
       const sharedSessionId = sessionManager.getSession();
       const token = localStorage.getItem('auth_token');
 
-      console.log('🔗 API Request:', {
-        url: config.url,
-        sessionId: sharedSessionId,
-        hasToken: !!token,
-        withCredentials: config.withCredentials
-      });
-
-      // Send session ID in headers AND rely on cookies
+      // Always include session headers
       if (sharedSessionId) {
         config.headers['X-Session-ID'] = sharedSessionId;
         config.headers['X-Secure-Session-ID'] = sharedSessionId;
@@ -78,6 +71,9 @@ const createApiInstance = (servicePath = '') => {
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
+
+      // Ensure cookies are sent
+      config.withCredentials = true;
 
       return config;
     },

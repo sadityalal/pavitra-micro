@@ -70,7 +70,9 @@ export const AuthProvider = ({ children }) => {
     checkAuthStatus();
   }, []);
 
-  const login = async (credentials) => {
+  // In frontend/src/contexts/AuthContext.js - Update the login function
+
+const login = async (credentials) => {
   try {
     setLoading(true);
     console.log('🔐 Attempting login with credentials:', {
@@ -82,6 +84,7 @@ export const AuthProvider = ({ children }) => {
 
     if (response.access_token) {
       localStorage.setItem('auth_token', response.access_token);
+
       const userData = {
         id: 'user_id',
         email: credentials.login_id,
@@ -97,7 +100,6 @@ export const AuthProvider = ({ children }) => {
 
       console.log('✅ Login successful, attempting cart migration...');
 
-      // Call explicit cart migration after successful login
       try {
         const migrationResponse = await fetch('/api/v1/users/cart/migrate-guest-to-user', {
           method: 'POST',
@@ -111,12 +113,21 @@ export const AuthProvider = ({ children }) => {
         if (migrationResponse.ok) {
           const migrationResult = await migrationResponse.json();
           console.log('🔄 Cart migration result:', migrationResult);
-          if (migrationResult.items_migrated > 0) {
+
+          if (migrationResult.success && migrationResult.items_migrated > 0) {
             success(`Cart migrated successfully! ${migrationResult.items_migrated} items added to your account.`);
+          } else if (migrationResult.success) {
+            console.log('🔄 Cart migration successful but no items to migrate');
+          } else {
+            console.warn('🔄 Cart migration failed:', migrationResult.message);
           }
+        } else {
+          console.warn('🔄 Cart migration endpoint returned:', migrationResponse.status);
+          // Don't show error to user - this is not critical
         }
       } catch (migrationError) {
-        console.warn('Cart migration failed, but login was successful:', migrationError);
+        console.warn('🔄 Cart migration failed, but login was successful:', migrationError);
+        // Don't show error to user - this is not critical
       }
 
       console.log('✅ Login successful, guest session cleared');
@@ -136,7 +147,15 @@ export const AuthProvider = ({ children }) => {
       throw new Error('No access token received from server');
     }
   } catch (err) {
-    // ... existing error handling ...
+    console.error('❌ Login failed:', err);
+    if (err.response?.data?.detail) {
+      error(err.response.data.detail);
+    } else if (err.message) {
+      error(err.message);
+    } else {
+      error('Login failed. Please try again.');
+    }
+    throw err;
   } finally {
     setLoading(false);
   }

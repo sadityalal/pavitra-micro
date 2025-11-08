@@ -24,18 +24,19 @@ app.add_middleware(SecureSessionMiddleware)
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config.cors_origins,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8082", "http://127.0.0.1:8082"],  # Explicit origins
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=[
         "Content-Type",
         "Authorization",
         "X-Requested-With",
+        "X-Session-ID",
         "X-Secure-Session-ID",
-        "X-Security-Token",
         "X-CSRF-Token",
         "Cookie"
     ],
+    expose_headers=["set-cookie", "X-Session-ID", "X-Secure-Session-ID"],
     max_age=600,
 )
 

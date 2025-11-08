@@ -229,16 +229,15 @@ class SecureSessionService:
             logger.error(f"Failed to get or create user session: {e}")
             return None
 
-    def get_or_create_guest_session(self, guest_id: str, ip_address: str, user_agent: str) -> Optional[SessionData]:
-        """Get existing guest session or create new one"""
-        try:
-            # Try to get existing guest session
-            existing_session = self.get_session_by_guest_id(guest_id)
+    # In backend/shared/session_service.py
 
+    def get_or_create_guest_session(self, guest_id: str, ip_address: str, user_agent: str) -> Optional[SessionData]:
+        try:
+            # First try to get session by guest_id
+            existing_session = self.get_session_by_guest_id(guest_id)
             if existing_session:
                 logger.info(f"✅ Using existing guest session: {existing_session.session_id}")
-
-                # Update IP if different
+                # Update activity and IP info
                 if ip_address and ip_address not in existing_session.ip_addresses:
                     existing_session.ip_addresses.append(ip_address)
                     self._update_session_data(existing_session.session_id, {
@@ -246,26 +245,37 @@ class SecureSessionService:
                         'ip_address': ip_address,
                         'user_agent': user_agent
                     })
-
                 self.update_session_activity(existing_session.session_id)
                 return existing_session
-            else:
-                # Create new guest session
-                logger.info(f"🆕 Creating new guest session")
-                session_data = {
-                    'session_type': SessionType.GUEST,
-                    'user_id': None,
-                    'guest_id': guest_id,
-                    'ip_address': ip_address,
-                    'user_agent': user_agent,
-                    'cart_items': {},
-                    'ip_addresses': [ip_address] if ip_address else []
-                }
-                return self.create_session(session_data)
+
+            # If no session by guest_id, try to find by IP/user_agent
+            existing_by_ip = self.find_guest_session_by_ip(ip_address, user_agent)
+            if existing_by_ip:
+                logger.info(f"🔍 Found guest session by IP: {existing_by_ip.session_id}")
+                # Update guest_id to maintain consistency
+                self._update_session_data(existing_by_ip.session_id, {
+                    'guest_id': guest_id
+                })
+                self.update_session_activity(existing_by_ip.session_id)
+                return existing_by_ip
+
+            # Create new guest session
+            logger.info(f"🆕 Creating new guest session for guest_id: {guest_id}")
+            session_data = {
+                'session_type': SessionType.GUEST,
+                'user_id': None,
+                'guest_id': guest_id,
+                'ip_address': ip_address,
+                'user_agent': user_agent,
+                'cart_items': {},
+                'ip_addresses': [ip_address] if ip_address else []
+            }
+            return self.create_session(session_data)
 
         except Exception as e:
             logger.error(f"Failed to get or create guest session: {e}")
-            return None
+            # Emergency fallback
+            return self._create_emergency_session(guest_id, ip_address, user_agent)
 
     def create_session(self, session_data: Dict[str, Any]) -> Optional[SessionData]:
         try:

@@ -52,11 +52,9 @@ class SecureSessionMiddleware:
             session = None
 
             should_handle_session = self._should_handle_session(request)
-            logger.debug(
-                f"Session handling for {request.url.path}: should_handle={should_handle_session}, session_id={session_id}")
 
             if should_handle_session:
-                # FIRST: Try to get existing session by ID
+                # FIRST: Try to get existing session
                 if session_id:
                     session = session_service.get_session(
                         session_id,
@@ -65,32 +63,14 @@ class SecureSessionMiddleware:
                         security_token=security_token
                     )
                     if session:
-                        logger.debug(f"✅ Using existing session from ID: {session_id}")
+                        logger.debug(f"✅ Using existing session: {session_id}")
                     else:
-                        logger.debug(f"❌ Provided session ID invalid: {session_id}")
+                        logger.debug(f"❌ Invalid session ID: {session_id}")
                         session_id = None
                         session = None
 
-                # SECOND: If no session found, check for authenticated user
+                # SECOND: If no valid session, create guest session
                 if not session:
-                    try:
-                        from .auth_middleware import get_current_user
-                        current_user = await get_current_user(request)
-                        if current_user and current_user.get('sub'):
-                            user_id = int(current_user['sub'])
-                            ip_address = request.client.host if request.client else 'unknown'
-                            user_agent = request.headers.get("user-agent", "")
-                            session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
-                            if session:
-                                session_id = session.session_id
-                                logger.info(f"🔄 Created/retrieved user session for user {user_id}: {session_id}")
-                    except Exception as auth_error:
-                        # User not authenticated, continue as guest
-                        pass
-
-                # THIRD: Handle guest session (only if no existing session)
-                if not session:
-                    # Get or create guest ID from cookies
                     guest_id = request.cookies.get("guest_id")
                     if not guest_id:
                         guest_id = str(uuid.uuid4())
@@ -99,19 +79,12 @@ class SecureSessionMiddleware:
                     ip_address = request.client.host if request.client else 'unknown'
                     user_agent = request.headers.get("user-agent", "")
 
-                    # Try to find existing guest session first
-                    existing_session = self._find_existing_guest_session(ip_address, user_agent)
-                    if existing_session:
-                        session = existing_session
+                    # Always create guest session if none exists
+                    session = session_service.get_or_create_guest_session(guest_id, ip_address, user_agent)
+                    if session:
                         session_id = session.session_id
-                        logger.info(f"🔍 Reusing existing guest session: {session_id}")
-                    else:
-                        # Create new guest session
-                        session = session_service.get_or_create_guest_session(guest_id, ip_address, user_agent)
-                        if session:
-                            session_id = session.session_id
-                            is_new_session = True
-                            logger.info(f"🆕 Created new guest session: {session_id}")
+                        is_new_session = True
+                        logger.info(f"🆕 Created new guest session: {session_id}")
 
                 request.state.session = session
                 request.state.session_id = session_id
@@ -279,6 +252,8 @@ class SecureSessionMiddleware:
 
         message["headers"] = headers
 
+    # In backend/shared/session_middleware.py
+
     def _build_secure_cookie(self, session_id: str, session: SessionData) -> str:
         if session and session.session_type == SessionType.USER:
             max_age = session_service.user_session_duration
@@ -289,15 +264,28 @@ class SecureSessionMiddleware:
             f"{self.session_cookie_name}={session_id}",
             f"Max-Age={max_age}",
             f"HttpOnly={str(self.cookie_httponly).lower()}",
-            f"SameSite={self.cookie_samesite}",
+            f"SameSite=None" if self.cookie_secure else "SameSite=Lax",  # Changed for Chrome compatibility
             "Path=/"
         ]
 
-        if self.cookie_secure:
-            if config.debug_mode:
-                cookie_parts.append("Secure")
-            else:
-                cookie_parts.append("Secure")
+        # Always set Secure flag in production, but allow HTTP in development for Chrome
+        if self.cookie_secure or not config.debug_mode:
+            cookie_parts.append("Secure")
+
+        return "; ".join(cookie_parts)
+
+    def _build_guest_cookie(self, guest_id: str) -> str:
+        max_age = session_service.guest_session_duration
+        cookie_parts = [
+            f"guest_id={guest_id}",
+            f"Max-Age={max_age}",
+            f"HttpOnly={str(self.cookie_httponly).lower()}",
+            f"SameSite=None" if self.cookie_secure else "SameSite=Lax",  # Changed for Chrome compatibility
+            "Path=/"
+        ]
+
+        if self.cookie_secure or not config.debug_mode:
+            cookie_parts.append("Secure")
 
         return "; ".join(cookie_parts)
 

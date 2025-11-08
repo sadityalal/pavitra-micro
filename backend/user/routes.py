@@ -937,6 +937,160 @@ async def get_cart(
         return CartResponse(items=[], subtotal=0.0, total_items=0)
 
 
+@router.post("/cart/migrate-guest-to-user")
+async def explicit_migrate_guest_cart_to_user(
+        request: Request,
+        current_user: dict = Depends(get_current_user)
+):
+    try:
+        user_id = current_user['sub']
+        logger.info(f"🔄 Explicit cart migration requested for user {user_id}")
+
+        ip_address = request.client.host if request.client else 'unknown'
+        user_agent = request.headers.get("user-agent", "")
+        total_migrated = 0
+
+        with db.get_cursor() as cursor:
+            # Method 1: Check current session first
+            current_session = get_session(request)
+            if current_session and current_session.session_type == SessionType.GUEST:
+                if current_session.cart_items:
+                    migrated_count = migrate_guest_cart_to_user_database(
+                        current_session, user_id, cursor
+                    )
+                    total_migrated += migrated_count
+                    logger.info(f"🔄 Explicit migration - Current session: {migrated_count} items")
+                    # Clear guest cart
+                    session_service.update_session_data(current_session.session_id, {
+                        'cart_items': {}
+                    })
+
+            # Method 2: Find guest session by IP and User-Agent (if no items migrated yet)
+            if total_migrated == 0:
+                guest_session = session_service.find_guest_session_by_ip(ip_address, user_agent)
+                if guest_session and guest_session.cart_items:
+                    migrated_count = migrate_guest_cart_to_user_database(
+                        guest_session, user_id, cursor
+                    )
+                    total_migrated += migrated_count
+                    logger.info(f"🔄 Explicit migration - IP-based: {migrated_count} items")
+                    # Clear guest cart
+                    session_service.update_session_data(guest_session.session_id, {
+                        'cart_items': {}
+                    })
+
+            # Method 3: Check guest_id cookie as fallback
+            if total_migrated == 0:
+                guest_id = request.cookies.get("guest_id")
+                if guest_id:
+                    guest_session = session_service.get_session_by_guest_id(guest_id)
+                    if guest_session and guest_session.cart_items:
+                        migrated_count = migrate_guest_cart_to_user_database(
+                            guest_session, user_id, cursor
+                        )
+                        total_migrated += migrated_count
+                        logger.info(f"🔄 Explicit migration - guest_id-based: {migrated_count} items")
+                        # Clear guest cart
+                        session_service.update_session_data(guest_session.session_id, {
+                            'cart_items': {}
+                        })
+
+        # Clear user cart cache
+        redis_client.delete(f"user_cart:{user_id}")
+
+        # Refresh the user's session cart data from database
+        user_session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
+        if user_session:
+            cursor.execute("""
+                SELECT
+                    sc.product_id,
+                    sc.variation_id,
+                    sc.quantity
+                FROM shopping_cart sc
+                JOIN products p ON sc.product_id = p.id
+                WHERE sc.user_id = %s AND p.status = 'active'
+            """, (user_id,))
+            user_cart_items = cursor.fetchall()
+
+            session_cart_items = {}
+            for item in user_cart_items:
+                item_key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
+                    item['product_id'])
+                session_cart_items[item_key] = {
+                    'product_id': item['product_id'],
+                    'variation_id': item['variation_id'],
+                    'quantity': item['quantity']
+                }
+
+            session_service.update_session_data(user_session.session_id, {
+                'cart_items': session_cart_items
+            })
+
+        logger.info(f"✅ Explicit cart migration completed: {total_migrated} items migrated for user {user_id}")
+
+        return {
+            "success": True,
+            "message": "Cart migration completed successfully",
+            "items_migrated": total_migrated,
+            "user_id": user_id
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Explicit cart migration failed: {e}")
+        import traceback
+        logger.error(f"❌ Migration traceback: {traceback.format_exc()}")
+
+        # Return success even if migration fails - don't break the login flow
+        return {
+            "success": False,
+            "message": "Cart migration completed with warnings",
+            "error": str(e),
+            "items_migrated": 0,
+            "user_id": current_user['sub'] if 'current_user' in locals() else None
+        }
+
+@router.delete("/cart")
+async def clear_cart(
+        request: Request,
+        current_user_or_session: dict = Depends(get_current_user_or_session)
+):
+    try:
+        await rate_limiter.check_rate_limit(request)
+
+        session_id = current_user_or_session.get('session_id')
+
+        if not current_user_or_session.get('is_guest'):
+            # Authenticated user - clear database cart
+            user_id = current_user_or_session['user_id']
+
+            with db.get_cursor() as cursor:
+                cursor.execute("DELETE FROM shopping_cart WHERE user_id = %s", (user_id,))
+                redis_client.delete(f"user_cart:{user_id}")
+                return {"message": "Cart cleared successfully", "session_based": False}
+        else:
+            # Guest user - clear session cart
+            if session_id:
+                success = session_service.update_session_data(session_id, {"cart_items": {}})
+                if success:
+                    return {"message": "Cart cleared successfully", "session_based": True}
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to clear cart"
+                    )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Session not available"
+                )
+
+    except Exception as e:
+        logger.error(f"Failed to clear cart: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to clear cart"
+        )
+
 @router.post("/cart/{product_id}")
 async def add_to_cart(
         request: Request,
@@ -1087,7 +1241,6 @@ async def add_to_cart(
         logger.error(f"❌ Failed to add to cart: {e}")
         raise HTTPException(status_code=500, detail="Failed to add to cart")
 
-
 @router.put("/cart/{cart_item_id}")
 async def update_cart_item(
         request: Request,
@@ -1212,7 +1365,6 @@ async def update_cart_item(
             detail="Failed to update cart"
         )
 
-
 @router.delete("/cart/{cart_item_id}")
 async def remove_from_cart(
         request: Request,
@@ -1293,100 +1445,6 @@ async def remove_from_cart(
         )
 
 
-@router.post("/cart/migrate-guest-to-user")
-async def explicit_migrate_guest_cart_to_user(
-        request: Request,
-        current_user: dict = Depends(get_current_user)
-):
-    """Explicit endpoint to migrate guest cart to user account - for frontend to call after login"""
-    try:
-        user_id = current_user['sub']
-        logger.info(f"🔄 Explicit cart migration requested for user {user_id}")
-
-        ip_address = request.client.host if request.client else 'unknown'
-        user_agent = request.headers.get("user-agent", "")
-        total_migrated = 0
-
-        with db.get_cursor() as cursor:
-            # Method 1: Find guest session by IP and User-Agent
-            guest_session = session_service.find_guest_session_by_ip(ip_address, user_agent)
-            if guest_session and guest_session.cart_items:
-                migrated_count = migrate_guest_cart_to_user_database(
-                    guest_session, user_id, cursor
-                )
-                total_migrated += migrated_count
-                logger.info(f"🔄 Explicit migration - IP-based: {migrated_count} items")
-
-                # Clear guest cart
-                session_service.update_session_data(guest_session.session_id, {
-                    'cart_items': {}
-                })
-
-            # Method 2: Check guest_id cookie
-            if total_migrated == 0:
-                guest_id = request.cookies.get("guest_id")
-                if guest_id:
-                    guest_session = session_service.get_session_by_guest_id(guest_id)
-                    if guest_session and guest_session.cart_items:
-                        migrated_count = migrate_guest_cart_to_user_database(
-                            guest_session, user_id, cursor
-                        )
-                        total_migrated += migrated_count
-                        logger.info(f"🔄 Explicit migration - guest_id-based: {migrated_count} items")
-
-                        # Clear guest cart
-                        session_service.update_session_data(guest_session.session_id, {
-                            'cart_items': {}
-                        })
-
-        # Clear user cart cache
-        redis_client.delete(f"user_cart:{user_id}")
-
-        # Refresh the user's session cart data
-        user_session = session_service.get_session_by_user_id(user_id)
-        if user_session:
-            cursor.execute("""
-                SELECT
-                    sc.product_id,
-                    sc.variation_id,
-                    sc.quantity
-                FROM shopping_cart sc
-                JOIN products p ON sc.product_id = p.id
-                WHERE sc.user_id = %s AND p.status = 'active'
-            """, (user_id,))
-            user_cart_items = cursor.fetchall()
-
-            # Convert to session format
-            session_cart_items = {}
-            for item in user_cart_items:
-                item_key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
-                    item['product_id'])
-                session_cart_items[item_key] = {
-                    'product_id': item['product_id'],
-                    'variation_id': item['variation_id'],
-                    'quantity': item['quantity']
-                }
-
-            session_service.update_session_data(user_session.session_id, {
-                'cart_items': session_cart_items
-            })
-
-        logger.info(f"✅ Explicit cart migration completed: {total_migrated} items migrated for user {user_id}")
-
-        return {
-            "success": True,
-            "message": "Cart migration completed successfully",
-            "items_migrated": total_migrated,
-            "user_id": user_id
-        }
-
-    except Exception as e:
-        logger.error(f"❌ Explicit cart migration failed: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to migrate cart items"
-        )
-
 
 @router.get("/cart/debug")
 async def debug_user_cart(
@@ -1408,7 +1466,7 @@ async def debug_user_cart(
         # Debug database cart
         with db.get_cursor() as cursor:
             cursor.execute("""
-                SELECT 
+                SELECT
                     sc.id, sc.product_id, sc.variation_id, sc.quantity,
                     p.name as product_name, p.stock_status
                 FROM shopping_cart sc
@@ -1437,47 +1495,74 @@ async def debug_user_cart(
         return {"error": str(e)}
 
 
-@router.delete("/cart")
-async def clear_cart(
+
+@router.get("/cart/debug/migration")
+async def debug_cart_migration(
         request: Request,
-        current_user_or_session: dict = Depends(get_current_user_or_session)
+        current_user: dict = Depends(get_current_user)
 ):
     try:
-        await rate_limiter.check_rate_limit(request)
+        user_id = current_user['sub']
 
-        session_id = current_user_or_session.get('session_id')
+        debug_info = {
+            "user_id": user_id,
+            "current_session": None,
+            "guest_sessions_found": [],
+            "migration_ready": False
+        }
 
-        if not current_user_or_session.get('is_guest'):
-            # Authenticated user - clear database cart
-            user_id = current_user_or_session['user_id']
+        # Check current session
+        current_session = get_session(request)
+        if current_session:
+            debug_info["current_session"] = {
+                "session_id": current_session.session_id,
+                "session_type": current_session.session_type,
+                "cart_items_count": len(current_session.cart_items) if current_session.cart_items else 0,
+                "user_id": current_session.user_id,
+                "guest_id": current_session.guest_id
+            }
 
-            with db.get_cursor() as cursor:
-                cursor.execute("DELETE FROM shopping_cart WHERE user_id = %s", (user_id,))
-                redis_client.delete(f"user_cart:{user_id}")
-                return {"message": "Cart cleared successfully", "session_based": False}
-        else:
-            # Guest user - clear session cart
-            if session_id:
-                success = session_service.update_session_data(session_id, {"cart_items": {}})
-                if success:
-                    return {"message": "Cart cleared successfully", "session_based": True}
-                else:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Failed to clear cart"
-                    )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Session not available"
-                )
+        # Find guest sessions by IP
+        ip_address = request.client.host if request.client else 'unknown'
+        user_agent = request.headers.get("user-agent", "")
+
+        guest_session = session_service.find_guest_session_by_ip(ip_address, user_agent)
+        if guest_session:
+            debug_info["guest_sessions_found"].append({
+                "source": "ip_based",
+                "session_id": guest_session.session_id,
+                "cart_items_count": len(guest_session.cart_items) if guest_session.cart_items else 0
+            })
+
+        # Check guest_id cookie
+        guest_id = request.cookies.get("guest_id")
+        if guest_id:
+            guest_session_by_id = session_service.get_session_by_guest_id(guest_id)
+            if guest_session_by_id:
+                debug_info["guest_sessions_found"].append({
+                    "source": "guest_id_cookie",
+                    "session_id": guest_session_by_id.session_id,
+                    "cart_items_count": len(guest_session_by_id.cart_items) if guest_session_by_id.cart_items else 0
+                })
+
+        # Check if migration is possible
+        debug_info["migration_ready"] = any(
+            session.get("cart_items_count", 0) > 0
+            for session in debug_info["guest_sessions_found"]
+        ) or (
+                                                debug_info["current_session"] and
+                                                debug_info["current_session"]["cart_items_count"] > 0 and
+                                                debug_info["current_session"]["session_type"] == "guest"
+                                        )
+
+        return debug_info
 
     except Exception as e:
-        logger.error(f"Failed to clear cart: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to clear cart"
-        )
+        logger.error(f"Debug migration failed: {e}")
+        return {"error": str(e)}
+
+
+
 
 
 @router.get("/session/info")
