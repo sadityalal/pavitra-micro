@@ -55,33 +55,34 @@ export const CartProvider = ({ children }) => {
 
   useEffect(() => {
     const handleAuthStateChange = (event) => {
-      console.log('🔐 CartContext: Auth state change event received:', event.detail);
+        console.log('🔐 CartContext: Auth state change event received:', event.detail);
+        if (event.detail.action === 'logout') {
+            setCart({
+                items: [],
+                subtotal: 0,
+                total_items: 0
+            });
+            sessionManager.clearSession();
+        } else if (event.detail.action === 'login' || event.detail.action === 'register') {
+            // Wait a bit for backend session to be fully established
+            setTimeout(() => {
+                console.log('🔄 CartContext: Refreshing cart after auth state change');
+                fetchCart();
 
-      if (event.detail.action === 'logout') {
-        setCart({
-          items: [],
-          subtotal: 0,
-          total_items: 0
-        });
-        sessionManager.clearSession();
-      } else if (event.detail.action === 'login' || event.detail.action === 'register') {
-        // After login/register, wait a bit then refresh cart to ensure session is established
-        setTimeout(() => {
-          console.log('🔄 CartContext: Refreshing cart after auth state change');
-          fetchCart();
-        }, 1000);
-      }
+                // Force refresh after migration
+                setTimeout(() => {
+                    console.log('🔄 CartContext: Second refresh after migration');
+                    fetchCart();
+                }, 1000);
+            }, 500);
+        }
     };
 
     document.addEventListener('authStateChanged', handleAuthStateChange);
     return () => {
-      document.removeEventListener('authStateChanged', handleAuthStateChange);
+        document.removeEventListener('authStateChanged', handleAuthStateChange);
     };
-  }, []);
-
-  useEffect(() => {
-    fetchCart();
-  }, []);
+}, []);
 
   const addToCart = async (productId, quantity = 1, variationId = null) => {
     try {

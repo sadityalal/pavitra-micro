@@ -238,8 +238,6 @@ async def register_user(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Registration is temporarily unavailable."
             )
-
-        # Extract data from UserCreate object
         email = user_data.email
         phone = user_data.phone
         username = user_data.username
@@ -248,33 +246,27 @@ async def register_user(
         last_name = user_data.last_name
         country_id = user_data.country_id or 1
         auth_type = user_data.auth_type
-
         logger.info(f"Processing registration for: {email or phone or username}")
-
         first_name = sanitize_input(first_name)
         last_name = sanitize_input(last_name)
-
         _validate_registration_data(email, phone, username, password)
-
         with db.get_cursor() as cursor:
             _check_existing_users(cursor, email, phone, username)
-
             password_hash = get_password_hash(password)
             cursor.execute("""
                 INSERT INTO users (email, phone, username, password_hash, first_name, last_name, country_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
             """, (email, phone, username, password_hash, first_name, last_name, country_id))
-
             user_id = cursor.lastrowid
             logger.info(f"User created with ID: {user_id}")
-
             roles, permissions = _setup_user_account(cursor, user_id)
-
-            # Get IP and user agent for session
             ip_address = request.client.host if request.client else 'unknown'
             user_agent = request.headers.get("user-agent", "")
 
-            # Create user session
+            # Get current session ID before creating user session
+            current_session_id = get_session_id(request)
+            logger.info(f"🔄 Current guest session before registration: {current_session_id}")
+
             user_session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
             if not user_session:
                 logger.error(f"Failed to create user session for user {user_id}")
@@ -282,31 +274,67 @@ async def register_user(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to create user session"
                 )
-
             logger.info(f"✅ Created user session: {user_session.session_id} for user {user_id}")
 
-            # SIMPLE CART MIGRATION - Single method call
-            migrated_count = perform_cart_migration(request, user_id)
-            logger.info(f"🔄 Registration - Migrated {migrated_count} cart items")
+            # Perform cart migration from guest session to user session
+            migrated_count = 0
+            if current_session_id and current_session_id != user_session.session_id:
+                logger.info(
+                    f"🔄 Migrating cart from guest session {current_session_id} to user session {user_session.session_id}")
+                migrated_count = migrate_guest_cart_to_user(current_session_id, user_id)
 
-            # Set session cookie
+                # Verify migration by checking user session cart
+                updated_user_session = session_service.get_session(user_session.session_id)
+                if updated_user_session and updated_user_session.cart_items:
+                    actual_items_count = len(updated_user_session.cart_items)
+                    logger.info(f"✅ Cart migration verified: {actual_items_count} items in user session")
+                else:
+                    logger.warning("❌ Cart migration may have failed - no items in user session")
+            else:
+                logger.info("🔄 No guest session found or session already belongs to user")
+
             if user_session and response:
                 session_config = config.get_session_config()
                 session_timeout = session_config.get('user_session_duration', 2592000)
+
+                # Clear guest cookies first
+                response.delete_cookie(
+                    key="guest_id",
+                    path="/",
+                    secure=not config.debug_mode,
+                    httponly=True,
+                    samesite="Lax"
+                )
+
+                # Set user session cookie with proper SameSite for Chrome/Safari
+                samesite_value = "Lax" if config.debug_mode else "None"
+                secure_cookie = not config.debug_mode
+
                 response.set_cookie(
                     key="session_id",
                     value=user_session.session_id,
                     max_age=session_timeout,
                     httponly=True,
-                    secure=not config.debug_mode,
-                    samesite="Lax",
+                    secure=secure_cookie,
+                    samesite=samesite_value,
                     path="/"
                 )
+
+                # Also update guest_id to prevent session conflicts
+                response.set_cookie(
+                    key="guest_id",
+                    value=f"user_{user_id}",
+                    max_age=session_timeout,
+                    httponly=True,
+                    secure=secure_cookie,
+                    samesite=samesite_value,
+                    path="/"
+                )
+
                 request.state.session = user_session
                 request.state.session_id = user_session.session_id
                 logger.info(f"Set user session cookie for user {user_id}: {user_session.session_id}")
 
-            # Background tasks
             if background_tasks:
                 cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
                 user = cursor.fetchone()
@@ -315,7 +343,6 @@ async def register_user(
                     user
                 )
 
-            # Create token
             session_config = config.get_session_config()
             token_expiry_hours = session_config['token_expiry_hours']
             access_token = create_access_token(
@@ -327,10 +354,8 @@ async def register_user(
                 },
                 expires_delta=timedelta(hours=token_expiry_hours)
             )
-
             logger.info(
                 f"User registered successfully: {email or phone or username} with {migrated_count} cart items migrated")
-
             return Token(
                 access_token=access_token,
                 token_type="bearer",
@@ -338,7 +363,6 @@ async def register_user(
                 user_roles=roles,
                 user_permissions=permissions
             )
-
     except HTTPException:
         raise
     except Exception as e:
@@ -555,25 +579,20 @@ async def login_user(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Service is under maintenance. Please try again later."
             )
-
         session_config = config.get_session_config()
         client_identifier = get_client_identifier(request)
-
         if not check_rate_limit(f"login:{client_identifier}"):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many login attempts. Please try again later."
             )
-
         if not track_failed_login(client_identifier):
             lockout_minutes = session_config['login_lockout_minutes']
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"Account temporarily locked due to too many failed attempts. Please try again in {lockout_minutes} minutes."
             )
-
         logger.info(f"Login attempt for: {login_data.login_id}")
-
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -582,7 +601,6 @@ async def login_user(
                 FROM users
                 WHERE email = %s OR phone = %s OR username = %s
             """, (login_data.login_id, login_data.login_id, login_data.login_id))
-
             user = cursor.fetchone()
             if not user:
                 logger.warning(f"User not found: {login_data.login_id}")
@@ -590,24 +608,19 @@ async def login_user(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
-
             if not verify_password(login_data.password, user['password_hash']):
                 logger.warning(f"Invalid password for user: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid credentials"
                 )
-
             if not user['is_active']:
                 logger.warning(f"Account deactivated: {user['email']}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Account is deactivated"
                 )
-
             reset_failed_login(client_identifier)
-
-            # Get user roles and permissions
             cursor.execute("""
                 SELECT
                     ur.name as role_name,
@@ -618,7 +631,6 @@ async def login_user(
                 LEFT JOIN permissions p ON rp.permission_id = p.id
                 WHERE ura.user_id = %s
             """, (user['id'],))
-
             roles = set()
             permissions = set()
             for row in cursor.fetchall():
@@ -626,15 +638,18 @@ async def login_user(
                     roles.add(row['role_name'])
                 if row['permission_name']:
                     permissions.add(row['permission_name'])
-
             if not roles:
                 roles.add('customer')
 
-            # Create user session
+            # Get current session ID before creating user session
+            current_session_id = get_session_id(request)
+            logger.info(f"🔄 Current guest session before login: {current_session_id}")
+
             ip_address = request.client.host if request.client else 'unknown'
             user_agent = request.headers.get("user-agent", "")
-            user_session = session_service.get_or_create_user_session(user['id'], ip_address, user_agent)
 
+            # Create or get user session
+            user_session = session_service.get_or_create_user_session(user['id'], ip_address, user_agent)
             if not user_session:
                 logger.error(f"Failed to get/create user session for user {user['id']}")
                 raise HTTPException(
@@ -642,34 +657,72 @@ async def login_user(
                     detail="Failed to create user session"
                 )
 
-            logger.info(f"✅ Using user session: {user_session.session_id} for user {user['id']}")
+            logger.info(f"✅ User session: {user_session.session_id} for user {user['id']}")
 
-            # SIMPLE CART MIGRATION - Single method call
-            migrated_count = perform_cart_migration(request, user['id'])
-            logger.info(f"🔄 Login - Migrated {migrated_count} cart items")
+            # Perform cart migration from guest session to user session
+            migrated_count = 0
+            if current_session_id and current_session_id != user_session.session_id:
+                logger.info(f"🔄 Migrating cart from guest {current_session_id} to user {user_session.session_id}")
 
-            # Update session cookies
+                # Get guest cart items before migration for verification
+                guest_session = session_service.get_session(current_session_id)
+                guest_cart_count = len(guest_session.cart_items) if guest_session and guest_session.cart_items else 0
+                logger.info(f"📦 Guest cart has {guest_cart_count} items before migration")
+
+                migrated_count = migrate_guest_cart_to_user(current_session_id, user['id'])
+
+                # Verify database cart after migration
+                cursor.execute("""
+                    SELECT COUNT(*) as db_count, SUM(quantity) as total_qty 
+                    FROM shopping_cart 
+                    WHERE user_id = %s
+                """, (user['id'],))
+                db_result = cursor.fetchone()
+                db_count = db_result['db_count'] or 0
+                total_qty = db_result['total_qty'] or 0
+
+                logger.info(
+                    f"✅ Migration result: {migrated_count} items migrated, DB now has {db_count} items, {total_qty} total quantity")
+
+            else:
+                logger.info("🔄 No guest session found or session already belongs to user")
+
+            # Set cookies for user session
             if user_session and response:
                 session_config = config.get_session_config()
                 session_timeout = session_config.get('user_session_duration', 2592000)
 
+                # Safari/Chrome compatible cookie settings
+                is_secure = not config.debug_mode
+                samesite_value = "Lax"  # Use Lax for better Safari compatibility
+
+                # Clear existing cookies first
+                response.delete_cookie(
+                    key="session_id",
+                    path="/"
+                )
+                response.delete_cookie(
+                    key="guest_id",
+                    path="/"
+                )
+
+                # Set new session cookie
                 response.set_cookie(
                     key="session_id",
                     value=user_session.session_id,
                     max_age=session_timeout,
                     httponly=True,
-                    secure=not config.debug_mode,
-                    samesite="Lax",
+                    secure=is_secure,
+                    samesite=samesite_value,
                     path="/"
                 )
 
+                # Update request state
                 request.state.session = user_session
                 request.state.session_id = user_session.session_id
                 logger.info(f"✅ Session cookies set for user {user['id']}: {user_session.session_id}")
 
             cursor.execute("UPDATE users SET last_login = NOW() WHERE id = %s", (user['id'],))
-
-            # Create token
             token_expiry_hours = session_config['token_expiry_hours']
             access_token = create_access_token(
                 data={
@@ -681,15 +734,22 @@ async def login_user(
                 expires_delta=timedelta(hours=token_expiry_hours)
             )
 
-            logger.info(f"Login successful for user: {user['email']} with {migrated_count} cart items migrated")
-
-            return Token(
+            # Return migration info in response for frontend
+            response_data = Token(
                 access_token=access_token,
                 token_type="bearer",
                 expires_in=token_expiry_hours * 3600,
                 user_roles=list(roles),
                 user_permissions=list(permissions)
             )
+
+            # Add migration info to response headers
+            if response:
+                response.headers["X-Cart-Migrated"] = str(migrated_count)
+                response.headers["X-User-Session"] = user_session.session_id
+
+            logger.info(f"Login successful for user: {user['email']} with {migrated_count} cart items migrated")
+            return response_data
 
     except HTTPException:
         raise

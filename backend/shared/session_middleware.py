@@ -260,31 +260,40 @@ class SecureSessionMiddleware:
         else:
             max_age = session_service.guest_session_duration
 
+        # Chrome-compatible cookie settings
+        is_secure = self.cookie_secure and not config.debug_mode
+        samesite_value = "Lax"  # Use Lax for Chrome compatibility
+
         cookie_parts = [
             f"{self.session_cookie_name}={session_id}",
             f"Max-Age={max_age}",
             f"HttpOnly={str(self.cookie_httponly).lower()}",
-            f"SameSite=None" if self.cookie_secure else "SameSite=Lax",  # Changed for Chrome compatibility
+            f"SameSite={samesite_value}",
             "Path=/"
         ]
 
-        # Always set Secure flag in production, but allow HTTP in development for Chrome
-        if self.cookie_secure or not config.debug_mode:
+        # Only set Secure flag in production
+        if is_secure:
             cookie_parts.append("Secure")
 
         return "; ".join(cookie_parts)
 
     def _build_guest_cookie(self, guest_id: str) -> str:
         max_age = session_service.guest_session_duration
+
+        # Chrome-compatible cookie settings
+        is_secure = self.cookie_secure and not config.debug_mode
+        samesite_value = "Lax"
+
         cookie_parts = [
             f"guest_id={guest_id}",
             f"Max-Age={max_age}",
             f"HttpOnly={str(self.cookie_httponly).lower()}",
-            f"SameSite=None" if self.cookie_secure else "SameSite=Lax",  # Changed for Chrome compatibility
+            f"SameSite={samesite_value}",
             "Path=/"
         ]
 
-        if self.cookie_secure or not config.debug_mode:
+        if is_secure:
             cookie_parts.append("Secure")
 
         return "; ".join(cookie_parts)
@@ -298,7 +307,7 @@ class SecureSessionMiddleware:
             f"SameSite={self.cookie_samesite}",
             "Path=/"
         ]
-        if self.cookie_secure and not config.debug_mode:
+        if self.cookie_secure or not config.debug_mode:
             cookie_parts.append("Secure")
         return "; ".join(cookie_parts)
 

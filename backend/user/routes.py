@@ -848,20 +848,7 @@ async def get_cart(
 
         logger.info(f"🛒 GET CART - User ID: {user_id}, Is Guest: {is_guest}, Session: {session_id}")
 
-        # FIX: Handle case where session creation completely failed
-        if not current_user_or_session.get('session') and not is_guest:
-            logger.warning("No session available for authenticated user, creating new session")
-            # Try to create a new session for the user
-            ip_address = request.client.host if request.client else 'unknown'
-            user_agent = request.headers.get("user-agent", "")
-            user_session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
-            if user_session:
-                current_user_or_session['session'] = user_session
-                current_user_or_session['session_id'] = user_session.session_id
-                logger.info(f"✅ Created new session for user {user_id}: {user_session.session_id}")
-
-        session = current_user_or_session.get('session')
-
+        # Update session activity
         if session_id:
             try:
                 session_service.update_session_activity(session_id)
@@ -897,39 +884,76 @@ async def get_cart(
                 for item in cart_items:
                     logger.info(f"🛒 Cart Item: ID={item['id']}, Product={item['product_name']}, Qty={item['quantity']}")
 
+                # Convert to response
                 cart_data = await _convert_db_cart_to_response(cart_items)
 
-                # UPDATE SESSION CART to keep in sync
-                if session and session_id:
-                    session_cart_items = {}
-                    for item in cart_items:
-                        item_key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
-                            item['product_id'])
-                        session_cart_items[item_key] = {
-                            'product_id': item['product_id'],
-                            'variation_id': item['variation_id'],
-                            'quantity': item['quantity']
-                        }
-                    session_service.update_session_data(session_id, {
-                        'cart_items': session_cart_items
-                    })
-                    logger.info(f"🛒 Updated session cart with {len(session_cart_items)} items")
+                # Also check session cart for any discrepancies
+                session_cart_items = {}
+                if session_id:
+                    session = session_service.get_session(session_id)
+                    if session and session.cart_items:
+                        session_cart_items = session.cart_items
+                        logger.info(f"🛒 Session cart has {len(session_cart_items)} items")
+
+                        # If session cart has items but database doesn't, sync them
+                        if session_cart_items and not cart_items:
+                            logger.warning(f"🔄 Session has items but database is empty - syncing to database")
+                            for item_key, item_data in session_cart_items.items():
+                                try:
+                                    product_id = item_data.get('product_id')
+                                    variation_id = item_data.get('variation_id')
+                                    quantity = item_data.get('quantity', 1)
+
+                                    if product_id:
+                                        cursor.execute("""
+                                            INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
+                                            VALUES (%s, %s, %s, %s)
+                                            ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)
+                                        """, (user_id, product_id, variation_id, quantity))
+                                        logger.info(f"🔄 Synced session item to database: product={product_id}")
+
+                                except Exception as sync_error:
+                                    logger.error(f"❌ Failed to sync session item {item_key}: {sync_error}")
+
+                            # Refetch cart items after sync
+                            cursor.execute("""
+                                SELECT
+                                    sc.id,
+                                    sc.product_id,
+                                    sc.variation_id,
+                                    sc.quantity,
+                                    p.name as product_name,
+                                    p.slug as product_slug,
+                                    p.main_image_url as product_image,
+                                    p.base_price as product_price,
+                                    p.stock_quantity,
+                                    p.stock_status,
+                                    p.max_cart_quantity
+                                FROM shopping_cart sc
+                                JOIN products p ON sc.product_id = p.id
+                                WHERE sc.user_id = %s AND p.status = 'active'
+                                ORDER BY sc.created_at DESC
+                            """, (user_id,))
+                            cart_items = cursor.fetchall()
+                            cart_data = await _convert_db_cart_to_response(cart_items)
+                            logger.info(f"🔄 After sync: {len(cart_items)} items in database")
 
                 return cart_data
         else:
             # Guest user logic
-            if session and session.cart_items:
-                cart_items = session.cart_items if session.cart_items is not None else {}
-                logger.info(f"🛒 Guest cart with {len(cart_items)} items")
-                cart_response = await _convert_session_cart_to_response(cart_items)
-                return cart_response
-            else:
-                fallback_cart = current_user_or_session.get('cart_items', {})
-                if fallback_cart:
-                    cart_response = await _convert_session_cart_to_response(fallback_cart)
+            if session_id:
+                session = session_service.get_session(session_id)
+                if session and session.cart_items:
+                    cart_items = session.cart_items if session.cart_items is not None else {}
+                    logger.info(f"🛒 Guest cart with {len(cart_items)} items")
+                    cart_response = await _convert_session_cart_to_response(cart_items)
                     return cart_response
                 else:
+                    logger.info("🛒 Guest cart is empty")
                     return CartResponse(items=[], subtotal=0.0, total_items=0)
+            else:
+                logger.warning("🛒 No session ID for guest")
+                return CartResponse(items=[], subtotal=0.0, total_items=0)
 
     except Exception as e:
         logger.error(f"🛒 Failed to fetch cart: {e}")
