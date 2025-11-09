@@ -21,10 +21,26 @@ app = FastAPI(
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=["localhost", "127.0.0.1", "0.0.0.0"])
 app.add_middleware(SecureSessionMiddleware)
 
-# CORS middleware
+# CORS middleware - Updated for HTTPS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:8082", "http://127.0.0.1:8082"],  # Explicit origins
+    allow_origins=[
+        # HTTP origins (for development/fallback)
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:8082",
+        "http://127.0.0.1:8082",
+        "http://localhost:80",
+        "http://127.0.0.1:80",
+
+        # HTTPS origins
+        "https://localhost:443",
+        "https://127.0.0.1:443",
+        "https://localhost",
+        "https://127.0.0.1",
+        "https://localhost:3000",
+        "https://127.0.0.1:3000"
+    ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=[

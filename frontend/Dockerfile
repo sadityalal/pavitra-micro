@@ -19,6 +19,9 @@ FROM nginx:alpine
 # Remove default nginx configuration
 RUN rm /etc/nginx/conf.d/default.conf
 
+# Create SSL directory
+RUN mkdir -p /etc/nginx/ssl
+
 # Copy custom nginx configuration
 COPY nginx.conf /etc/nginx/nginx.conf
 
@@ -29,5 +32,5 @@ COPY --from=build /app/build /usr/share/nginx/html
 COPY healthcheck.sh /healthcheck.sh
 RUN chmod +x /healthcheck.sh
 
-EXPOSE 80
+EXPOSE 80 443
 CMD ["nginx", "-g", "daemon off;"]

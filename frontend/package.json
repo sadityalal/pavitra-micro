@@ -1,7 +1,7 @@
 {
   "name": "pavitra-frontend",
   "version": "1.0.0",
-  "proxy": "http://localhost:80",
+  "proxy": "https://localhost:443",
   "scripts": {
     "dev": "react-scripts start",
     "build": "react-scripts build",

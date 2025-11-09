@@ -145,7 +145,8 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "0.0.0.0:8082:80"
+      - "0.0.0.0:80:80"    # HTTP port for redirect
+      - "0.0.0.0:443:443"  # HTTPS port
     environment:
       - NODE_ENV=production
     depends_on:
@@ -157,13 +158,13 @@ services:
     networks:
       - pavitra-network
     restart: unless-stopped
+    volumes:
+      - ./ssl:/etc/nginx/ssl  # Mount SSL certificates
     healthcheck:
       test: [ "CMD", "/healthcheck.sh" ]
       interval: 30s
       timeout: 10s
       retries: 3
-    volumes:
-      - ./frontend-data:/app
 
 networks:
   pavitra-network:
