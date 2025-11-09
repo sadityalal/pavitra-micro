@@ -143,21 +143,66 @@ def invalidate_user_cache(user_id: int):
 
 async def get_current_user_or_session(request: Request):
     try:
-        # FIRST: Check if there's already a session from middleware
+        # FIRST: Check if we already have a valid session from middleware
         existing_session = get_session(request)
         existing_session_id = get_session_id(request)
 
         if existing_session and existing_session_id:
-            logger.info(f"✅ Using existing session from middleware: {existing_session_id}")
-            return {
-                "user_id": existing_session.user_id,
-                "is_guest": existing_session.session_type == SessionType.GUEST,
-                "session": existing_session,
-                "session_id": existing_session_id,
-                "guest_id": existing_session.guest_id
-            }
+            logger.info(
+                f"✅ Using existing session from middleware: {existing_session_id}, type: {existing_session.session_type}")
 
-        # SECOND: Try to get authenticated user (only if no existing session)
+            # If this is a user session, return it immediately
+            if existing_session.session_type == SessionType.USER and existing_session.user_id:
+                return {
+                    "user_id": existing_session.user_id,
+                    "is_guest": False,
+                    "session": existing_session,
+                    "session_id": existing_session_id
+                }
+            # If this is a guest session but user is authenticated, upgrade to user session
+            elif existing_session.session_type == SessionType.GUEST:
+                try:
+                    # Check if user is actually authenticated
+                    current_user = await get_current_user(request)
+                    if current_user and current_user.get('sub'):
+                        user_id = current_user['sub']
+                        ip_address = request.client.host if request.client else 'unknown'
+                        user_agent = request.headers.get("user-agent", "")
+
+                        # Migrate guest session to user session
+                        logger.info(f"🔄 Upgrading guest session to user session for user {user_id}")
+                        user_session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
+
+                        if user_session:
+                            # Migrate cart items from guest to user session
+                            if existing_session.cart_items:
+                                migrated_count = migrate_guest_cart_to_user(existing_session_id, user_id)
+                                logger.info(f"✅ Migrated {migrated_count} cart items to user session")
+
+                            # Update request state with new user session
+                            request.state.session = user_session
+                            request.state.session_id = user_session.session_id
+
+                            return {
+                                "user_id": user_id,
+                                "is_guest": False,
+                                "session": user_session,
+                                "session_id": user_session.session_id
+                            }
+                except HTTPException:
+                    # User not authenticated, continue with guest session
+                    pass
+
+                # Return guest session if no authenticated user
+                return {
+                    "user_id": None,
+                    "is_guest": True,
+                    "session": existing_session,
+                    "session_id": existing_session_id,
+                    "guest_id": existing_session.guest_id
+                }
+
+        # SECOND: Try to get authenticated user and create user session
         try:
             current_user = await get_current_user(request)
             if current_user and current_user.get('sub'):
@@ -165,20 +210,26 @@ async def get_current_user_or_session(request: Request):
                 ip_address = request.client.host if request.client else 'unknown'
                 user_agent = request.headers.get("user-agent", "")
 
-                # Get or create user session
-                session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
-                if session:
+                # Create or get user session
+                user_session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
+
+                if user_session:
+                    # Update request state
+                    request.state.session = user_session
+                    request.state.session_id = user_session.session_id
+
+                    logger.info(f"✅ Created user session for authenticated user {user_id}: {user_session.session_id}")
                     return {
                         "user_id": user_id,
                         "is_guest": False,
-                        "session": session,
-                        "session_id": session.session_id
+                        "session": user_session,
+                        "session_id": user_session.session_id
                     }
         except HTTPException:
             # User not authenticated, continue as guest
             pass
 
-        # THIRD: Handle guest session (only if no existing session)
+        # THIRD: Handle guest session (only if no authenticated user or session)
         guest_id = request.cookies.get("guest_id")
         if not guest_id:
             guest_id = str(uuid.uuid4())
@@ -186,32 +237,45 @@ async def get_current_user_or_session(request: Request):
         ip_address = request.client.host if request.client else 'unknown'
         user_agent = request.headers.get("user-agent", "")
 
-        session = session_service.get_or_create_guest_session(guest_id, ip_address, user_agent)
-        if session:
+        guest_session = session_service.get_or_create_guest_session(guest_id, ip_address, user_agent)
+
+        if guest_session:
+            # Update request state
+            request.state.session = guest_session
+            request.state.session_id = guest_session.session_id
+
+            logger.info(f"✅ Created guest session: {guest_session.session_id}")
             return {
                 "user_id": None,
                 "is_guest": True,
-                "session": session,
-                "session_id": session.session_id,
+                "session": guest_session,
+                "session_id": guest_session.session_id,
                 "guest_id": guest_id
             }
 
-        # Fallback
+        # Fallback: Create minimal session data
+        fallback_session_id = f"minimal_{uuid.uuid4().hex[:8]}"
+        logger.warning(f"🔄 Using fallback session: {fallback_session_id}")
         return {
             "user_id": None,
             "is_guest": True,
             "session": None,
-            "session_id": f"minimal_{uuid.uuid4().hex[:8]}",
+            "session_id": fallback_session_id,
             "cart_items": {}
         }
 
     except Exception as e:
-        logger.error(f"Critical error in get_current_user_or_session: {e}")
+        logger.error(f"❌ Critical error in get_current_user_or_session: {e}")
+        import traceback
+        logger.error(f"❌ Traceback: {traceback.format_exc()}")
+
+        # Emergency fallback
+        emergency_id = f"error_fallback_{uuid.uuid4().hex[:8]}"
         return {
             "user_id": None,
             "is_guest": True,
             "session": None,
-            "session_id": f"error_fallback_{uuid.uuid4().hex[:8]}",
+            "session_id": emergency_id,
             "cart_items": {}
         }
 
