@@ -7,21 +7,21 @@ from shared.auth_middleware import get_current_user, require_roles
 from shared.rate_limiter import rate_limiter
 from shared.session_service import session_service, SessionType
 from shared.session_middleware import get_session, get_session_id
-from shared.cart_migration import migrate_guest_cart_to_user  # ADD THIS IMPORT
-
+from shared.cart_migration import migrate_guest_cart_to_user
 from .models import (
     UserProfileResponse, UserProfileUpdate, AddressResponse,
     AddressCreate, WishlistResponse, CartResponse, HealthResponse
 )
-
 from datetime import datetime
 import json
 import os
 import uuid
+import re
 
 router = APIRouter()
 logger = get_logger(__name__)
 
+# ===== CACHE MANAGEMENT FUNCTIONS =====
 def publish_user_event(user_data: dict, event_type: str):
     try:
         message = {
@@ -41,7 +41,6 @@ def publish_user_event(user_data: dict, event_type: str):
     except Exception as e:
         logger.error(f"Failed to publish user event: {e}")
 
-
 def cache_user_profile(user_id: int, profile_data: dict, expire: int = 1800):
     try:
         key = f"user_profile:{user_id}"
@@ -49,7 +48,6 @@ def cache_user_profile(user_id: int, profile_data: dict, expire: int = 1800):
         logger.info(f"Cached user profile for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to cache user profile: {e}")
-
 
 def get_cached_user_profile(user_id: int) -> Optional[dict]:
     try:
@@ -62,7 +60,6 @@ def get_cached_user_profile(user_id: int) -> Optional[dict]:
         logger.error(f"Failed to get cached user profile: {e}")
         return None
 
-
 def cache_user_addresses(user_id: int, addresses: List[dict], expire: int = 1800):
     try:
         key = f"user_addresses:{user_id}"
@@ -70,7 +67,6 @@ def cache_user_addresses(user_id: int, addresses: List[dict], expire: int = 1800
         logger.info(f"Cached addresses for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to cache user addresses: {e}")
-
 
 def get_cached_user_addresses(user_id: int) -> Optional[List[dict]]:
     try:
@@ -83,7 +79,6 @@ def get_cached_user_addresses(user_id: int) -> Optional[List[dict]]:
         logger.error(f"Failed to get cached user addresses: {e}")
         return None
 
-
 def cache_user_wishlist(user_id: int, wishlist_data: dict, expire: int = 900):
     try:
         key = f"user_wishlist:{user_id}"
@@ -91,7 +86,6 @@ def cache_user_wishlist(user_id: int, wishlist_data: dict, expire: int = 900):
         logger.info(f"Cached wishlist for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to cache user wishlist: {e}")
-
 
 def get_cached_user_wishlist(user_id: int) -> Optional[dict]:
     try:
@@ -104,7 +98,6 @@ def get_cached_user_wishlist(user_id: int) -> Optional[dict]:
         logger.error(f"Failed to get cached user wishlist: {e}")
         return None
 
-
 def cache_user_cart(user_id: int, cart_data: dict, expire: int = 600):
     try:
         key = f"user_cart:{user_id}"
@@ -112,7 +105,6 @@ def cache_user_cart(user_id: int, cart_data: dict, expire: int = 600):
         logger.info(f"Cached cart for user {user_id}")
     except Exception as e:
         logger.error(f"Failed to cache user cart: {e}")
-
 
 def get_cached_user_cart(user_id: int) -> Optional[dict]:
     try:
@@ -124,7 +116,6 @@ def get_cached_user_cart(user_id: int) -> Optional[dict]:
     except Exception as e:
         logger.error(f"Failed to get cached user cart: {e}")
         return None
-
 
 def invalidate_user_cache(user_id: int):
     try:
@@ -140,18 +131,13 @@ def invalidate_user_cache(user_id: int):
     except Exception as e:
         logger.error(f"Failed to invalidate user cache: {e}")
 
-
+# ===== SESSION MANAGEMENT FUNCTIONS =====
 async def get_current_user_or_session(request: Request):
     try:
-        # FIRST: Check if we already have a valid session from middleware
         existing_session = get_session(request)
         existing_session_id = get_session_id(request)
-
         if existing_session and existing_session_id:
-            logger.info(
-                f"✅ Using existing session from middleware: {existing_session_id}, type: {existing_session.session_type}")
-
-            # If this is a user session, return it immediately
+            logger.info(f"✅ Using existing session from middleware: {existing_session_id}, type: {existing_session.session_type}")
             if existing_session.session_type == SessionType.USER and existing_session.user_id:
                 return {
                     "user_id": existing_session.user_id,
@@ -159,30 +145,22 @@ async def get_current_user_or_session(request: Request):
                     "session": existing_session,
                     "session_id": existing_session_id
                 }
-            # If this is a guest session but user is authenticated, upgrade to user session
             elif existing_session.session_type == SessionType.GUEST:
                 try:
-                    # Check if user is actually authenticated
                     current_user = await get_current_user(request)
                     if current_user and current_user.get('sub'):
                         user_id = current_user['sub']
                         ip_address = request.client.host if request.client else 'unknown'
                         user_agent = request.headers.get("user-agent", "")
-
-                        # Migrate guest session to user session
+                        session_service.invalidate_all_user_sessions(user_id)
                         logger.info(f"🔄 Upgrading guest session to user session for user {user_id}")
                         user_session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
-
                         if user_session:
-                            # Migrate cart items from guest to user session
                             if existing_session.cart_items:
                                 migrated_count = migrate_guest_cart_to_user(existing_session_id, user_id)
                                 logger.info(f"✅ Migrated {migrated_count} cart items to user session")
-
-                            # Update request state with new user session
                             request.state.session = user_session
                             request.state.session_id = user_session.session_id
-
                             return {
                                 "user_id": user_id,
                                 "is_guest": False,
@@ -190,10 +168,7 @@ async def get_current_user_or_session(request: Request):
                                 "session_id": user_session.session_id
                             }
                 except HTTPException:
-                    # User not authenticated, continue with guest session
                     pass
-
-                # Return guest session if no authenticated user
                 return {
                     "user_id": None,
                     "is_guest": True,
@@ -201,23 +176,17 @@ async def get_current_user_or_session(request: Request):
                     "session_id": existing_session_id,
                     "guest_id": existing_session.guest_id
                 }
-
-        # SECOND: Try to get authenticated user and create user session
         try:
             current_user = await get_current_user(request)
             if current_user and current_user.get('sub'):
                 user_id = current_user['sub']
                 ip_address = request.client.host if request.client else 'unknown'
                 user_agent = request.headers.get("user-agent", "")
-
-                # Create or get user session
+                session_service.invalidate_all_user_sessions(user_id)
                 user_session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
-
                 if user_session:
-                    # Update request state
                     request.state.session = user_session
                     request.state.session_id = user_session.session_id
-
                     logger.info(f"✅ Created user session for authenticated user {user_id}: {user_session.session_id}")
                     return {
                         "user_id": user_id,
@@ -226,24 +195,16 @@ async def get_current_user_or_session(request: Request):
                         "session_id": user_session.session_id
                     }
         except HTTPException:
-            # User not authenticated, continue as guest
             pass
-
-        # THIRD: Handle guest session (only if no authenticated user or session)
         guest_id = request.cookies.get("guest_id")
         if not guest_id:
             guest_id = str(uuid.uuid4())
-
         ip_address = request.client.host if request.client else 'unknown'
         user_agent = request.headers.get("user-agent", "")
-
         guest_session = session_service.get_or_create_guest_session(guest_id, ip_address, user_agent)
-
         if guest_session:
-            # Update request state
             request.state.session = guest_session
             request.state.session_id = guest_session.session_id
-
             logger.info(f"✅ Created guest session: {guest_session.session_id}")
             return {
                 "user_id": None,
@@ -252,8 +213,6 @@ async def get_current_user_or_session(request: Request):
                 "session_id": guest_session.session_id,
                 "guest_id": guest_id
             }
-
-        # Fallback: Create minimal session data
         fallback_session_id = f"minimal_{uuid.uuid4().hex[:8]}"
         logger.warning(f"🔄 Using fallback session: {fallback_session_id}")
         return {
@@ -263,13 +222,10 @@ async def get_current_user_or_session(request: Request):
             "session_id": fallback_session_id,
             "cart_items": {}
         }
-
     except Exception as e:
         logger.error(f"❌ Critical error in get_current_user_or_session: {e}")
         import traceback
         logger.error(f"❌ Traceback: {traceback.format_exc()}")
-
-        # Emergency fallback
         emergency_id = f"error_fallback_{uuid.uuid4().hex[:8]}"
         return {
             "user_id": None,
@@ -278,7 +234,6 @@ async def get_current_user_or_session(request: Request):
             "session_id": emergency_id,
             "cart_items": {}
         }
-
 
 def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
     try:
@@ -299,8 +254,7 @@ def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
                 if not product:
                     continue
                 max_quantity = product['max_cart_quantity'] or 20
-                available_quantity = min(quantity, product['stock_quantity']) if product[
-                                                                                     'stock_quantity'] > 0 else quantity
+                available_quantity = min(quantity, product['stock_quantity']) if product['stock_quantity'] > 0 else quantity
                 cursor.execute("""
                     SELECT id, quantity FROM shopping_cart
                     WHERE user_id = %s AND product_id = %s
@@ -330,7 +284,7 @@ def migrate_guest_cart_to_user_database(guest_session, user_id: int, cursor):
         logger.error(f"❌ Cart migration failed: {e}")
         return 0
 
-
+# ===== CART CONVERSION FUNCTIONS =====
 async def _convert_session_cart_to_response(cart_items: Dict[str, Any]) -> CartResponse:
     try:
         items = []
@@ -395,7 +349,6 @@ async def _convert_session_cart_to_response(cart_items: Dict[str, Any]) -> CartR
         logger.error(f"Failed to convert session cart: {e}")
         return CartResponse(items=[], subtotal=0.0, total_items=0)
 
-
 async def _convert_db_cart_to_response(cart_items: List[Dict]) -> CartResponse:
     items = []
     subtotal = 0.0
@@ -424,7 +377,7 @@ async def _convert_db_cart_to_response(cart_items: List[Dict]) -> CartResponse:
         total_items=total_items
     )
 
-
+# ===== HEALTH ENDPOINT =====
 @router.get("/health", response_model=HealthResponse)
 async def health():
     try:
@@ -446,7 +399,7 @@ async def health():
             timestamp=datetime.utcnow()
         )
 
-
+# ===== USER PROFILE ENDPOINTS =====
 @router.get("/profile", response_model=UserProfileResponse)
 async def get_user_profile(current_user: dict = Depends(get_current_user)):
     try:
@@ -522,7 +475,6 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
             detail="Failed to fetch user profile"
         )
 
-
 @router.put("/profile", response_model=UserProfileResponse)
 async def update_user_profile(
         profile_data: UserProfileUpdate,
@@ -531,7 +483,6 @@ async def update_user_profile(
 ):
     try:
         user_id = current_user['sub']
-
         with db.get_cursor() as cursor:
             if profile_data.username:
                 cursor.execute("""
@@ -542,10 +493,8 @@ async def update_user_profile(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Username already taken"
                     )
-
             update_fields = []
             update_params = []
-
             if profile_data.first_name is not None:
                 update_fields.append("first_name = %s")
                 update_params.append(sanitize_input(profile_data.first_name))
@@ -573,41 +522,32 @@ async def update_user_profile(
             if profile_data.gender is not None:
                 update_fields.append("gender = %s")
                 update_params.append(profile_data.gender)
-
             if not update_fields:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="No fields to update"
                 )
-
             update_fields.append("updated_at = NOW()")
             update_params.append(user_id)
-
             update_query = f"""
                 UPDATE users
                 SET {', '.join(update_fields)}
                 WHERE id = %s
             """
             cursor.execute(update_query, update_params)
-
             cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
             updated_user = cursor.fetchone()
-
             if background_tasks:
                 background_tasks.add_task(
                     publish_user_event,
                     updated_user,
                     'profile_updated'
                 )
-
             invalidate_user_cache(user_id)
-
             cached_profile = get_cached_user_profile(user_id)
             if cached_profile:
                 return UserProfileResponse(**cached_profile)
-
             return await get_user_profile(current_user)
-
     except HTTPException:
         raise
     except Exception as e:
@@ -617,7 +557,7 @@ async def update_user_profile(
             detail="Failed to update user profile"
         )
 
-
+# ===== ADDRESS MANAGEMENT ENDPOINTS =====
 @router.get("/addresses", response_model=List[AddressResponse])
 async def get_user_addresses(current_user: dict = Depends(get_current_user)):
     try:
@@ -625,7 +565,6 @@ async def get_user_addresses(current_user: dict = Depends(get_current_user)):
         cached_addresses = get_cached_user_addresses(user_id)
         if cached_addresses:
             return [AddressResponse(**addr) for addr in cached_addresses]
-
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT * FROM user_addresses
@@ -633,7 +572,6 @@ async def get_user_addresses(current_user: dict = Depends(get_current_user)):
                 ORDER BY is_default DESC, created_at DESC
             """, (user_id,))
             addresses = cursor.fetchall()
-
             address_list = []
             for addr in addresses:
                 import html
@@ -644,7 +582,6 @@ async def get_user_addresses(current_user: dict = Depends(get_current_user)):
                 safe_city = html.escape(addr['city']) if addr['city'] else ""
                 safe_state = html.escape(addr['state']) if addr['state'] else ""
                 safe_country = html.escape(addr['country']) if addr['country'] else ""
-
                 address_list.append(AddressResponse(
                     id=addr['id'],
                     user_id=addr['user_id'],
@@ -663,7 +600,6 @@ async def get_user_addresses(current_user: dict = Depends(get_current_user)):
                     created_at=addr['created_at'],
                     updated_at=addr['updated_at']
                 ))
-
             cache_user_addresses(user_id, [addr.dict() for addr in address_list])
             return address_list
     except Exception as e:
@@ -673,7 +609,6 @@ async def get_user_addresses(current_user: dict = Depends(get_current_user)):
             detail="Failed to fetch addresses"
         )
 
-
 @router.post("/addresses", response_model=AddressResponse)
 async def create_user_address(
         address_data: AddressCreate,
@@ -682,13 +617,11 @@ async def create_user_address(
 ):
     try:
         user_id = current_user['sub']
-
         if not address_data.full_name or not address_data.phone or not address_data.address_line1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Full name, phone, and address line 1 are required"
             )
-
         import re
         phone_pattern = r'^\+?[1-9]\d{1,14}$'
         if not re.match(phone_pattern, address_data.phone):
@@ -696,27 +629,23 @@ async def create_user_address(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid phone number format"
             )
-
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT id FROM user_addresses
                 WHERE user_id = %s AND address_line1 = %s AND city = %s AND postal_code = %s
             """, (user_id, sanitize_input(address_data.address_line1),
                   sanitize_input(address_data.city), sanitize_input(address_data.postal_code)))
-
             if cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Address already exists"
                 )
-
             if address_data.is_default:
                 cursor.execute("""
                     UPDATE user_addresses
                     SET is_default = 0
                     WHERE user_id = %s AND address_type = %s
                 """, (user_id, address_data.address_type.value))
-
             cursor.execute("""
                 INSERT INTO user_addresses (
                     user_id, address_type, full_name, phone, address_line1,
@@ -738,13 +667,10 @@ async def create_user_address(
                 address_data.address_type_detail.value if address_data.address_type_detail else None,
                 address_data.is_default
             ))
-
             address_id = cursor.lastrowid
             cursor.execute("SELECT * FROM user_addresses WHERE id = %s", (address_id,))
             address = cursor.fetchone()
-
             invalidate_user_cache(user_id)
-
             return AddressResponse(
                 id=address['id'],
                 user_id=address['user_id'],
@@ -772,7 +698,7 @@ async def create_user_address(
             detail="Failed to create address"
         )
 
-
+# ===== WISHLIST MANAGEMENT ENDPOINTS =====
 @router.get("/wishlist", response_model=WishlistResponse)
 async def get_user_wishlist(current_user: dict = Depends(get_current_user)):
     try:
@@ -780,7 +706,6 @@ async def get_user_wishlist(current_user: dict = Depends(get_current_user)):
         cached_wishlist = get_cached_user_wishlist(user_id)
         if cached_wishlist:
             return WishlistResponse(**cached_wishlist)
-
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -796,7 +721,6 @@ async def get_user_wishlist(current_user: dict = Depends(get_current_user)):
                 ORDER BY w.created_at DESC
             """, (user_id,))
             wishlist_items = cursor.fetchall()
-
             items = [
                 {
                     'id': item['id'],
@@ -810,12 +734,10 @@ async def get_user_wishlist(current_user: dict = Depends(get_current_user)):
                 }
                 for item in wishlist_items
             ]
-
             wishlist_data = WishlistResponse(
                 items=items,
                 total_count=len(items)
             )
-
             cache_user_wishlist(user_id, wishlist_data.dict())
             return wishlist_data
     except Exception as e:
@@ -825,7 +747,6 @@ async def get_user_wishlist(current_user: dict = Depends(get_current_user)):
             detail="Failed to fetch wishlist"
         )
 
-
 @router.post("/wishlist/{product_id}")
 async def add_to_wishlist(
         product_id: int,
@@ -833,7 +754,6 @@ async def add_to_wishlist(
 ):
     try:
         user_id = current_user['sub']
-
         with db.get_cursor() as cursor:
             cursor.execute("SELECT id FROM products WHERE id = %s AND status = 'active'", (product_id,))
             if not cursor.fetchone():
@@ -841,20 +761,16 @@ async def add_to_wishlist(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found"
                 )
-
             cursor.execute("SELECT id FROM wishlists WHERE user_id = %s AND product_id = %s", (user_id, product_id))
             if cursor.fetchone():
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Product already in wishlist"
                 )
-
             cursor.execute("INSERT INTO wishlists (user_id, product_id) VALUES (%s, %s)", (user_id, product_id))
             cursor.execute("UPDATE products SET wishlist_count = wishlist_count + 1 WHERE id = %s", (product_id,))
-
             redis_client.delete(f"user_wishlist:{user_id}")
             logger.info(f"Product {product_id} added to wishlist for user {user_id}")
-
             return {"message": "Product added to wishlist"}
     except HTTPException:
         raise
@@ -865,7 +781,6 @@ async def add_to_wishlist(
             detail="Failed to add to wishlist"
         )
 
-
 @router.delete("/wishlist/{product_id}")
 async def remove_from_wishlist(
         product_id: int,
@@ -873,7 +788,6 @@ async def remove_from_wishlist(
 ):
     try:
         user_id = current_user['sub']
-
         with db.get_cursor() as cursor:
             cursor.execute("DELETE FROM wishlists WHERE user_id = %s AND product_id = %s", (user_id, product_id))
             if cursor.rowcount == 0:
@@ -881,13 +795,10 @@ async def remove_from_wishlist(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Product not found in wishlist"
                 )
-
             cursor.execute("UPDATE products SET wishlist_count = GREATEST(0, wishlist_count - 1) WHERE id = %s",
                            (product_id,))
-
             redis_client.delete(f"user_wishlist:{user_id}")
             logger.info(f"Product {product_id} removed from wishlist for user {user_id}")
-
             return {"message": "Product removed from wishlist"}
     except HTTPException:
         raise
@@ -898,7 +809,7 @@ async def remove_from_wishlist(
             detail="Failed to remove from wishlist"
         )
 
-
+# ===== CART MANAGEMENT ENDPOINTS =====
 @router.get("/cart", response_model=CartResponse)
 async def get_cart(
         request: Request,
@@ -909,17 +820,12 @@ async def get_cart(
         user_id = current_user_or_session.get('user_id')
         is_guest = current_user_or_session.get('is_guest', True)
         session_id = current_user_or_session.get('session_id')
-
         logger.info(f"🛒 GET CART - User ID: {user_id}, Is Guest: {is_guest}, Session: {session_id}")
-
-        # Update session activity
         if session_id:
             try:
                 session_service.update_session_activity(session_id)
             except Exception as e:
                 logger.warning(f"Failed to update session activity: {e}")
-
-        # AUTHENTICATED USER - get cart from database
         if not is_guest and user_id:
             logger.info(f"🛒 Fetching database cart for user {user_id}")
             with db.get_cursor() as cursor:
@@ -943,23 +849,15 @@ async def get_cart(
                 """, (user_id,))
                 cart_items = cursor.fetchall()
                 logger.info(f"🛒 Database returned {len(cart_items)} cart items for user {user_id}")
-
-                # DEBUG: Log what we found
                 for item in cart_items:
                     logger.info(f"🛒 Cart Item: ID={item['id']}, Product={item['product_name']}, Qty={item['quantity']}")
-
-                # Convert to response
                 cart_data = await _convert_db_cart_to_response(cart_items)
-
-                # Also check session cart for any discrepancies
                 session_cart_items = {}
                 if session_id:
                     session = session_service.get_session(session_id)
                     if session and session.cart_items:
                         session_cart_items = session.cart_items
                         logger.info(f"🛒 Session cart has {len(session_cart_items)} items")
-
-                        # If session cart has items but database doesn't, sync them
                         if session_cart_items and not cart_items:
                             logger.warning(f"🔄 Session has items but database is empty - syncing to database")
                             for item_key, item_data in session_cart_items.items():
@@ -967,7 +865,6 @@ async def get_cart(
                                     product_id = item_data.get('product_id')
                                     variation_id = item_data.get('variation_id')
                                     quantity = item_data.get('quantity', 1)
-
                                     if product_id:
                                         cursor.execute("""
                                             INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
@@ -975,11 +872,8 @@ async def get_cart(
                                             ON DUPLICATE KEY UPDATE quantity = VALUES(quantity)
                                         """, (user_id, product_id, variation_id, quantity))
                                         logger.info(f"🔄 Synced session item to database: product={product_id}")
-
                                 except Exception as sync_error:
                                     logger.error(f"❌ Failed to sync session item {item_key}: {sync_error}")
-
-                            # Refetch cart items after sync
                             cursor.execute("""
                                 SELECT
                                     sc.id,
@@ -1001,10 +895,8 @@ async def get_cart(
                             cart_items = cursor.fetchall()
                             cart_data = await _convert_db_cart_to_response(cart_items)
                             logger.info(f"🔄 After sync: {len(cart_items)} items in database")
-
                 return cart_data
         else:
-            # Guest user logic
             if session_id:
                 session = session_service.get_session(session_id)
                 if session and session.cart_items:
@@ -1018,44 +910,31 @@ async def get_cart(
             else:
                 logger.warning("🛒 No session ID for guest")
                 return CartResponse(items=[], subtotal=0.0, total_items=0)
-
     except Exception as e:
         logger.error(f"🛒 Failed to fetch cart: {e}")
         import traceback
         logger.error(f"🛒 Traceback: {traceback.format_exc()}")
-        # Return empty cart instead of error
         return CartResponse(items=[], subtotal=0.0, total_items=0)
-
 
 @router.post("/cart/migrate-guest-to-user")
 async def explicit_migrate_guest_cart_to_user(
         request: Request,
         current_user: dict = Depends(get_current_user)
 ):
-    """
-    Simple explicit cart migration endpoint
-    """
     try:
         user_id = current_user['sub']
         session_id = get_session_id(request)
-
         logger.info(f"🔄 Explicit cart migration requested for user {user_id}")
-
         if not session_id:
             raise HTTPException(status_code=400, detail="No session available")
-
-        # Use the shared migration function
         migrated_count = migrate_guest_cart_to_user(session_id, user_id)
-
         logger.info(f"✅ Explicit cart migration completed: {migrated_count} items migrated for user {user_id}")
-
         return {
             "success": True,
             "message": "Cart migration completed successfully",
             "items_migrated": migrated_count,
             "user_id": user_id
         }
-
     except Exception as e:
         logger.error(f"❌ Explicit cart migration failed: {e}")
         return {
@@ -1073,19 +952,14 @@ async def clear_cart(
 ):
     try:
         await rate_limiter.check_rate_limit(request)
-
         session_id = current_user_or_session.get('session_id')
-
         if not current_user_or_session.get('is_guest'):
-            # Authenticated user - clear database cart
             user_id = current_user_or_session['user_id']
-
             with db.get_cursor() as cursor:
                 cursor.execute("DELETE FROM shopping_cart WHERE user_id = %s", (user_id,))
                 redis_client.delete(f"user_cart:{user_id}")
                 return {"message": "Cart cleared successfully", "session_based": False}
         else:
-            # Guest user - clear session cart
             if session_id:
                 success = session_service.update_session_data(session_id, {"cart_items": {}})
                 if success:
@@ -1100,7 +974,6 @@ async def clear_cart(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Session not available"
                 )
-
     except Exception as e:
         logger.error(f"Failed to clear cart: {e}")
         raise HTTPException(
@@ -1119,7 +992,6 @@ async def add_to_cart(
     try:
         if quantity < 1:
             raise HTTPException(status_code=400, detail="Quantity must be at least 1")
-
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT id, name, stock_quantity, stock_status, max_cart_quantity, base_price
@@ -1128,28 +1000,21 @@ async def add_to_cart(
             product = cursor.fetchone()
             if not product:
                 raise HTTPException(status_code=404, detail="Product not found")
-
             if product['stock_status'] == 'out_of_stock':
                 raise HTTPException(status_code=400, detail="Product is out of stock")
-
             max_cart_quantity = getattr(config, 'max_cart_quantity_per_product', 20)
             product_max_quantity = product['max_cart_quantity']
             if product_max_quantity:
                 max_quantity = min(product_max_quantity, max_cart_quantity)
             else:
                 max_quantity = max_cart_quantity
-
             if quantity > product['stock_quantity'] and product['stock_status'] != 'on_backorder':
                 raise HTTPException(status_code=400, detail=f"Only {product['stock_quantity']} items available")
-
             if quantity > max_quantity:
                 raise HTTPException(status_code=400, detail=f"Maximum {max_quantity} items can be added")
-
         session = current_user_or_session.get('session')
         session_id = current_user_or_session.get('session_id')
-
         if not current_user_or_session.get('is_guest'):
-            # User cart logic (unchanged)
             user_id = current_user_or_session['user_id']
             with db.get_cursor() as cursor:
                 cursor.execute("""
@@ -1158,7 +1023,6 @@ async def add_to_cart(
                     AND (variation_id = %s OR (variation_id IS NULL AND %s IS NULL))
                 """, (user_id, product_id, variation_id, variation_id))
                 existing_item = cursor.fetchone()
-
                 if existing_item:
                     new_quantity = existing_item['quantity'] + quantity
                     if new_quantity > max_quantity:
@@ -1170,11 +1034,9 @@ async def add_to_cart(
                         INSERT INTO shopping_cart (user_id, product_id, variation_id, quantity)
                         VALUES (%s, %s, %s, %s)
                     """, (user_id, product_id, variation_id, quantity))
-
                 redis_client.delete(f"user_cart:{user_id}")
                 return {"message": "Product added to cart", "session_based": False}
         else:
-            # GUEST CART LOGIC - ENHANCED WITH DEBUGGING
             if not session_id or not session:
                 guest_id = str(uuid.uuid4())
                 ip_address = request.client.host if request.client else 'unknown'
@@ -1187,24 +1049,18 @@ async def add_to_cart(
                     logger.info(f"🆕 Created new guest session: {session_id}")
                 else:
                     raise HTTPException(status_code=500, detail="Failed to create guest session")
-
-            # Get current cart items with proper initialization
             cart_items = {}
             if session and session.cart_items:
                 cart_items = session.cart_items.copy()
                 logger.info(f"📥 Loaded {len(cart_items)} items from session cart")
             elif session_id:
-                # Try to load session directly
                 loaded_session = session_service.get_session(session_id)
                 if loaded_session and loaded_session.cart_items:
                     cart_items = loaded_session.cart_items.copy()
                     logger.info(f"📥 Loaded {len(cart_items)} items from session ID lookup")
                 else:
                     logger.warning(f"❌ No cart items found in session {session_id}")
-
             item_key = f"{product_id}_{variation_id}" if variation_id else str(product_id)
-
-            # Update cart items
             if item_key in cart_items:
                 new_quantity = cart_items[item_key]['quantity'] + quantity
                 if new_quantity > max_quantity:
@@ -1218,22 +1074,13 @@ async def add_to_cart(
                     'quantity': quantity
                 }
                 logger.info(f"🆕 Added new item {item_key} with quantity {quantity}")
-
-            # DEBUG: Log cart state before saving
             logger.info(f"🛒 Cart before save - Session: {session_id}, Items: {len(cart_items)}")
-
-            # Save to session with enhanced error handling
             success = session_service.update_session_data(session_id, {"cart_items": cart_items})
-
             if success:
-                # Verify the save worked by reading back the session
                 updated_session = session_service.get_session(session_id)
                 actual_cart_count = len(
                     updated_session.cart_items) if updated_session and updated_session.cart_items else 0
-
-                logger.info(
-                    f"✅ Guest cart updated successfully: session_id={session_id}, items_count={actual_cart_count}")
-
+                logger.info(f"✅ Guest cart updated successfully: session_id={session_id}, items_count={actual_cart_count}")
                 return {
                     "message": "Product added to cart",
                     "session_based": True,
@@ -1242,16 +1089,13 @@ async def add_to_cart(
                 }
             else:
                 logger.error(f"❌ Failed to update guest cart in session: {session_id}")
-                # Try emergency fallback - save to a simple Redis key
                 try:
                     emergency_key = f"emergency_cart:{session_id}"
                     redis_client.setex(emergency_key, 3600, json.dumps(cart_items))
                     logger.info(f"🆘 Saved emergency cart for session: {session_id}")
                 except Exception as emergency_error:
                     logger.error(f"❌ Emergency cart save also failed: {emergency_error}")
-
                 raise HTTPException(status_code=500, detail="Failed to update cart")
-
     except HTTPException:
         raise
     except Exception as e:
@@ -1267,16 +1111,13 @@ async def update_cart_item(
 ):
     try:
         await rate_limiter.check_rate_limit(request)
-
         if quantity < 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Quantity cannot be negative"
             )
-
         session = current_user_or_session.get('session')
         session_id = current_user_or_session.get('session_id')
-
         if not current_user_or_session.get('is_guest'):
             user_id = current_user_or_session['user_id']
             with db.get_cursor() as cursor:
@@ -1286,32 +1127,27 @@ async def update_cart_item(
                     JOIN products p ON sc.product_id = p.id
                     WHERE sc.id = %s AND sc.user_id = %s
                 """, (cart_item_id, user_id))
-
                 cart_item = cursor.fetchone()
                 if not cart_item:
                     raise HTTPException(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Cart item not found"
                     )
-
                 if quantity == 0:
                     cursor.execute("DELETE FROM shopping_cart WHERE id = %s", (cart_item_id,))
                     redis_client.delete(f"user_cart:{user_id}")
                     return {"message": "Item removed from cart", "session_based": False}
-
                 max_quantity = min(cart_item['max_cart_quantity'] or 20, cart_item['stock_quantity'])
                 if quantity > max_quantity and cart_item['stock_status'] != 'on_backorder':
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Maximum {max_quantity} items available"
                     )
-
                 cursor.execute("""
                     UPDATE shopping_cart
                     SET quantity = %s, updated_at = NOW()
                     WHERE id = %s
                 """, (quantity, cart_item_id))
-
                 redis_client.delete(f"user_cart:{user_id}")
                 return {"message": "Cart updated successfully", "session_based": False}
         else:
@@ -1320,12 +1156,10 @@ async def update_cart_item(
                     product_id = cart_item_id
                     cart_items = session.cart_items.copy()
                     item_key = None
-
                     for key, item in cart_items.items():
                         if item['product_id'] == product_id:
                             item_key = key
                             break
-
                     if item_key:
                         if quantity == 0:
                             del cart_items[item_key]
@@ -1344,7 +1178,6 @@ async def update_cart_item(
                                             detail=f"Maximum {max_quantity} items available"
                                         )
                             cart_items[item_key]['quantity'] = quantity
-
                         success = session_service.update_session_data(session_id, {"cart_items": cart_items})
                         if success:
                             return {"message": "Cart updated successfully", "session_based": True}
@@ -1358,7 +1191,6 @@ async def update_cart_item(
                             status_code=status.HTTP_404_NOT_FOUND,
                             detail="Cart item not found"
                         )
-
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -1372,7 +1204,6 @@ async def update_cart_item(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Cart item not found"
                 )
-
     except HTTPException:
         raise
     except Exception as e:
@@ -1390,14 +1221,10 @@ async def remove_from_cart(
 ):
     try:
         await rate_limiter.check_rate_limit(request)
-
         session = current_user_or_session.get('session')
         session_id = current_user_or_session.get('session_id')
-
         if not current_user_or_session.get('is_guest'):
-            # Authenticated user - remove from database cart
             user_id = current_user_or_session['user_id']
-
             with db.get_cursor() as cursor:
                 cursor.execute("DELETE FROM shopping_cart WHERE id = %s AND user_id = %s", (cart_item_id, user_id))
                 if cursor.rowcount == 0:
@@ -1405,26 +1232,21 @@ async def remove_from_cart(
                         status_code=status.HTTP_404_NOT_FOUND,
                         detail="Cart item not found"
                     )
-
                 redis_client.delete(f"user_cart:{user_id}")
                 return {"message": "Item removed from cart", "session_based": False}
         else:
-            # Guest user - remove from session cart
             if session and session_id and session.cart_items:
                 try:
                     product_id = cart_item_id
                     cart_items = session.cart_items.copy()
                     item_key = None
-
                     for key, item in cart_items.items():
                         if item['product_id'] == product_id:
                             item_key = key
                             break
-
                     if item_key:
                         del cart_items[item_key]
                         success = session_service.update_session_data(session_id, {"cart_items": cart_items})
-
                         if success:
                             return {"message": "Item removed from cart", "session_based": True}
                         else:
@@ -1437,7 +1259,6 @@ async def remove_from_cart(
                             status_code=status.HTTP_404_NOT_FOUND,
                             detail="Cart item not found"
                         )
-
                 except HTTPException:
                     raise
                 except Exception as e:
@@ -1451,7 +1272,6 @@ async def remove_from_cart(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="Cart item not found"
                 )
-
     except HTTPException:
         raise
     except Exception as e:
@@ -1461,26 +1281,20 @@ async def remove_from_cart(
             detail="Failed to remove from cart"
         )
 
-
-
+# ===== DEBUG ENDPOINTS =====
 @router.get("/cart/debug")
 async def debug_user_cart(
         request: Request,
         current_user: dict = Depends(get_current_user)
 ):
-    """Debug endpoint to check cart data"""
     try:
         user_id = current_user['sub']
-
-        # Debug session
         session = get_session(request)
         session_info = {
             "session_id": session.session_id if session else None,
             "session_type": session.session_type if session else None,
             "session_cart_items": len(session.cart_items) if session and session.cart_items else 0
         }
-
-        # Debug database cart
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT
@@ -1491,10 +1305,8 @@ async def debug_user_cart(
                 WHERE sc.user_id = %s AND p.status = 'active'
             """, (user_id,))
             db_cart_items = cursor.fetchall()
-
             cursor.execute("SELECT COUNT(*) as count FROM shopping_cart WHERE user_id = %s", (user_id,))
             total_count = cursor.fetchone()['count']
-
         return {
             "user_id": user_id,
             "session_info": session_info,
@@ -1506,12 +1318,9 @@ async def debug_user_cart(
             "request_headers": dict(request.headers),
             "cookies": dict(request.cookies)
         }
-
     except Exception as e:
         logger.error(f"Debug cart failed: {e}")
         return {"error": str(e)}
-
-
 
 @router.get("/cart/debug/migration")
 async def debug_cart_migration(
@@ -1520,15 +1329,12 @@ async def debug_cart_migration(
 ):
     try:
         user_id = current_user['sub']
-
         debug_info = {
             "user_id": user_id,
             "current_session": None,
             "guest_sessions_found": [],
             "migration_ready": False
         }
-
-        # Check current session
         current_session = get_session(request)
         if current_session:
             debug_info["current_session"] = {
@@ -1538,11 +1344,8 @@ async def debug_cart_migration(
                 "user_id": current_session.user_id,
                 "guest_id": current_session.guest_id
             }
-
-        # Find guest sessions by IP
         ip_address = request.client.host if request.client else 'unknown'
         user_agent = request.headers.get("user-agent", "")
-
         guest_session = session_service.find_guest_session_by_ip(ip_address, user_agent)
         if guest_session:
             debug_info["guest_sessions_found"].append({
@@ -1550,8 +1353,6 @@ async def debug_cart_migration(
                 "session_id": guest_session.session_id,
                 "cart_items_count": len(guest_session.cart_items) if guest_session.cart_items else 0
             })
-
-        # Check guest_id cookie
         guest_id = request.cookies.get("guest_id")
         if guest_id:
             guest_session_by_id = session_service.get_session_by_guest_id(guest_id)
@@ -1561,26 +1362,18 @@ async def debug_cart_migration(
                     "session_id": guest_session_by_id.session_id,
                     "cart_items_count": len(guest_session_by_id.cart_items) if guest_session_by_id.cart_items else 0
                 })
-
-        # Check if migration is possible
         debug_info["migration_ready"] = any(
             session.get("cart_items_count", 0) > 0
             for session in debug_info["guest_sessions_found"]
         ) or (
-                                                debug_info["current_session"] and
-                                                debug_info["current_session"]["cart_items_count"] > 0 and
-                                                debug_info["current_session"]["session_type"] == "guest"
-                                        )
-
+            debug_info["current_session"] and
+            debug_info["current_session"]["cart_items_count"] > 0 and
+            debug_info["current_session"]["session_type"] == "guest"
+        )
         return debug_info
-
     except Exception as e:
         logger.error(f"Debug migration failed: {e}")
         return {"error": str(e)}
-
-
-
-
 
 @router.get("/session/info")
 async def get_session_info(request: Request, current_user: dict = Depends(get_current_user)):
@@ -1588,7 +1381,6 @@ async def get_session_info(request: Request, current_user: dict = Depends(get_cu
         session = get_session(request)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
-
         return {
             "session_id": session.session_id,
             "session_type": session.session_type,
@@ -1607,42 +1399,29 @@ async def get_session_info(request: Request, current_user: dict = Depends(get_cu
             detail="Failed to get session information"
         )
 
-
 @router.post("/session/cart/migrate-to-user")
 async def migrate_session_cart_to_user(request: Request, current_user: dict = Depends(get_current_user)):
     try:
         user_id = current_user['sub']
-
-        # Get the user session (should already exist due to auth)
         user_session = session_service.get_session_by_user_id(user_id)
         if not user_session:
             logger.error(f"No user session found for user {user_id}")
             raise HTTPException(status_code=404, detail="User session not found")
-
-        # Get current guest session if any
         current_session = get_session(request)
         migrated_count = 0
-
         with db.get_cursor() as cursor:
             if current_session and current_session.session_type == SessionType.GUEST:
                 migrated_count = migrate_guest_cart_to_user_database(current_session, user_id, cursor)
                 logger.info(f"🔄 Migrated {migrated_count} cart items from guest session to user {user_id}")
-
-                # Update user session cart if items were migrated
                 if migrated_count > 0:
-                    # The migration function should handle the database update
-                    # We just need to ensure the session reflects the changes
                     session_service.update_session_activity(user_session.session_id)
-
         redis_client.delete(f"user_cart:{user_id}")
         logger.info(f"Cart migration completed for user {user_id}, {migrated_count} items migrated")
-
         return {
             "message": "Cart migrated successfully",
             "items_migrated": migrated_count,
             "session_id": user_session.session_id
         }
-
     except Exception as e:
         logger.error(f"Failed to migrate cart: {e}")
         raise HTTPException(
@@ -1650,7 +1429,7 @@ async def migrate_session_cart_to_user(request: Request, current_user: dict = De
             detail="Failed to migrate cart"
         )
 
-
+# ===== SECURITY AND ADMIN ENDPOINTS =====
 @router.post("/profile/avatar")
 async def upload_avatar(
         file: UploadFile = File(...),
@@ -1659,42 +1438,33 @@ async def upload_avatar(
     try:
         user_id = current_user['sub']
         allowed_types = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
-
         if file.content_type not in allowed_types:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed."
             )
-
         max_size = 5 * 1024 * 1024
         file.file.seek(0, 2)
         file_size = file.file.tell()
         file.file.seek(0)
-
         if file_size > max_size:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="File too large. Maximum size is 5MB."
             )
-
         file_extension = file.filename.split('.')[-1]
         unique_filename = f"avatar_{user_id}_{int(datetime.now().timestamp())}.{file_extension}"
         file_path = f"/app/uploads/avatars/{unique_filename}"
-
         os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
         with open(file_path, "wb") as buffer:
             content = await file.read()
             buffer.write(content)
-
         with db.get_cursor() as cursor:
             cursor.execute(
                 "UPDATE users SET avatar_url = %s WHERE id = %s",
                 (f"/uploads/avatars/{unique_filename}", user_id)
             )
-
         invalidate_user_cache(user_id)
-
         return {
             "message": "Avatar uploaded successfully",
             "avatar_url": f"/uploads/avatars/{unique_filename}"
@@ -1708,7 +1478,6 @@ async def upload_avatar(
             detail="Failed to upload avatar"
         )
 
-
 @router.post("/security/invalidate-all-sessions")
 async def invalidate_all_sessions(
         current_user: dict = Depends(get_current_user)
@@ -1716,7 +1485,6 @@ async def invalidate_all_sessions(
     try:
         user_id = current_user['sub']
         success = session_service.invalidate_all_user_sessions(user_id)
-
         if success:
             logger.info(f"All sessions invalidated for user {user_id}")
             return {"message": "All other sessions have been invalidated"}
@@ -1732,7 +1500,6 @@ async def invalidate_all_sessions(
             detail="Failed to invalidate sessions"
         )
 
-
 @router.post("/change-password")
 async def change_password(
         current_password: str = Form(...),
@@ -1742,49 +1509,41 @@ async def change_password(
 ):
     try:
         user_id = current_user['sub']
-
         if not current_password or not new_password or not confirm_password:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="All password fields are required"
             )
-
         if new_password != confirm_password:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="New password and confirmation do not match"
             )
-
         if current_password == new_password:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="New password must be different from current password"
             )
-
         if len(new_password) < 8:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password must be at least 8 characters long"
             )
-
         if not any(char.isdigit() for char in new_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password must contain at least one number"
             )
-
         if not any(char.isupper() for char in new_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password must contain at least one uppercase letter"
             )
-
         if not any(char.islower() for char in new_password):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Password must contain at least one lowercase letter"
             )
-
         with db.get_cursor() as cursor:
             cursor.execute("""
                 SELECT u.password_hash,
@@ -1794,20 +1553,17 @@ async def change_password(
                 WHERE u.id = %s
                 GROUP BY u.id
             """, (user_id,))
-
             user_data = cursor.fetchone()
             if not user_data:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="User not found"
                 )
-
             if not verify_password(current_password, user_data['password_hash']):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Current password is incorrect"
                 )
-
             if user_data['previous_hashes']:
                 previous_hashes = user_data['previous_hashes'].split(',')
                 for old_hash in previous_hashes[-5:]:
@@ -1816,9 +1572,7 @@ async def change_password(
                             status_code=status.HTTP_400_BAD_REQUEST,
                             detail="New password cannot be the same as any of your previous 5 passwords"
                         )
-
             new_password_hash = get_password_hash(new_password)
-
             cursor.execute("START TRANSACTION")
             try:
                 cursor.execute(
@@ -1845,20 +1599,17 @@ async def change_password(
             except Exception as e:
                 cursor.execute("ROLLBACK")
                 raise e
-
             try:
                 user_sessions = redis_client.keys(f"user_session:{user_id}:*")
                 if user_sessions:
                     redis_client.delete(*user_sessions)
                 invalidate_user_cache(user_id)
-
                 cursor.execute("""
                     INSERT INTO security_logs (user_id, action, ip_address, user_agent)
                     VALUES (%s, 'password_change', %s, %s)
                 """, (user_id, 'unknown', 'unknown'))
             except Exception as e:
                 logger.error(f"Failed to cleanup sessions after password change: {e}")
-
             logger.info(f"Password changed successfully for user {user_id}")
             return {"message": "Password changed successfully"}
     except HTTPException:
@@ -1870,14 +1621,12 @@ async def change_password(
             detail="Failed to change password"
         )
 
-
 @router.get("/admin/users")
 async def get_all_users(
         skip: int = 0,
         limit: int = 100,
-        current_user: dict = Depends(get_current_user)  # ✅ Simple and working
+        current_user: dict = Depends(get_current_user)
 ):
-    # Manual role check
     user_roles = current_user.get('roles', [])
     if not any(role in ['admin', 'super_admin'] for role in user_roles):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -1897,10 +1646,8 @@ async def get_all_users(
                 LIMIT %s OFFSET %s
             """, (limit, skip))
             users = cursor.fetchall()
-
             cursor.execute("SELECT COUNT(*) as total FROM users")
             total = cursor.fetchone()['total']
-
             return {
                 "users": users,
                 "total": total,
@@ -1914,14 +1661,12 @@ async def get_all_users(
             detail="Failed to fetch users"
         )
 
-
 @router.put("/admin/users/{user_id}/status")
 async def update_user_status(
         user_id: int,
         is_active: bool,
-        current_user: dict = Depends(get_current_user)  # ✅ Fixed
+        current_user: dict = Depends(get_current_user)
 ):
-    # Manual role check add karo
     user_roles = current_user.get('roles', [])
     if not any(role in ['admin', 'super_admin'] for role in user_roles):
         raise HTTPException(status_code=403, detail="Admin access required")
@@ -1931,16 +1676,13 @@ async def update_user_status(
                 "UPDATE users SET is_active = %s, updated_at = NOW() WHERE id = %s",
                 (is_active, user_id)
             )
-
             if cursor.rowcount == 0:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="User not found"
                 )
-
             action = "activated" if is_active else "deactivated"
             logger.info(f"User {user_id} {action} by admin {current_user['sub']}")
-
             return {"message": f"User {action} successfully"}
     except HTTPException:
         raise
@@ -1951,24 +1693,16 @@ async def update_user_status(
             detail="Failed to update user status"
         )
 
-
 @router.get("/debug/raw-session")
 async def debug_raw_session(request: Request):
-    """Debug endpoint to check raw session data without SessionData model"""
     session_id = get_session_id(request)
-
     if not session_id:
         return {"error": "No session ID"}
-
     import json
-
-    # Get raw data from Redis
     key = f"secure_session:{session_id}"
     raw_data = redis_client.get(key)
-
     if not raw_data:
         return {"error": "No session data in Redis"}
-
     try:
         session_dict = json.loads(raw_data)
         return {
@@ -1980,4 +1714,3 @@ async def debug_raw_session(request: Request):
         }
     except Exception as e:
         return {"error": f"Failed to parse: {e}"}
-
