@@ -12,6 +12,7 @@ from .auth_middleware import get_current_user, require_roles, require_permission
 from .rate_limiter import rate_limiter
 from .session_middleware import SecureSessionMiddleware, get_session, get_session_id, is_new_session
 from .session_models import SessionData, SessionType
+from .cart_migration import migrate_guest_cart_to_user
 
 __all__ = [
     'config',
@@ -38,6 +39,7 @@ __all__ = [
     'session_service',
     'SessionData',
     'SessionType',
+    'migrate_guest_cart_to_user',
 ]
 
 # Backward compatibility

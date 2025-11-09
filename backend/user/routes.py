@@ -7,10 +7,13 @@ from shared.auth_middleware import get_current_user, require_roles
 from shared.rate_limiter import rate_limiter
 from shared.session_service import session_service, SessionType
 from shared.session_middleware import get_session, get_session_id
+from shared.cart_migration import migrate_guest_cart_to_user  # ADD THIS IMPORT
+
 from .models import (
     UserProfileResponse, UserProfileUpdate, AddressResponse,
     AddressCreate, WishlistResponse, CartResponse, HealthResponse
 )
+
 from datetime import datetime
 import json
 import os
@@ -18,7 +21,6 @@ import uuid
 
 router = APIRouter()
 logger = get_logger(__name__)
-
 
 def publish_user_event(user_data: dict, event_type: str):
     try:
@@ -942,111 +944,38 @@ async def explicit_migrate_guest_cart_to_user(
         request: Request,
         current_user: dict = Depends(get_current_user)
 ):
+    """
+    Simple explicit cart migration endpoint
+    """
     try:
         user_id = current_user['sub']
+        session_id = get_session_id(request)
+
         logger.info(f"🔄 Explicit cart migration requested for user {user_id}")
 
-        ip_address = request.client.host if request.client else 'unknown'
-        user_agent = request.headers.get("user-agent", "")
-        total_migrated = 0
+        if not session_id:
+            raise HTTPException(status_code=400, detail="No session available")
 
-        with db.get_cursor() as cursor:
-            # Method 1: Check current session first
-            current_session = get_session(request)
-            if current_session and current_session.session_type == SessionType.GUEST:
-                if current_session.cart_items:
-                    migrated_count = migrate_guest_cart_to_user_database(
-                        current_session, user_id, cursor
-                    )
-                    total_migrated += migrated_count
-                    logger.info(f"🔄 Explicit migration - Current session: {migrated_count} items")
-                    # Clear guest cart
-                    session_service.update_session_data(current_session.session_id, {
-                        'cart_items': {}
-                    })
+        # Use the shared migration function
+        migrated_count = migrate_guest_cart_to_user(session_id, user_id)
 
-            # Method 2: Find guest session by IP and User-Agent (if no items migrated yet)
-            if total_migrated == 0:
-                guest_session = session_service.find_guest_session_by_ip(ip_address, user_agent)
-                if guest_session and guest_session.cart_items:
-                    migrated_count = migrate_guest_cart_to_user_database(
-                        guest_session, user_id, cursor
-                    )
-                    total_migrated += migrated_count
-                    logger.info(f"🔄 Explicit migration - IP-based: {migrated_count} items")
-                    # Clear guest cart
-                    session_service.update_session_data(guest_session.session_id, {
-                        'cart_items': {}
-                    })
-
-            # Method 3: Check guest_id cookie as fallback
-            if total_migrated == 0:
-                guest_id = request.cookies.get("guest_id")
-                if guest_id:
-                    guest_session = session_service.get_session_by_guest_id(guest_id)
-                    if guest_session and guest_session.cart_items:
-                        migrated_count = migrate_guest_cart_to_user_database(
-                            guest_session, user_id, cursor
-                        )
-                        total_migrated += migrated_count
-                        logger.info(f"🔄 Explicit migration - guest_id-based: {migrated_count} items")
-                        # Clear guest cart
-                        session_service.update_session_data(guest_session.session_id, {
-                            'cart_items': {}
-                        })
-
-        # Clear user cart cache
-        redis_client.delete(f"user_cart:{user_id}")
-
-        # Refresh the user's session cart data from database
-        user_session = session_service.get_or_create_user_session(user_id, ip_address, user_agent)
-        if user_session:
-            cursor.execute("""
-                SELECT
-                    sc.product_id,
-                    sc.variation_id,
-                    sc.quantity
-                FROM shopping_cart sc
-                JOIN products p ON sc.product_id = p.id
-                WHERE sc.user_id = %s AND p.status = 'active'
-            """, (user_id,))
-            user_cart_items = cursor.fetchall()
-
-            session_cart_items = {}
-            for item in user_cart_items:
-                item_key = f"{item['product_id']}_{item['variation_id']}" if item['variation_id'] else str(
-                    item['product_id'])
-                session_cart_items[item_key] = {
-                    'product_id': item['product_id'],
-                    'variation_id': item['variation_id'],
-                    'quantity': item['quantity']
-                }
-
-            session_service.update_session_data(user_session.session_id, {
-                'cart_items': session_cart_items
-            })
-
-        logger.info(f"✅ Explicit cart migration completed: {total_migrated} items migrated for user {user_id}")
+        logger.info(f"✅ Explicit cart migration completed: {migrated_count} items migrated for user {user_id}")
 
         return {
             "success": True,
             "message": "Cart migration completed successfully",
-            "items_migrated": total_migrated,
+            "items_migrated": migrated_count,
             "user_id": user_id
         }
 
     except Exception as e:
         logger.error(f"❌ Explicit cart migration failed: {e}")
-        import traceback
-        logger.error(f"❌ Migration traceback: {traceback.format_exc()}")
-
-        # Return success even if migration fails - don't break the login flow
         return {
             "success": False,
-            "message": "Cart migration completed with warnings",
+            "message": "Cart migration failed",
             "error": str(e),
             "items_migrated": 0,
-            "user_id": current_user['sub'] if 'current_user' in locals() else None
+            "user_id": current_user['sub']
         }
 
 @router.delete("/cart")

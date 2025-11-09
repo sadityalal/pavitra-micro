@@ -23,45 +23,14 @@ export const CartProvider = ({ children }) => {
   const [error, setError] = useState(null);
   const { isAuthenticated, user } = useAuth();
 
-  // ==== SESSION INITIALIZATION ON APP LOAD ====
-  useEffect(() => {
-    const initializeGuestSession = async () => {
-      // Only initialize for guest users (no auth token)
-      const token = localStorage.getItem('auth_token');
-      if (!token && !sessionManager.getSession()) {
-        try {
-          console.log('🔄 Initializing guest session on app load...');
-          // Make a simple API call to trigger session creation
-          const response = await fetch('/api/v1/users/health', {
-            credentials: 'include',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-          });
-
-          // Get session ID from response headers
-          const sessionId = response.headers.get('x-session-id') ||
-                           response.headers.get('x-secure-session-id');
-          if (sessionId) {
-            sessionManager.setSession(sessionId);
-            console.log('✅ Guest session initialized on app load:', sessionId);
-
-            // Fetch cart after session is ready
-            fetchCart();
-          }
-        } catch (error) {
-          console.error('❌ Failed to initialize guest session on app load:', error);
-        }
-      }
-    };
-
-    initializeGuestSession();
-  }, []); // Empty dependency array - runs once when component mounts
-
   const fetchCart = async () => {
     try {
       setLoading(true);
       setError(null);
+
+      // Ensure we have a session before making the request
+      const currentSession = sessionManager.getSession();
+      console.log('🛒 CartContext: Fetching cart with session:', currentSession);
 
       const cartData = await cartService.getCart();
       console.log('🛒 CartContext: Fetched cart data:', cartData);
@@ -83,6 +52,36 @@ export const CartProvider = ({ children }) => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const handleAuthStateChange = (event) => {
+      console.log('🔐 CartContext: Auth state change event received:', event.detail);
+
+      if (event.detail.action === 'logout') {
+        setCart({
+          items: [],
+          subtotal: 0,
+          total_items: 0
+        });
+        sessionManager.clearSession();
+      } else if (event.detail.action === 'login' || event.detail.action === 'register') {
+        // After login/register, wait a bit then refresh cart to ensure session is established
+        setTimeout(() => {
+          console.log('🔄 CartContext: Refreshing cart after auth state change');
+          fetchCart();
+        }, 1000);
+      }
+    };
+
+    document.addEventListener('authStateChanged', handleAuthStateChange);
+    return () => {
+      document.removeEventListener('authStateChanged', handleAuthStateChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    fetchCart();
+  }, []);
 
   const addToCart = async (productId, quantity = 1, variationId = null) => {
     try {

@@ -36,43 +36,53 @@ export const AuthProvider = ({ children }) => {
     const checkAuthStatus = async () => {
       try {
         const token = localStorage.getItem('auth_token');
-        if (token) {
-          try {
-            const userProfile = await authService.getSiteSettings().catch(() => null);
-            if (userProfile) {
-              setIsAuthenticated(true);
-              setUser({
-                id: 'user_id',
-                email: 'user@example.com',
-                roles: ['customer'],
-                permissions: []
-              });
-              console.log('✅ User authenticated from stored token');
-            } else {
-              localStorage.removeItem('auth_token');
-              sessionManager.clearSession();
-              console.log('❌ Stored token is invalid, clearing auth state');
-            }
-          } catch (verifyError) {
-            console.error('Token verification failed:', verifyError);
-            localStorage.removeItem('auth_token');
-            sessionManager.clearSession();
+        if (!token) {
+          setUser(null);
+          setIsAuthenticated(false);
+          setLoading(false);
+          return;
+        }
+
+        // Verify token is valid
+        try {
+          const response = await fetch('/api/v1/auth/me', {
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include'
+          });
+
+          if (response.ok) {
+            const userData = await response.json();
+            setUser(userData);
+            setIsAuthenticated(true);
+            console.log('✅ User authenticated from stored token');
+          } else {
+            throw new Error('Invalid token');
           }
+        } catch (verifyError) {
+          console.error('Token verification failed:', verifyError);
+          localStorage.removeItem('auth_token');
+          sessionManager.clearSession();
+          setUser(null);
+          setIsAuthenticated(false);
         }
       } catch (error) {
         console.error('Auth check failed:', error);
         localStorage.removeItem('auth_token');
         sessionManager.clearSession();
+        setUser(null);
+        setIsAuthenticated(false);
       } finally {
         setLoading(false);
       }
     };
+
     checkAuthStatus();
   }, []);
 
-  // In frontend/src/contexts/AuthContext.js - Update the login function
-
-const login = async (credentials) => {
+  const login = async (credentials) => {
   try {
     setLoading(true);
     console.log('🔐 Attempting login with credentials:', {
@@ -85,64 +95,62 @@ const login = async (credentials) => {
     if (response.access_token) {
       localStorage.setItem('auth_token', response.access_token);
 
-      const userData = {
-        id: 'user_id',
-        email: credentials.login_id,
-        first_name: response.user?.first_name,
-        last_name: response.user?.last_name,
-        roles: response.user_roles || ['customer'],
-        permissions: response.user_permissions || []
-      };
-
-      setUser(userData);
-      setIsAuthenticated(true);
-      sessionManager.clearSession();
-
-      console.log('✅ Login successful, attempting cart migration...');
-
-      try {
-        const migrationResponse = await fetch('/api/v1/users/cart/migrate-guest-to-user', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${response.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include'
-        });
-
-        if (migrationResponse.ok) {
-          const migrationResult = await migrationResponse.json();
-          console.log('🔄 Cart migration result:', migrationResult);
-
-          if (migrationResult.success && migrationResult.items_migrated > 0) {
-            success(`Cart migrated successfully! ${migrationResult.items_migrated} items added to your account.`);
-          } else if (migrationResult.success) {
-            console.log('🔄 Cart migration successful but no items to migrate');
-          } else {
-            console.warn('🔄 Cart migration failed:', migrationResult.message);
-          }
-        } else {
-          console.warn('🔄 Cart migration endpoint returned:', migrationResponse.status);
-          // Don't show error to user - this is not critical
-        }
-      } catch (migrationError) {
-        console.warn('🔄 Cart migration failed, but login was successful:', migrationError);
-        // Don't show error to user - this is not critical
-      }
-
-      console.log('✅ Login successful, guest session cleared');
-
-      const cartEvent = new CustomEvent('authStateChanged', {
-        detail: {
-          action: 'login',
-          user: userData,
-          sessionType: 'authenticated'
-        }
+      // Get real user data
+      const userResponse = await fetch('/api/v1/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${response.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include'
       });
-      document.dispatchEvent(cartEvent);
 
-      success('Login successful! Welcome back.');
-      return response;
+      if (userResponse.ok) {
+        const userData = await userResponse.json();
+        setUser(userData);
+        setIsAuthenticated(true);
+
+        // IMPORTANT: DO NOT clear session here - let the backend handle session transition
+        console.log('✅ Login successful, keeping session for cart migration');
+
+        // Trigger cart migration
+        try {
+          const migrationResponse = await fetch('/api/v1/users/cart/migrate-guest-to-user', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${response.access_token}`,
+              'Content-Type': 'application/json',
+            },
+            credentials: 'include'
+          });
+
+          if (migrationResponse.ok) {
+            const migrationResult = await migrationResponse.json();
+            console.log('🔄 Cart migration result:', migrationResult);
+
+            if (migrationResult.items_migrated > 0) {
+              success(`Welcome back! ${migrationResult.items_migrated} cart items migrated.`);
+            } else {
+              success('Login successful! Welcome back.');
+            }
+          }
+        } catch (migrationError) {
+          console.warn('Cart migration failed, but login was successful:', migrationError);
+          success('Login successful! Welcome back.');
+        }
+
+        const cartEvent = new CustomEvent('authStateChanged', {
+          detail: {
+            action: 'login',
+            user: userData,
+            sessionType: 'authenticated'
+          }
+        });
+        document.dispatchEvent(cartEvent);
+
+        return response;
+      } else {
+        throw new Error('Failed to get user data after login');
+      }
     } else {
       throw new Error('No access token received from server');
     }
@@ -161,34 +169,7 @@ const login = async (credentials) => {
   }
 };
 
-  const logout = async () => {
-    try {
-      console.log('🔐 Logging out user...');
-      await authService.logout();
-      success('You have been successfully logged out');
-    } catch (err) {
-      console.error('Logout API call failed:', err);
-      error('There was an issue during logout, but you have been logged out locally.');
-    } finally {
-      localStorage.removeItem('auth_token');
-      sessionManager.clearSession();
-      setUser(null);
-      setIsAuthenticated(false);
-      console.log('✅ Local auth state cleared');
-      const cartEvent = new CustomEvent('authStateChanged', {
-        detail: {
-          action: 'logout',
-          sessionType: 'guest'
-        }
-      });
-      document.dispatchEvent(cartEvent);
-      setTimeout(() => {
-        navigate('/');
-      }, 500);
-    }
-  };
-
-  const register = async (userData) => {
+const register = async (userData) => {
   try {
     setLoading(true);
     console.log('👤 Registering user with data:', {
@@ -203,58 +184,40 @@ const login = async (credentials) => {
 
     if (response.access_token) {
       localStorage.setItem('auth_token', response.access_token);
-      const userProfile = {
-        id: 'user_id',
-        email: userData.email || userData.phone || userData.username,
-        first_name: userData.first_name,
-        last_name: userData.last_name,
-        roles: response.user_roles || ['customer'],
-        permissions: response.user_permissions || []
-      };
 
-      setUser(userProfile);
-      setIsAuthenticated(true);
-      sessionManager.clearSession();
-
-      console.log('✅ Registration successful, attempting cart migration...');
-
-      // Call explicit cart migration after successful registration
-      try {
-        const migrationResponse = await fetch('/api/v1/users/cart/migrate-guest-to-user', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${response.access_token}`,
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include'
-        });
-
-        if (migrationResponse.ok) {
-          const migrationResult = await migrationResponse.json();
-          console.log('🔄 Cart migration result:', migrationResult);
-          if (migrationResult.items_migrated > 0) {
-            success(`Registration successful! ${migrationResult.items_migrated} cart items migrated to your account.`);
-          } else {
-            success('Registration successful! Welcome to our platform.');
-          }
-        }
-      } catch (migrationError) {
-        console.warn('Cart migration failed, but registration was successful:', migrationError);
-        success('Registration successful! Welcome to our platform.');
-      }
-
-      console.log('✅ Registration successful, guest session cleared');
-
-      const cartEvent = new CustomEvent('authStateChanged', {
-        detail: {
-          action: 'register',
-          user: userProfile,
-          sessionType: 'authenticated'
-        }
+      // Get real user data
+      const userResponse = await fetch('/api/v1/auth/me', {
+        headers: {
+          'Authorization': `Bearer ${response.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include'
       });
-      document.dispatchEvent(cartEvent);
 
-      return response;
+      if (userResponse.ok) {
+        const userProfile = await userResponse.json();
+        setUser(userProfile);
+        setIsAuthenticated(true);
+
+        // IMPORTANT: DO NOT clear session here
+        console.log('✅ Registration successful, keeping session');
+
+        // Cart migration happens automatically during registration
+        success('Registration successful! Welcome to our platform.');
+
+        const cartEvent = new CustomEvent('authStateChanged', {
+          detail: {
+            action: 'register',
+            user: userProfile,
+            sessionType: 'authenticated'
+          }
+        });
+        document.dispatchEvent(cartEvent);
+
+        return response;
+      } else {
+        throw new Error('Failed to get user data after registration');
+      }
     } else {
       throw new Error('No access token received from server');
     }
@@ -274,12 +237,7 @@ const login = async (credentials) => {
     } else if (err.response?.data?.detail) {
       error(err.response.data.detail);
     } else if (err.response?.status === 400) {
-      const detail = err.response.data.detail;
-      if (typeof detail === 'string') {
-        error(detail);
-      } else {
-        error('Email, phone, or username already exists. Please use different credentials.');
-      }
+      error('Email, phone, or username already exists. Please use different credentials.');
     } else if (err.response?.status === 503) {
       error('Service is under maintenance. Registration is temporarily unavailable.');
     } else if (err.message) {
@@ -290,6 +248,35 @@ const login = async (credentials) => {
     throw err;
   } finally {
     setLoading(false);
+  }
+};
+
+const logout = async () => {
+  try {
+    console.log('🔐 Logging out user...');
+    await authService.logout();
+    success('You have been successfully logged out');
+  } catch (err) {
+    console.error('Logout API call failed:', err);
+    error('There was an issue during logout, but you have been logged out locally.');
+  } finally {
+    localStorage.removeItem('auth_token');
+    sessionManager.clearSession(); // Only clear session on logout
+    setUser(null);
+    setIsAuthenticated(false);
+    console.log('✅ Local auth state cleared');
+
+    const cartEvent = new CustomEvent('authStateChanged', {
+      detail: {
+        action: 'logout',
+        sessionType: 'guest'
+      }
+    });
+    document.dispatchEvent(cartEvent);
+
+    setTimeout(() => {
+      navigate('/');
+    }, 500);
   }
 };
 

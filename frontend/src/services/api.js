@@ -9,14 +9,22 @@ class SessionManager {
     this.sessionId = sessionId;
     if (sessionId) {
       localStorage.setItem('shared_session_id', sessionId);
+      console.log('✅ SessionManager: Session set to', sessionId);
     }
   }
 
   getSession() {
-    return this.sessionId || localStorage.getItem('shared_session_id');
+    // Always check localStorage first to persist across page reloads
+    const storedSession = localStorage.getItem('shared_session_id');
+    if (storedSession && !this.sessionId) {
+      this.sessionId = storedSession;
+      console.log('✅ SessionManager: Restored session from storage', this.sessionId);
+    }
+    return this.sessionId || storedSession;
   }
 
   clearSession() {
+    console.log('🔄 SessionManager: Clearing session');
     this.sessionId = null;
     localStorage.removeItem('shared_session_id');
   }
@@ -31,7 +39,6 @@ class SessionManager {
             'Content-Type': 'application/json',
           },
         });
-
         const sessionId = response.headers.get('x-session-id') ||
                          response.headers.get('x-secure-session-id');
         if (sessionId) {
@@ -53,7 +60,7 @@ export const sessionManager = new SessionManager();
 const createApiInstance = (servicePath = '') => {
   const instance = axios.create({
     baseURL: `/api/v1${servicePath}`,
-    withCredentials: true, // This is CRITICAL for cookies
+    withCredentials: true,
     timeout: 30000,
   });
 
@@ -62,19 +69,16 @@ const createApiInstance = (servicePath = '') => {
       const sharedSessionId = sessionManager.getSession();
       const token = localStorage.getItem('auth_token');
 
-      // Always include session headers
+      console.log('🔗 API Request - Session:', sharedSessionId, 'Token:', !!token);
+
       if (sharedSessionId) {
         config.headers['X-Session-ID'] = sharedSessionId;
         config.headers['X-Secure-Session-ID'] = sharedSessionId;
       }
-
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
-
-      // Ensure cookies are sent
       config.withCredentials = true;
-
       return config;
     },
     (error) => Promise.reject(error)
@@ -82,24 +86,22 @@ const createApiInstance = (servicePath = '') => {
 
   instance.interceptors.response.use(
     (response) => {
-      // Check for session ID in cookies from response
-      const setCookieHeader = response.headers['set-cookie'];
-      if (setCookieHeader) {
-        console.log('🍪 Set-Cookie header:', setCookieHeader);
-      }
-
+      // Extract session ID from response headers
       const sessionId = response.headers['x-session-id'] ||
                         response.headers['x-secure-session-id'];
+
       if (sessionId) {
         sessionManager.setSession(sessionId);
-        console.log('🔄 Session updated from response:', sessionId);
+        console.log('🔄 API Response: Session updated to', sessionId);
       }
+
       return response;
     },
     (error) => {
       console.error('🔗 API Error:', error.response?.status, error.message);
       if (error.response?.status === 401) {
         localStorage.removeItem('auth_token');
+        sessionManager.clearSession();
         window.dispatchEvent(new Event('authStateChanged'));
       }
       return Promise.reject(error);
