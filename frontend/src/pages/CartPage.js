@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useCartContext } from '../contexts/CartContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { useToast } from '../contexts/ToastContext';
@@ -9,10 +9,26 @@ const CartPage = () => {
   const { frontendSettings } = useSettings();
   const { success, error, warning, info } = useToast();
   const [updatingItems, setUpdatingItems] = useState({});
+  const [localCart, setLocalCart] = useState({
+    items: [],
+    subtotal: 0,
+    total_items: 0
+  });
 
-  const handleQuantityChange = async (cartItemId, newQuantity) => {
+  // Initialize local cart state once when component mounts or cart changes
+  useEffect(() => {
+    if (cart && JSON.stringify(cart) !== JSON.stringify(localCart)) {
+      setLocalCart({
+        items: [...cart.items],
+        subtotal: cart.subtotal,
+        total_items: cart.total_items
+      });
+    }
+  }, [cart]); // Only depend on cart
+
+  // Memoized event handlers to prevent unnecessary re-renders
+  const handleQuantityChange = useCallback(async (cartItemId, newQuantity) => {
     if (newQuantity < 1) {
-      // Show beautiful confirmation for removal
       if (window.confirm('Are you sure you want to remove this item from your cart?')) {
         await handleRemoveItem(cartItemId);
       }
@@ -29,29 +45,27 @@ const CartPage = () => {
     } finally {
       setUpdatingItems(prev => ({ ...prev, [cartItemId]: false }));
     }
-  };
+  }, [updateCartItem, info, error]);
 
-  const handleIncrement = async (cartItemId, currentQuantity, maxQuantity = 20) => {
+  const handleIncrement = useCallback(async (cartItemId, currentQuantity, maxQuantity = 20) => {
     const newQuantity = currentQuantity + 1;
     if (newQuantity > maxQuantity) {
       warning(`Maximum quantity limit reached (${maxQuantity})`);
       return;
     }
     await handleQuantityChange(cartItemId, newQuantity);
-  };
+  }, [handleQuantityChange, warning]);
 
-  const handleDecrement = async (cartItemId, currentQuantity) => {
+  const handleDecrement = useCallback(async (cartItemId, currentQuantity) => {
     const newQuantity = currentQuantity - 1;
     if (newQuantity === 0) {
-      // Show beautiful confirmation dialog
       showRemoveConfirmation(cartItemId);
     } else {
       await handleQuantityChange(cartItemId, newQuantity);
     }
-  };
+  }, [handleQuantityChange]);
 
-  const showRemoveConfirmation = (cartItemId) => {
-    // Create a beautiful modal-like confirmation
+  const showRemoveConfirmation = useCallback((cartItemId) => {
     const confirmationDiv = document.createElement('div');
     confirmationDiv.className = 'remove-confirmation-modal';
     confirmationDiv.innerHTML = `
@@ -72,7 +86,6 @@ const CartPage = () => {
       </div>
     `;
 
-    // Add styles
     const styles = `
       .remove-confirmation-modal .confirmation-overlay {
         position: fixed;
@@ -128,7 +141,6 @@ const CartPage = () => {
     document.head.appendChild(styleSheet);
     document.body.appendChild(confirmationDiv);
 
-    // Add event listeners
     const closeBtn = confirmationDiv.querySelector('.confirmation-close');
     const cancelBtn = confirmationDiv.querySelector('.confirmation-cancel');
     const removeBtn = confirmationDiv.querySelector('.confirmation-remove');
@@ -144,9 +156,9 @@ const CartPage = () => {
       await handleRemoveItem(cartItemId);
       cleanup();
     };
-  };
+  }, []);
 
-  const handleRemoveItem = async (cartItemId) => {
+  const handleRemoveItem = useCallback(async (cartItemId) => {
     try {
       await removeFromCart(cartItemId);
       success('Item removed from cart');
@@ -154,9 +166,9 @@ const CartPage = () => {
       console.error('Failed to remove item:', err);
       error(err.message || 'Failed to remove item from cart');
     }
-  };
+  }, [removeFromCart, success, error]);
 
-  const handleClearCart = async () => {
+  const handleClearCart = useCallback(async () => {
     if (window.confirm('Are you sure you want to clear your entire cart?')) {
       try {
         await clearCart();
@@ -166,9 +178,12 @@ const CartPage = () => {
         error(err.message || 'Failed to clear cart');
       }
     }
-  };
+  }, [clearCart, success, error]);
 
-  if (loading && cart.items.length === 0) {
+  // Use local cart state for rendering to prevent unnecessary re-renders
+  const displayCart = localCart;
+
+  if (loading && displayCart.items.length === 0) {
     return (
       <div className="container py-5">
         <div className="text-center">
@@ -188,7 +203,7 @@ const CartPage = () => {
         </div>
       </div>
 
-      {cart.items.length === 0 ? (
+      {displayCart.items.length === 0 ? (
         <div className="text-center py-5">
           <i className="bi bi-cart-x display-1 text-muted"></i>
           <h3 className="mt-3">Your cart is empty</h3>
@@ -203,7 +218,7 @@ const CartPage = () => {
             <div className="card">
               <div className="card-header d-flex justify-content-between align-items-center">
                 <h5 className="mb-0">
-                  Cart Items ({cart.total_items})
+                  Cart Items ({displayCart.total_items})
                 </h5>
                 <button
                   className="btn btn-outline-danger btn-sm"
@@ -214,7 +229,7 @@ const CartPage = () => {
                 </button>
               </div>
               <div className="card-body">
-                {cart.items.map((item) => (
+                {displayCart.items.map((item) => (
                   <div key={item.id} className="cart-item border-bottom pb-3 mb-3">
                     <div className="row align-items-center">
                       <div className="col-md-2">
@@ -310,23 +325,23 @@ const CartPage = () => {
               </div>
               <div className="card-body">
                 <div className="d-flex justify-content-between mb-2">
-                  <span>Subtotal ({cart.total_items} items):</span>
-                  <span>{frontendSettings.currency_symbol}{cart.subtotal || cart.total}</span>
+                  <span>Subtotal ({displayCart.total_items} items):</span>
+                  <span>{frontendSettings.currency_symbol}{displayCart.subtotal || displayCart.total}</span>
                 </div>
                 <div className="d-flex justify-content-between mb-2">
                   <span>Shipping:</span>
                   <span className="text-success">
-                    {cart.subtotal >= (frontendSettings.free_shipping_min_amount || 500)
+                    {displayCart.subtotal >= (frontendSettings.free_shipping_min_amount || 500)
                       ? 'FREE'
                       : `Calculated at checkout`
                     }
                   </span>
                 </div>
-                {cart.subtotal < (frontendSettings.free_shipping_min_amount || 500) && (
+                {displayCart.subtotal < (frontendSettings.free_shipping_min_amount || 500) && (
                   <div className="alert alert-info py-2 mb-3">
                     <small>
                       Add {frontendSettings.currency_symbol}
-                      {(frontendSettings.free_shipping_min_amount || 500) - cart.subtotal}
+                      {(frontendSettings.free_shipping_min_amount || 500) - displayCart.subtotal}
                       more for free shipping!
                     </small>
                   </div>
@@ -334,7 +349,7 @@ const CartPage = () => {
                 <hr />
                 <div className="d-flex justify-content-between mb-3">
                   <strong>Total:</strong>
-                  <strong>{frontendSettings.currency_symbol}{cart.subtotal || cart.total}</strong>
+                  <strong>{frontendSettings.currency_symbol}{displayCart.subtotal || displayCart.total}</strong>
                 </div>
                 <Link to="/checkout" className="btn btn-primary w-100 mb-2">
                   Proceed to Checkout
