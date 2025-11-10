@@ -123,10 +123,17 @@ const ProductCard = ({ product, onAddToCart, onAddToWishlist, loading = false })
           </button>
         </div>
         <button
-          className={`cart-btn ${isOutOfStock ? 'disabled' : ''}`}
-          onClick={() => handleAddToCart(product)}
-          disabled={isOutOfStock || addingToCart}
-        >
+            className={`cart-btn ${isOutOfStock ? 'disabled' : ''}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onAddToCart) {
+                onAddToCart(product);
+              } else {
+                handleAddToCart(product);
+              }
+            }}
+            disabled={isOutOfStock || addingToCart}
+          >
           {addingToCart ? (
             <>
               <span className="spinner-border spinner-border-sm me-2"></span>

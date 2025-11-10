@@ -10,7 +10,8 @@ import HomePage from './pages/HomePage.js';
 import AuthPage from './pages/AuthPage.js';
 import CartPage from './pages/CartPage.js';
 import { useSession } from './hooks/useSession';
-
+import ProductsPage from './pages/ProductsPage';
+import ProductDetailPage from './pages/ProductDetailPage';
 
 function App() {
   useSession();
@@ -77,6 +78,9 @@ function App() {
                   <Route path="/auth" element={<AuthPage />} />
                   <Route path="/login" element={<AuthPage />} />
                   <Route path="/register" element={<AuthPage />} />
+                  <Route path="/products" element={<ProductsPage />} />
+                  <Route path="/product/:slug" element={<ProductDetailPage />} />
+                  <Route path="/category/:slug" element={<ProductsPage />} />
                 </Routes>
               </Layout>
             </CartProvider>
