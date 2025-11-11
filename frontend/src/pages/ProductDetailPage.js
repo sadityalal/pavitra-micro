@@ -5,6 +5,7 @@ import { useCartContext } from '../contexts/CartContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useSettings } from '../contexts/SettingsContext';
 import { useToast } from '../contexts/ToastContext';
+import ProductCard from '../components/common/ProductCard';
 
 const ProductDetailPage = () => {
   const { slug } = useParams();

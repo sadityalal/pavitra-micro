@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-from shared import config, setup_logging, get_logger, db, cleanup_service  # ADD cleanup_service
+from shared import config, setup_logging, get_logger, db, cleanup_service, redis_client
 from shared.session_middleware import SecureSessionMiddleware, get_session_id
 from .notification_routes import router as notification_router
 from .routes import router
@@ -138,19 +138,6 @@ async def root():
         "environment": "development" if config.debug_mode else "production",
         "maintenance_mode": config.maintenance_mode if config.maintenance_mode is not None else False
     }
-# ADD NEW DEBUG ENDPOINTS
-@app.get("/debug/redis-health")
-async def debug_redis_health():
-    try:
-        memory_info = redis_client.get_memory_info()
-        return {
-            "redis_connected": redis_client.ping(),
-            "memory_info": memory_info,
-            "session_count": len(redis_client.keys('secure_session:*')),
-            "rate_limit_count": len(redis_client.keys('*rate_limit*'))
-        }
-    except Exception as e:
-        return {"error": str(e)}
 
 @app.post("/emergency/cleanup-redis")
 async def emergency_redis_cleanup():
