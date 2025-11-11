@@ -1,5 +1,3 @@
-# backend/shared/redis_client.py
-
 import redis
 import logging
 import json
@@ -46,7 +44,6 @@ class RedisClient:
         if not self.redis_client:
             self._connect()
             return self.redis_client is not None
-
         try:
             self.redis_client.ping()
             return True
@@ -59,23 +56,19 @@ class RedisClient:
             return False
 
     def incr(self, key: str, amount: int = 1) -> int:
-        """Increment key by amount, return new value"""
         if not self._ensure_connection():
             logger.warning(f"Redis not available for incr on key: {key}")
-            return amount  # Fallback
-
+            return amount
         try:
             return self.redis_client.incr(key, amount)
         except Exception as e:
             logger.error(f"Redis incr failed for {key}: {e}")
-            return amount  # Fallback
+            return amount
 
     def setex(self, key: str, expire: int, value: str) -> bool:
-        """Set key with expiration"""
         if not self._ensure_connection():
             logger.warning(f"Redis not available for setex on key: {key}")
             return False
-
         try:
             result = self.redis_client.setex(key, expire, value)
             return result is True
@@ -86,7 +79,6 @@ class RedisClient:
     def get(self, key: str) -> Optional[str]:
         if not self._ensure_connection():
             return None
-
         try:
             return self.redis_client.get(key)
         except Exception as e:
@@ -96,7 +88,6 @@ class RedisClient:
     def delete(self, *keys) -> bool:
         if not self._ensure_connection():
             return False
-
         try:
             return bool(self.redis_client.delete(*keys))
         except Exception as e:
@@ -106,7 +97,6 @@ class RedisClient:
     def exists(self, key: str) -> bool:
         if not self._ensure_connection():
             return False
-
         try:
             return self.redis_client.exists(key) > 0
         except Exception as e:
@@ -116,7 +106,6 @@ class RedisClient:
     def expire(self, key: str, expire: int) -> bool:
         if not self._ensure_connection():
             return False
-
         try:
             return self.redis_client.expire(key, expire)
         except Exception as e:
@@ -126,7 +115,6 @@ class RedisClient:
     def keys(self, pattern: str):
         if not self._ensure_connection():
             return []
-
         try:
             return self.redis_client.keys(pattern)
         except Exception as e:
@@ -141,11 +129,8 @@ class RedisClient:
         except Exception:
             return False
 
-    # Additional methods for session service
     def pipeline(self):
-        """Return pipeline for batch operations"""
         if not self._ensure_connection():
-            # Return a dummy pipeline that does nothing
             class DummyPipeline:
                 def execute(self):
                     return []
@@ -154,7 +139,6 @@ class RedisClient:
                     return lambda *args, **kwargs: self
 
             return DummyPipeline()
-
         try:
             return self.redis_client.pipeline()
         except Exception as e:
@@ -169,7 +153,6 @@ class RedisClient:
 
             return DummyPipeline()
 
-    # Cache methods
     def cache_product(self, product_id: int, product_data: dict, expire: int = 3600):
         if not self._ensure_connection():
             return False
@@ -243,10 +226,8 @@ class RedisClient:
             return None
 
     def rate_limit_check(self, key: str, limit: int, window: int) -> bool:
-        """Check rate limit with fallback"""
         if not self._ensure_connection():
-            return True  # Allow if Redis is down
-
+            return True
         try:
             current = self.incr(key)
             if current == 1:
@@ -254,7 +235,7 @@ class RedisClient:
             return current <= limit
         except Exception as e:
             logger.error(f"Rate limit check failed: {e}")
-            return True  # Allow if check fails
+            return True
 
     def delete_pattern(self, pattern: str) -> bool:
         if not self._ensure_connection():
@@ -268,6 +249,68 @@ class RedisClient:
             logger.error(f"Failed to delete pattern {pattern}: {e}")
             return False
 
+    def cleanup_old_keys(self, patterns: list = None, max_age_hours: int = 24) -> int:
+        """Clean up old keys that might be accumulating"""
+        if not self._ensure_connection():
+            return 0
 
-# Global instance
+        if patterns is None:
+            patterns = [
+                "auth_rate_limit:*",
+                "rate_limit:*",
+                "login_fails:*",
+                "login_lockout:*",
+                "secure_rate_limit:*",
+                "token_blacklist:*"
+            ]
+
+        cleaned_count = 0
+        current_time = time.time()
+
+        for pattern in patterns:
+            try:
+                keys = self.keys(pattern)
+                for key in keys:
+                    try:
+                        ttl = self.redis_client.ttl(key)
+                        # Delete keys with no TTL (shouldn't happen) or very long TTL
+                        if ttl == -1:  # No TTL set
+                            self.delete(key)
+                            cleaned_count += 1
+                            logger.info(f"Cleaned up key without TTL: {key}")
+                    except Exception as e:
+                        logger.warning(f"Error checking key {key}: {e}")
+                        continue
+            except Exception as e:
+                logger.error(f"Error cleaning pattern {pattern}: {e}")
+                continue
+
+        logger.info(f"Redis cleanup completed: {cleaned_count} keys cleaned")
+        return cleaned_count
+
+    def get_memory_info(self) -> dict:
+        """Get Redis memory usage information"""
+        if not self._ensure_connection():
+            return {"error": "Redis not available"}
+
+        try:
+            info = self.redis_client.info('memory')
+            keys_count = len(self.keys('*'))
+            session_keys = len(self.keys('secure_session:*'))
+            rate_limit_keys = len(self.keys('*rate_limit*'))
+
+            return {
+                "used_memory": info.get('used_memory_human', 'unknown'),
+                "used_memory_peak": info.get('used_memory_peak_human', 'unknown'),
+                "total_keys": keys_count,
+                "session_keys": session_keys,
+                "rate_limit_keys": rate_limit_keys,
+                "connected": True
+            }
+        except Exception as e:
+            return {"error": str(e), "connected": False}
+
+
+import time
+
 redis_client = RedisClient()

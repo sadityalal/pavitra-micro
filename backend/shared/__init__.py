@@ -13,6 +13,7 @@ from .rate_limiter import rate_limiter
 from .session_middleware import SecureSessionMiddleware, get_session, get_session_id, is_new_session
 from .session_models import SessionData, SessionType
 from .cart_migration import migrate_guest_cart_to_user
+from .cleanup_service import cleanup_service  # ADD THIS LINE
 
 __all__ = [
     'config',
@@ -40,7 +41,7 @@ __all__ = [
     'SessionData',
     'SessionType',
     'migrate_guest_cart_to_user',
+    'cleanup_service',  # ADD THIS LINE
 ]
 
-# Backward compatibility
 SessionMiddleware = SecureSessionMiddleware
